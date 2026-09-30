@@ -13,7 +13,7 @@ Required checks:
 - Cloudflare Access identity is used
 - AUTH_BYPASS is disabled
 - D1 binding is present
-- D1 schema latest migration = `0007_production_assets.sql`
+- D1 schema latest migration = `0008_pdfx_validation_runs.sql`
 - required D1 tables are present
 - R2 binding is present
 - R2 write / read / delete deep probe has passed within 24 hours
@@ -148,3 +148,12 @@ See `docs/PRODUCTION_ASSETS.md`.
 Candidate generation and its non-production boundary are documented in:
 
 `docs/PDFX4_CANDIDATE.md`
+
+
+## External PDF/X validator
+
+Production Readiness now also checks whether `PDFX_VALIDATOR_URL` is configured.
+
+This gate is separate from PDF/X profile capability: configuration alone does not make `PDF/X-4` production-ready.
+
+See `docs/PDFX_VALIDATOR_BRIDGE.md`.

@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.8.0
+## 当前版本：1.9.0
 
 ### 已实现
 
@@ -53,6 +53,89 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.9.0 关键工程进展
+
+### 1. External PDF/X Validator Bridge
+
+PDF/X-4 Candidate 不再只停留在系统内部结构检查。
+
+Worker 新增受控外部验证桥：
+
+```text
+Deterministic PDF/X-4 Candidate
+        ↓
+SHA-256
+        ↓
+HTTPS Validator Bridge
+        ↓
+PASS / FAIL / ERROR
+        ↓
+D1 Validation Evidence
+        ↓
+Audit Log
+```
+
+### 2. Validator Response 与 PDF SHA 强绑定
+
+外部服务必须返回：
+
+- Profile；
+- Candidate PDF 的完整 SHA-256；
+- Validator Name；
+- Validator Version；
+- PASS / FAIL；
+- Checks / Report。
+
+返回的 SHA 与实际提交 PDF 不一致时，系统拒绝接受结果。
+
+同时禁止：
+
+```text
+status = PASS
+checks[] contains ok = false
+```
+
+避免外部响应自相矛盾。
+
+### 3. Validation Evidence 进入 D1
+
+新增 migration：
+
+`0008_pdfx_validation_runs.sql`
+
+保存：
+
+- Artwork；
+- Revision；
+- PDF/X Profile；
+- Artifact SHA-256；
+- Validator + Version；
+- PASS / FAIL / ERROR；
+- Report；
+- Actor；
+- Timestamp。
+
+Quality > Assets 会展示当前 Artwork 的最近外部 PDF/X Validation Evidence。
+
+### 4. Production Gate 增加 Validator Configuration
+
+Production Readiness 新增：
+
+`External PDF/X validator configured`
+
+但配置 URL 并不会自动把 Candidate 变成正式 PDF/X。
+
+正式 capability 仍然保持：
+
+```text
+pdfxCandidateProfiles = ["PDF/X-4"]
+pdfxProfiles = []
+```
+
+只有确定可信 Validator / Ruleset / Printer-RIP 验收标准之后，才能继续关闭最终门禁。
+
+详见 `docs/PDFX_VALIDATOR_BRIDGE.md`。
 
 ## v1.8.0 关键工程进展
 
@@ -955,6 +1038,7 @@ docs/
   STAGING_READINESS.md
   PRODUCTION_ASSETS.md
   PDFX4_CANDIDATE.md
+  PDFX_VALIDATOR_BRIDGE.md
 migrations/
   0001_init.sql
   0002_batch_and_artifacts.sql
@@ -963,6 +1047,7 @@ migrations/
   0005_reference_and_readiness.sql
   0006_system_readiness.sql
   0007_production_assets.sql
+  0008_pdfx_validation_runs.sql
 worker/
   auth.js                 # Access identity + RBAC policy
   index.js
@@ -1024,7 +1109,7 @@ npm run check
 - 一维码最终 Symbology / Barcode payload 业务确认
 - QR payload / ECC 业务确认；当前模板默认 ECC M，Version 自动选择
 - Approved Font / ICC Asset Registry 已实现；Approved TrueType Font 已接入服务器 PDF Renderer，仍需 outlining 与 ICC OutputIntent
-- PDF/X-4 Candidate 已实现 ICC OutputIntent / XMP / page-box 结构；仍需独立外部 PDF/X conformance validator 与印厂/RIP 验收
+- PDF/X-4 Candidate 已实现 ICC OutputIntent / XMP / page-box；External Validator Bridge + D1 evidence 已实现，仍需选定可信 validator/ruleset 并完成印厂/RIP 验收后才能开启正式 PDF/X capability
 - Excel style/number-format leading-zero 恢复已实现；仍需更多真实 Packing List 样本做兼容性回归
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Cloudflare Access / RBAC / Staging Readiness 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application、D1/R2 与 Access Service Token

@@ -39,9 +39,12 @@ CLOUDFLARE_D1_DATABASE_ID
 CLOUDFLARE_R2_BUCKET_NAME=carton-artwork-studio-staging-files
 CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL
 CLOUDFLARE_STAGING_URL=https://<staging-hostname>
+CLOUDFLARE_PDFX_VALIDATOR_URL=https://<trusted-validator-endpoint>   # optional until validator is selected
 ```
 
 Use a narrowly scoped Cloudflare API token. Do not commit it.
+
+If the chosen PDF/X validator requires authentication, provision `PDFX_VALIDATOR_TOKEN` directly as a Cloudflare Worker secret. Do not place it in repository variables.
 
 ## 3. Deploy staging
 
@@ -90,7 +93,8 @@ Do not promote staging until these gates pass:
 - backup/rollback procedure exercised;
 - barcode business symbology confirmed;
 - font embedding/outlining gate closed;
-- PDF/X gate closed where required.
+- PDF/X gate closed where required;
+- external PDF/X validator endpoint/version/ruleset approved and validation evidence accepted by the target printer/RIP.
 
 ## Official Cloudflare references
 
@@ -107,3 +111,10 @@ Do not promote staging until these gates pass:
 Operational details and gate definitions:
 
 `docs/STAGING_READINESS.md`
+
+
+## External PDF/X validation
+
+Bridge protocol and trust boundary:
+
+`docs/PDFX_VALIDATOR_BRIDGE.md`

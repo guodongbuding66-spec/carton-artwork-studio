@@ -12,6 +12,7 @@ const base={
   roleUsers:{OPERATOR:["operator@example.com"],REVIEWER:["reviewer@example.com"]},
   lastR2Probe:{status:"PASS",createdAt:"2026-09-30T08:00:00.000Z"},
   nowMs:Date.parse("2026-09-30T09:00:00.000Z"),
+  pdfxValidatorConfigured:true,
   productionReadiness:{
     ready:false,
     rendererCapabilities:{fontEmbedding:false,pdfxProfiles:[]},

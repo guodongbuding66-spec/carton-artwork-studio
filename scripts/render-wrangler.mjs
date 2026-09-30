@@ -6,6 +6,7 @@ if (target !== "staging") throw new Error("Only staging config generation is sup
 const databaseId = process.env.CLOUDFLARE_D1_DATABASE_ID;
 const bucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME;
 const bootstrapAdmin = process.env.CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL || "";
+const pdfxValidatorUrl = process.env.CLOUDFLARE_PDFX_VALIDATOR_URL || "";
 
 if (!databaseId) throw new Error("CLOUDFLARE_D1_DATABASE_ID is required.");
 if (!bucketName) throw new Error("CLOUDFLARE_R2_BUCKET_NAME is required.");
@@ -22,7 +23,8 @@ const config = {
   },
   vars: {
     AUTH_BYPASS: "0",
-    BOOTSTRAP_ADMIN_EMAIL: bootstrapAdmin
+    BOOTSTRAP_ADMIN_EMAIL: bootstrapAdmin,
+    PDFX_VALIDATOR_URL: pdfxValidatorUrl
   },
   d1_databases: [{
     binding: "DB",
