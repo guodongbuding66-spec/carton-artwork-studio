@@ -636,6 +636,7 @@
     if(action==="close-template-editor"){state.templateEditor=null;render();return;}
     if(action==="refresh-dashboard") return loadRemoteArtworks();
     if(action==="refresh-audit") return loadAudit();
+    if(action==="run-compare") return loadRevisionCompare();
     if(action==="save-factory") return saveFactoryMaster();
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
@@ -881,6 +882,55 @@
       toast("Reference data load failed: "+(e.message||e),"error");
     }
     if(renderAfter) render();
+  }
+
+  function syncRevisionCompareDefaults(){
+    const revisions=state.remoteRevisions||[];
+    const current=state.artwork?.revision;
+    if(!revisions.length){
+      state.compareFrom=null;
+      state.compareTo=null;
+      state.revisionCompare=null;
+      return;
+    }
+    const to=revisions.find(x=>x.revision===current)?.revision||revisions[0]?.revision||null;
+    const from=revisions.find(x=>x.revision!==to)?.revision||to;
+    if(!state.compareTo||!revisions.some(x=>x.revision===state.compareTo)) state.compareTo=to;
+    if(!state.compareFrom||!revisions.some(x=>x.revision===state.compareFrom)) state.compareFrom=from;
+  }
+
+  async function refreshRemoteRevisionMetadata(renderAfter=true){
+    if(!state.apiOnline||!state.remoteArtworkId){
+      state.remoteRevisions=[];
+      state.revisionCompare=null;
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const remote=await api.artwork(state.remoteArtworkId);
+      state.remoteRevisions=remote.data?.revisions||[];
+      syncRevisionCompareDefaults();
+    }catch(e){
+      state.remoteRevisions=[];
+      state.revisionCompare=null;
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function loadRevisionCompare(){
+    if(!state.apiOnline||!state.remoteArtworkId){toast("需要已连接的 D1 Artwork。","error");return;}
+    const from=document.getElementById("compare-from")?.value||state.compareFrom;
+    const to=document.getElementById("compare-to")?.value||state.compareTo;
+    if(!from||!to){toast("请选择两个 Revision。","error");return;}
+    if(from===to){toast("请选择两个不同的 Revision。","error");return;}
+    try{
+      const response=await api.compareArtwork(state.remoteArtworkId,from,to);
+      state.compareFrom=from;
+      state.compareTo=to;
+      state.revisionCompare=response.data||null;
+      render();
+    }catch(e){toast(e.message||String(e),"error");}
   }
 
   async function loadRemoteArtworks(q=""){
