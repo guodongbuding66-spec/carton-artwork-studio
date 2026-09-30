@@ -235,8 +235,21 @@
   function renderCenter(){
     if(state.tab==="snapshot") return `<div class="snapshot"><pre>${esc(JSON.stringify(canonical(),null,2))}</pre></div>`;
     if(state.tab==="compare") return `<div class="compare"><div class="change"><strong>Factory</strong><div class="change-values"><div class="old">Zhejiang Factory B</div><div>→</div><div class="new">${esc(factory()?.name||"—")}</div></div></div><div class="change"><strong>CRN</strong><div class="change-values"><div class="old mono">3307820AB1</div><div>→</div><div class="new mono">${esc(computed().crn)}</div></div></div><div class="notice">下一阶段加入 Overlay / Difference / Flicker 图形比对。</div></div>`;
-    if(state.tab==="comments") return `<div class="comments"><div class="comment"><span class="badge ${state.resolvedBlockingComment?"green":"red"}">${state.resolvedBlockingComment?"Resolved":"Blocking"}</span> <strong>QA · Helen</strong><p>请确认本批次工厂 CRN 与最新海关备案文件一致。</p>${state.resolvedBlockingComment?"":'<button class="btn small" data-action="resolve-comment">标记已解决</button>'}</div><div class="comment"><span class="badge green">Resolved</span> <strong>Packaging · Leo</strong><p>Barcode + QR 已按批准组合尺寸统一。</p></div></div>`;
+    if(state.tab==="comments") return renderComments();
     return `<div class="canvas"><div class="artboard" style="transform:scale(${state.zoom})">${dielineSvg()}</div></div>`;
+  }
+
+  function renderComments(){
+    const rows=state.comments;
+    const list=state.commentsLoading
+      ? '<div class="notice">Loading review comments…</div>'
+      : rows.length
+        ? rows.map(x=>`<div class="comment"><span class="badge ${x.blocking?(x.resolved?"green":"red"):"blue"}">${x.blocking?(x.resolved?"Blocking · Resolved":"Blocking"):"Comment"}</span> <strong>${esc(x.author)}</strong><span class="subtle"> · ${esc(x.revision||"")}</span><p>${esc(x.body)}</p>${x.blocking&&!x.resolved&&permitted("review")?`<button class="btn small" data-resolve-comment="${esc(x.id)}">标记已解决</button>`:""}</div>`).join("")
+        : '<div class="notice">当前 Revision 暂无审核评论。</div>';
+    const composer=permitted("commentWrite")&&state.remoteArtworkId
+      ? `<section class="card" style="margin-bottom:10px"><div class="card-body"><textarea id="comment-body" class="input" rows="3" placeholder="输入审核意见…"></textarea><div class="toolbar" style="margin-top:8px">${permitted("review")?'<label><input id="comment-blocking" type="checkbox"/> Blocking comment</label>':""}<span class="spacer"></span><button class="btn primary" data-action="add-comment">Add Comment</button></div></div></section>`
+      : '<div class="notice warn" style="margin-bottom:10px">连接 Cloudflare Access 且兛备评论权限后可添加审核意见。</div>';
+    return `<div class="comments">${composer}${list}</div>`;
   }
 
   function dielineSvg(mode="editor", artwork=state.artwork) {
