@@ -51,3 +51,9 @@ VALUES
 ('QR_POLICY','QR Business Policy','DRAFT','{"ecc":"M","payloadRule":"UNCONFIRMED"}','Final QR payload and ECC require approval.','system'),
 ('FONT_POLICY','Approved Font Policy','DRAFT','{"font":"Helvetica","embedded":false,"outlined":false}','Current renderer uses PDF core Helvetica and has no approved embedding/outlining gate.','system'),
 ('PDFX_POLICY','PDF/X Production Policy','DRAFT','{"profile":"UNCONFIRMED"}','PDF/X profile is not yet approved.','system');
+
+-- The original scaffold seeded example factories. Keep them for local/demo history
+-- but prevent a fresh production deployment from presenting them as active master data.
+UPDATE factories
+SET status='SAMPLE',updated_at=CURRENT_TIMESTAMP
+WHERE id IN ('ningbo-a','zhejiang-b','vietnam-c') AND status='ACTIVE';
