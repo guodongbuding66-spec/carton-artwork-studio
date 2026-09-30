@@ -10,6 +10,7 @@ const pdfxValidatorUrl = process.env.CLOUDFLARE_PDFX_VALIDATOR_URL || "";
 
 if (!databaseId) throw new Error("CLOUDFLARE_D1_DATABASE_ID is required.");
 if (!bucketName) throw new Error("CLOUDFLARE_R2_BUCKET_NAME is required.");
+if (!pdfxValidatorUrl) throw new Error("CLOUDFLARE_PDFX_VALIDATOR_URL is required for v2 staging acceptance.");
 
 const config = {
   "$schema": "node_modules/wrangler/config-schema.json",

@@ -6,6 +6,7 @@ import { EXPECTED_LATEST_MIGRATION, buildSystemReadiness } from "./system-readin
 import { inspectProductionAsset, safeAssetCode } from "./production-assets.js";
 import { renderEmbeddedArtworkPdf } from "./production-renderer.js";
 import { runExternalPdfxValidation, validateValidatorConfig } from "./pdfx-validator.js";
+import { PDFX_PRODUCTION_PROMOTION_POLICY } from "./pdfx-promotion-policy.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -271,7 +272,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.9.0",
+        version: "2.0.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -281,6 +282,17 @@ export default {
           d1: Boolean(env.DB),
           r2: Boolean(env.ARTWORK_FILES),
           assets: Boolean(env.ASSETS)
+        },
+        pdfx: {
+          candidateProfiles: ["PDF/X-4"],
+          productionProfiles: [],
+          promotionPolicyVersion: PDFX_PRODUCTION_PROMOTION_POLICY.version,
+          standard: PDFX_PRODUCTION_PROMOTION_POLICY.standard,
+          primaryValidatorVersion: PDFX_PRODUCTION_PROMOTION_POLICY.primaryValidator.version,
+          rulesetId: PDFX_PRODUCTION_PROMOTION_POLICY.primaryValidator.ruleset.id,
+          rulesetVersion: PDFX_PRODUCTION_PROMOTION_POLICY.primaryValidator.ruleset.version,
+          rulesetSha256: PDFX_PRODUCTION_PROMOTION_POLICY.primaryValidator.ruleset.sha256,
+          validatorConfigured: validateValidatorConfig(env).ok
         },
         time: new Date().toISOString()
       });
@@ -1122,6 +1134,13 @@ export default {
           external.validator,external.version,external.status,JSON.stringify({
             checks:external.checks,
             report:external.report,
+            trusted:external.trusted===true,
+            trustPolicyVersion:external.trustPolicyVersion,
+            ruleset:{
+              id:external.rulesetId,
+              version:external.rulesetVersion,
+              sha256:external.rulesetSha256
+            },
             fontAsset:{id:fontAsset.id,code:fontAsset.code,version:fontAsset.version,sha256:fontAsset.sha256},
             iccAsset:{id:iccAsset.id,code:iccAsset.code,version:iccAsset.version,sha256:iccAsset.sha256},
             outputConditionIdentifier,
@@ -1132,7 +1151,12 @@ export default {
         await audit(env,identity,"PDFX_VALIDATION",runId,external.status,{
           newValue:{
             artworkId,revision:artwork.currentRevision,pdfSha256:pdfSha,
-            validator:external.validator,version:external.version,status:external.status
+            validator:external.validator,version:external.version,status:external.status,
+            trusted:external.trusted===true,
+            trustPolicyVersion:external.trustPolicyVersion,
+            rulesetId:external.rulesetId,
+            rulesetVersion:external.rulesetVersion,
+            rulesetSha256:external.rulesetSha256
           },
           reason:"External PDF/X validator result"
         });

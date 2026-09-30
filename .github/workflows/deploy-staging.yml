@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: carton-artwork-studio-staging
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -41,3 +45,10 @@ jobs:
           CLOUDFLARE_STAGING_URL: ${{ vars.CLOUDFLARE_STAGING_URL }}
           CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
           CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
+      - name: Upload staging acceptance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-acceptance-${{ github.sha }}
+          path: artifacts/staging-acceptance.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,3 +1,8 @@
+import {
+  PDFX_PRODUCTION_PROMOTION_POLICY,
+  validateTrustedPrimaryValidatorEvidence
+} from "./pdfx-promotion-policy.js";
+
 function isHttpsUrl(value) {
   try {
     const u=new URL(String(value||""));
@@ -13,14 +18,22 @@ function safeJson(value) {
 
 export function validateValidatorConfig(env={}) {
   const url=String(env.PDFX_VALIDATOR_URL||"").trim();
+  const token=String(env.PDFX_VALIDATOR_TOKEN||"").trim();
   const errors=[];
   if(!url) errors.push("PDFX_VALIDATOR_URL is not configured.");
   else if(!isHttpsUrl(url)) errors.push("PDFX_VALIDATOR_URL must use HTTPS.");
+  if(!token) errors.push("PDFX_VALIDATOR_TOKEN is not configured.");
   return {
     ok:errors.length===0,
     errors,
     url,
-    hasToken:Boolean(String(env.PDFX_VALIDATOR_TOKEN||"").trim())
+    hasToken:Boolean(token),
+    promotionPolicyVersion:PDFX_PRODUCTION_PROMOTION_POLICY.version,
+    trustedPrimaryValidator:{
+      names:[...PDFX_PRODUCTION_PROMOTION_POLICY.primaryValidator.acceptedNames],
+      version:PDFX_PRODUCTION_PROMOTION_POLICY.primaryValidator.version,
+      ruleset:{...PDFX_PRODUCTION_PROMOTION_POLICY.primaryValidator.ruleset}
+    }
   };
 }
 
@@ -44,10 +57,29 @@ export function validateValidatorResponse(payload, expected={}) {
   if(!validator) errors.push("Validator name is required.");
   const version=String(data.version||data.validatorVersion||"").trim();
   if(!version) errors.push("Validator version is required.");
+  const rulesetId=String(data.rulesetId||data.ruleset_id||"").trim();
+  const rulesetVersion=String(data.rulesetVersion||data.ruleset_version||"").trim();
+  const rulesetSha256=String(data.rulesetSha256||data.ruleset_sha256||"").toLowerCase();
   const checks=Array.isArray(data.checks)?data.checks:[];
   if(status==="PASS" && checks.some((x)=>x && x.ok===false)){
     errors.push("Validator returned PASS while one or more checks failed.");
   }
+
+  let trust={ok:false,errors:[]};
+  if(expected.requireTrusted===true && status==="PASS") {
+    trust=validateTrustedPrimaryValidatorEvidence({
+      status,
+      profile:data.profile,
+      artifactSha256,
+      validator,
+      version,
+      rulesetId,
+      rulesetVersion,
+      rulesetSha256
+    });
+    errors.push(...trust.errors);
+  }
+
   return {
     ok:errors.length===0,
     errors,
@@ -57,6 +89,11 @@ export function validateValidatorResponse(payload, expected={}) {
       artifactSha256,
       validator,
       version,
+      rulesetId,
+      rulesetVersion,
+      rulesetSha256,
+      trusted:expected.requireTrusted===true ? trust.ok : null,
+      trustPolicyVersion:expected.requireTrusted===true ? PDFX_PRODUCTION_PROMOTION_POLICY.version : null,
       checks,
       report:data.report??data
     }
@@ -76,13 +113,17 @@ export async function runExternalPdfxValidation(bytesLike, options={}, env={}) {
   if(!bytes.length) throw new Error("PDFX_VALIDATOR_EMPTY_PDF");
   if(!/^[0-9a-f]{64}$/.test(artifactSha256)) throw new Error("PDFX_VALIDATOR_SHA_REQUIRED");
 
+  const policy=PDFX_PRODUCTION_PROMOTION_POLICY;
   const headers=new Headers({
     "content-type":"application/pdf",
     "x-cas-pdfx-profile":profile,
-    "x-cas-artifact-sha256":artifactSha256
+    "x-cas-artifact-sha256":artifactSha256,
+    "x-cas-promotion-policy-version":policy.version,
+    "x-cas-ruleset-id":policy.primaryValidator.ruleset.id,
+    "x-cas-ruleset-version":policy.primaryValidator.ruleset.version,
+    "x-cas-ruleset-sha256":policy.primaryValidator.ruleset.sha256
   });
-  const token=String(env.PDFX_VALIDATOR_TOKEN||"").trim();
-  if(token) headers.set("authorization",`Bearer ${token}`);
+  headers.set("authorization",`Bearer ${String(env.PDFX_VALIDATOR_TOKEN).trim()}`);
 
   let response;
   try{
@@ -104,7 +145,7 @@ export async function runExternalPdfxValidation(bytesLike, options={}, env={}) {
     err.detail={status:response.status,body:text.slice(0,2000)};
     throw err;
   }
-  const validation=validateValidatorResponse(text,{profile,artifactSha256});
+  const validation=validateValidatorResponse(text,{profile,artifactSha256,requireTrusted:true});
   if(!validation.ok){
     const err=new Error("PDFX_VALIDATOR_RESPONSE_INVALID");
     err.detail=validation.errors;

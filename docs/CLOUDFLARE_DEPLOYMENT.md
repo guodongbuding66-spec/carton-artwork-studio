@@ -39,12 +39,12 @@ CLOUDFLARE_D1_DATABASE_ID
 CLOUDFLARE_R2_BUCKET_NAME=carton-artwork-studio-staging-files
 CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL
 CLOUDFLARE_STAGING_URL=https://<staging-hostname>
-CLOUDFLARE_PDFX_VALIDATOR_URL=https://<trusted-validator-endpoint>   # optional until validator is selected
+CLOUDFLARE_PDFX_VALIDATOR_URL=https://<trusted-validator-endpoint>   # required for v2 final staging acceptance
 ```
 
 Use a narrowly scoped Cloudflare API token. Do not commit it.
 
-If the chosen PDF/X validator requires authentication, provision `PDFX_VALIDATOR_TOKEN` directly as a Cloudflare Worker secret. Do not place it in repository variables.
+`PDFX_VALIDATOR_TOKEN` is required by the v2 trust policy. Provision it directly as a Cloudflare Worker secret. Do not place it in repository variables.
 
 ## 3. Deploy staging
 
@@ -54,7 +54,8 @@ The manual workflow `.github/workflows/deploy-staging.yml`:
 2. generates a staging Wrangler config;
 3. applies D1 migrations remotely;
 4. deploys the Worker/assets;
-5. runs an Access-authenticated post-deploy smoke test for service identity, D1, R2, Assets and auth-bypass state.
+5. runs an Access-authenticated post-deploy smoke test for service identity, version, D1, R2, Assets, auth-bypass state, and trusted-validator configuration;
+6. uploads `staging-acceptance.json` as a GitHub Actions artifact.
 
 Trigger it only after the secrets and variables above are configured.
 
@@ -118,3 +119,14 @@ Operational details and gate definitions:
 Bridge protocol and trust boundary:
 
 `docs/PDFX_VALIDATOR_BRIDGE.md`
+
+
+## v2.0 trusted PDF/X promotion
+
+The selected automated production validator is pinned in code to callas pdfToolbox CLI/Server 17.0.683 and ruleset `CAS-PDFX4-PRODUCTION-1@1.0.0`.
+
+This is not sufficient by itself to enable PDF/X-4 Production. Independent PitStop 26.07 regression evidence plus actual printer/RIP Ghent PDF Output Suite 5.0 Level 1+2 evidence are required.
+
+See:
+
+`docs/PRODUCTION_PROMOTION_POLICY.md`

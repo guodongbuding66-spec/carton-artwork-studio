@@ -65,8 +65,8 @@ export function buildSystemReadiness(input = {}) {
       `${Number(counts.approvedFonts||0)} approved FONT asset(s).`,"PRODUCTION"),
     gate("APPROVED_ICC_ASSET","Approved ICC output profile",Number(counts.approvedIccProfiles||0)>0,
       `${Number(counts.approvedIccProfiles||0)} approved ICC_PROFILE asset(s).`,"PRODUCTION"),
-    gate("PDFX_VALIDATOR_CONFIGURED","External PDF/X validator configured",input.pdfxValidatorConfigured===true,
-      input.pdfxValidatorConfigured?"Trusted external validator endpoint is configured.":"PDFX_VALIDATOR_URL is not configured.","PRODUCTION"),
+    gate("PDFX_VALIDATOR_CONFIGURED","Trusted PDF/X validator bridge configured",input.pdfxValidatorConfigured===true,
+      input.pdfxValidatorConfigured?"Trusted validator URL + bearer secret are configured; response identity/ruleset is still verified per v2 policy.":"Trusted validator bridge is incomplete: HTTPS URL and PDFX_VALIDATOR_TOKEN are required.","PRODUCTION"),
     ...((prod.gates||[]).map((x)=>gate(
       x.code,
       x.displayName||x.code,

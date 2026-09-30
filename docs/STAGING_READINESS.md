@@ -157,3 +157,25 @@ Production Readiness now also checks whether `PDFX_VALIDATOR_URL` is configured.
 This gate is separate from PDF/X profile capability: configuration alone does not make `PDF/X-4` production-ready.
 
 See `docs/PDFX_VALIDATOR_BRIDGE.md`.
+
+
+## v2.0 final staging acceptance
+
+The final staging deployment is serialized so two manual staging deployments cannot race each other.
+
+A successful post-deploy smoke test must additionally verify:
+
+- deployed app version is `2.0.0`;
+- promotion policy version is `2.0.0`;
+- trusted validator URL + bearer secret are visible to the Worker as configured;
+- the pinned ruleset ID/version/SHA are exposed by `/api/health`.
+
+The workflow uploads:
+
+`staging-acceptance-<git-sha>`
+
+containing `artifacts/staging-acceptance.json`.
+
+This artifact is staging evidence only; it is not printer/RIP qualification evidence.
+
+For PDF/X-4 Production promotion, see `docs/PRODUCTION_PROMOTION_POLICY.md`.
