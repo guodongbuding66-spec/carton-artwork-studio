@@ -673,7 +673,7 @@
             <div class="kpi"><div class="kpi-label">LAST R2 PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
           </div>
           <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
-            Staging 与 Production 是两套门禁。字体嵌入/转曲或 PDF/X 尚未真正实现时，Production 应继续显示 BLOCKED，而不能靠 Policy JSON 伪造通过。
+            Staging 与 Production 是两套门禁。TrueType 字体嵌入已由服务器 Renderer 实现；文字转曲与 PDF/X 尚未实现时，Production 仍应保持 BLOCKED，不能靠 Policy JSON 伪造通过。
           </div>
         </div>
         <div class="card-head"><h3>Staging Gates</h3></div>
