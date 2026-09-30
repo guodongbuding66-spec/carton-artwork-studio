@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.7.0
+## 当前版本：1.8.0
 
 ### 已实现
 
@@ -53,6 +53,65 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.8.0 关键工程进展
+
+### 1. ICC OutputIntent 真正进入 PDF Renderer
+
+Approved `ICC_PROFILE` 现在不再只是资产库记录。
+
+服务器 Renderer 已可以把 CMYK ICC 文件真实写入 PDF：
+
+- `/OutputIntents`
+- `/S /GTS_PDFX`
+- `/DestOutputProfile`
+- ICC stream
+- `/TrimBox`
+- `/BleedBox`
+
+含 ICC 的候选稿升级为 PDF 1.6。
+
+### 2. PDF/X-4 XMP Candidate
+
+候选稿增加 XMP：
+
+```text
+pdfxid:GTS_PDFXVersion = PDF/X-4
+```
+
+同时保留已批准 TrueType Font、Code128、QR 与真实 mm Geometry。
+
+### 3. OutputIntent Test PDF
+
+Quality > Assets 中，Approved CMYK ICC Profile 新增：
+
+`OutputIntent Test PDF`
+
+测试时 Worker 会重新读取并验证：
+
+- 当前 D1 Artwork；
+- FONT_POLICY 精确锁定的 Approved Font；
+- 当前选择的 Approved ICC；
+- Font SHA-256；
+- ICC SHA-256。
+
+生成结果写入 Audit Log，但仍带 Proof watermark，不会冒充正式生产稿。
+
+### 4. 没有提前宣布 PDF/X 合规
+
+Renderer capability 现在区分：
+
+```text
+iccOutputIntent = true
+pdfxMetadataCandidate = true
+pdfxProfiles = []
+```
+
+也就是说：**OutputIntent 与 PDF/X metadata 已实现，但 PDF/X-4 conformance 尚未被外部 Validator 证明。**
+
+因此 PDFX_POLICY 仍然无法通过 Production Gate。
+
+详见 `docs/PDFX_CANDIDATE.md`。
 
 ## v1.7.0 关键工程进展
 
@@ -892,6 +951,7 @@ docs/
   CLOUDFLARE_DEPLOYMENT.md
   STAGING_READINESS.md
   PRODUCTION_ASSETS.md
+  PDFX_CANDIDATE.md
 migrations/
   0001_init.sql
   0002_batch_and_artifacts.sql
@@ -960,8 +1020,8 @@ npm run check
 
 - 一维码最终 Symbology / Barcode payload 业务确认
 - QR payload / ECC 业务确认；当前模板默认 ECC M，Version 自动选择
-- Approved Font / ICC Asset Registry 已实现；Approved TrueType Font 已接入服务器 PDF Renderer，仍需 outlining 与 ICC OutputIntent
-- PDF/X Policy + ICC Asset 已有受控审批链；下一步实现 OutputIntent / PDF-X metadata / page-box conformance / 外部验证
+- Approved Font / ICC Asset Registry 已实现；TrueType Font embedding 与 CMYK ICC OutputIntent 已接入服务器 PDF Renderer，仍需 outlining 与外部 PDF/X conformance validation
+- PDF/X Policy + ICC Asset 已有受控审批链；OutputIntent / PDF-X-4 XMP Candidate / page boxes 已实现，仍需外部 PDF/X validator 通过后才能开启正式 PDF/X profile capability
 - Excel style/number-format leading-zero 恢复已实现；仍需更多真实 Packing List 样本做兼容性回归
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Cloudflare Access / RBAC / Staging Readiness 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application、D1/R2 与 Access Service Token
