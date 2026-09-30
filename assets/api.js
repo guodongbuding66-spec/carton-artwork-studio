@@ -63,8 +63,11 @@
         headers:{
           artifactSha256:response.headers?.get?.("x-cas-artifact-sha256")||response.headers?.get?.("x-cas-pdf-sha256")||"",
           fontSha256:response.headers?.get?.("x-cas-font-sha256")||"",
+          iccSha256:response.headers?.get?.("x-cas-icc-sha256")||"",
           renderer:response.headers?.get?.("x-cas-renderer")||"",
-          exportId:response.headers?.get?.("x-cas-export-id")||""
+          exportId:response.headers?.get?.("x-cas-export-id")||"",
+          pdfxProfile:response.headers?.get?.("x-cas-pdfx-profile")||"",
+          pdfxCandidate:response.headers?.get?.("x-cas-pdfx-candidate")||""
         }
       };
     }
@@ -133,6 +136,16 @@
       async renderFontEmbedValidation(artworkId, assetId) {
         const q=new URLSearchParams({assetId});
         return requestBlob(`/api/artworks/${encodeURIComponent(artworkId)}/font-embed-validation?${q}`, {
+          method:"POST", body:"{}"
+        });
+      },
+      async renderPdfX4Candidate(artworkId, options = {}) {
+        const q=new URLSearchParams({
+          fontAssetId:options.fontAssetId||"",
+          iccAssetId:options.iccAssetId||"",
+          outputConditionIdentifier:options.outputConditionIdentifier||""
+        });
+        return requestBlob(`/api/artworks/${encodeURIComponent(artworkId)}/pdfx4-candidate-validation?${q}`, {
           method:"POST", body:"{}"
         });
       },
