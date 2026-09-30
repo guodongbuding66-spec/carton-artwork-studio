@@ -13,6 +13,8 @@ export function renderEmbeddedArtworkPdf({
   snapshot,
   metadata={},
   fontBytes,
+  iccBytes=null,
+  outputIntent=null,
   qrEcc="M",
   mode="production"
 }) {
@@ -44,7 +46,9 @@ export function renderEmbeddedArtworkPdf({
     codeModel,
     qrMatrix:qrModel.matrix,
     mode,
-    fontBytes
+    fontBytes,
+    iccBytes,
+    outputIntent
   });
   return {
     bytes,
@@ -59,6 +63,7 @@ export function renderEmbeddedArtworkPdf({
       symbology:"CODE128-B",
       widthMm:codeModel.widthMm,
       moduleMm:codeModel.moduleMm
-    }
+    },
+    outputIntent:iccBytes?{embedded:true,identifier:outputIntent?.identifier||"Custom",pdfxVersion:outputIntent?.pdfxVersion||"PDF/X-4"}:{embedded:false}
   };
 }
