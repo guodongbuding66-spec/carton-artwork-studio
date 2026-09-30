@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：0.8.0
+## 当前版本：0.9.0
 
 ### 已实现
 
@@ -51,6 +51,50 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v0.9.0 关键工程进展
+
+### Template lifecycle 进入真实工作流
+
+Template Center 不再只展示静态版本历史。D1 现在支持：
+
+```text
+Approved Version
+      ↓ Clone
+Draft
+      ↓ Save / Schema Gate
+Submitted
+      ↓ Template Approver
+Approved / Rejected
+```
+
+Template Version 保存 JSON、Effective Date、Preflight Profile、Notes、创建人、提交人和批准人。
+
+### Template four-eyes
+
+Template Designer 不能批准自己提交的同一个 Template Version。该规则在 Worker 后端执行，Admin 也不能绕过。
+
+### Schema validation gate
+
+提交和批准前都会验证：
+
+- schemaVersion；
+- mm geometry；
+- K-only print profile；
+- approved CodeBlock profile；
+- CodeBlock locked；
+- CRN placements。
+
+无效 Draft 可以编辑，但不能进入 Approved。
+
+### Approved Version 不可原地修改
+
+仅 DRAFT / REJECTED 可以编辑。批准新版本时：
+
+- 新版本 → APPROVED；
+- 旧 Approved → DEPRECATED；
+- Approval decision 写入 `template_approvals`；
+- Audit Log 写入 Template Version 操作。
 
 ## v0.8.0 关键工程进展
 
