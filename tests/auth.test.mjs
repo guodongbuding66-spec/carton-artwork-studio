@@ -37,6 +37,7 @@ assert.equal(permissionForRequest("POST","/api/artworks/a1/exports"),"EXPORT_PRO
 assert.equal(permissionForRequest("PUT","/api/admin/users/u1/roles"),"ADMIN");
 assert.equal(permissionForRequest("GET","/api/artworks"),"READ");
 assert.equal(permissionForRequest("GET","/api/audit"),"AUDIT_READ");
+assert.equal(permissionForRequest("POST","/api/factories"),"ADMIN");
 assert.equal(permissionForRequest("PATCH","/api/factories/ningbo-a"),"ADMIN");
 assert.equal(permissionForRequest("POST","/api/templates/t1/versions"),"TEMPLATE_WRITE");
 assert.equal(permissionForRequest("PATCH","/api/template-versions/v1"),"TEMPLATE_WRITE");
@@ -47,6 +48,8 @@ assert.equal(permissionForRequest("PATCH","/api/reference-records/r1"),"REFERENC
 assert.equal(permissionForRequest("PATCH","/api/production-policies/BARCODE_POLICY"),"PRODUCTION_POLICY_WRITE");
 assert.equal(permissionForRequest("POST","/api/production-policies/BARCODE_POLICY/submit"),"PRODUCTION_POLICY_WRITE");
 assert.equal(permissionForRequest("POST","/api/production-policies/BARCODE_POLICY/approval"),"PRODUCTION_POLICY_APPROVE");
+assert.equal(permissionForRequest("GET","/api/system/readiness"),"ADMIN");
+assert.equal(permissionForRequest("POST","/api/system/readiness/probe"),"ADMIN");
 
 const bypassReq=new Request("https://localhost/api/me",{
   headers:{"x-cas-dev-user":"dev@example.com","x-cas-dev-roles":"ADMIN,REVIEWER"}

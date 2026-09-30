@@ -49,6 +49,9 @@
       async factories() {
         return request("/api/factories");
       },
+      async createFactory(payload) {
+        return request("/api/factories", { method:"POST", body:JSON.stringify(payload) });
+      },
       async referenceRecords(params = {}) {
         const q = new URLSearchParams();
         if (params.namespace) q.set("namespace", params.namespace);
@@ -68,6 +71,12 @@
       },
       async productionReadiness() {
         return request("/api/production-readiness");
+      },
+      async systemReadiness() {
+        return request("/api/system/readiness");
+      },
+      async runSystemReadinessProbe() {
+        return request("/api/system/readiness/probe", { method:"POST", body:"{}" });
       },
       async updateProductionPolicy(code, payload) {
         return request(`/api/production-policies/${encodeURIComponent(code)}`, {
