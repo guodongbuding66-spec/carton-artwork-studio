@@ -78,7 +78,81 @@
     return out;
   }
 
-  function parseSheetXml(xml, sharedStrings = []) {
+  function xmlAttr(attrs, name) {
+    const m = new RegExp("\\b" + name + '="([^"]*)"').exec(String(attrs || ""));
+    return m ? decodeXmlText(m[1]) : "";
+  }
+
+  function parseStylesXml(xml) {
+    const src = String(xml || "");
+    const numFmts = new Map();
+    for (const m of src.matchAll(/<numFmt\b([^>]*)\/?\s*>/g)) {
+      const id = Number(xmlAttr(m[1], "numFmtId"));
+      const code = xmlAttr(m[1], "formatCode");
+      if (Number.isInteger(id) && code) numFmts.set(id, code);
+    }
+
+    const xfs = [];
+    const section = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(src)?.[1] || "";
+    for (const m of section.matchAll(/<xf\b([^>]*)\/?\s*>/g)) {
+      const id = Number(xmlAttr(m[1], "numFmtId") || 0);
+      xfs.push({ numFmtId: id, formatCode: numFmts.get(id) || "" });
+    }
+    return { xfs };
+  }
+
+  function zeroMaskWidth(formatCode) {
+    const first = String(formatCode || "").split(";")[0];
+    const clean = first
+      .replace(/"[^"]*"/g, "")
+      .replace(/\\./g, "")
+      .replace(/\[[^\]]*\]/g, "")
+      .replace(/_.?/g, "")
+      .replace(/\*.?/g, "")
+      .trim();
+    return /^0+$/.test(clean) ? clean.length : 0;
+  }
+
+  function exactIntegerString(value) {
+    const s = String(value ?? "").trim();
+    if (!s) return "";
+    const m = /^([+-]?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(s);
+    if (!m) return null;
+    const sign = m[1] === "-" ? "-" : "";
+    const intPart = m[2];
+    const frac = m[3] || "";
+    const exp = Number(m[4] || 0);
+    const digits = (intPart + frac).replace(/^0+(?=\d)/, "") || "0";
+    const decimalPos = intPart.length + exp;
+
+    let integer;
+    if (decimalPos <= 0) {
+      if (digits.split("").some((ch) => ch !== "0")) return null;
+      integer = "0";
+    } else if (decimalPos >= digits.length) {
+      integer = digits + "0".repeat(decimalPos - digits.length);
+    } else {
+      const tail = digits.slice(decimalPos);
+      if (/[1-9]/.test(tail)) return null;
+      integer = digits.slice(0, decimalPos) || "0";
+    }
+    integer = integer.replace(/^0+(?=\d)/, "") || "0";
+    return sign + integer;
+  }
+
+  function formatNumericByStyle(value, styleIndex, styles) {
+    const fmt = styles?.xfs?.[Number(styleIndex)]?.formatCode || "";
+    const width = zeroMaskWidth(fmt);
+    if (!width) return value;
+    const exact = exactIntegerString(value);
+    if (exact == null || exact === "") return value;
+    const neg = exact.startsWith("-");
+    const digits = neg ? exact.slice(1) : exact;
+    const padded = digits.padStart(width, "0");
+    return neg ? "-" + padded : padded;
+  }
+
+  function parseSheetXml(xml, sharedStrings = [], styles = null) {
     const rows = [];
     for (const rm of String(xml || "").matchAll(/<row\b([^>]*)>([\s\S]*?)<\/row>/g)) {
       const rowAttr = rm[1];
@@ -89,16 +163,21 @@
         const attrs = cm[1], body = cm[2];
         const refMatch = /\br="([^"]+)"/.exec(attrs);
         const typeMatch = /\bt="([^"]+)"/.exec(attrs);
+        const styleMatch = /\bs="(\d+)"/.exec(attrs);
         const ref = refMatch?.[1] || "";
         const parts = cellRefToParts(ref);
         const col = parts ? parts.col : row.length;
         const type = typeMatch?.[1] || "";
+        const styleIndex = styleMatch ? Number(styleMatch[1]) : 0;
         const valueMatch = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(body);
         const inlineMatch = /<t\b[^>]*>([\s\S]*?)<\/t>/.exec(body);
         const formulaMatch = /<f\b[^>]*>([\s\S]*?)<\/f>/.exec(body);
         let value = valueMatch ? decodeXmlText(valueMatch[1]) : (inlineMatch ? decodeXmlText(inlineMatch[1]) : "");
         if (formulaMatch && !valueMatch && !inlineMatch) value = `__FORMULA_NO_CACHE__:${decodeXmlText(formulaMatch[1])}`;
         if (type === "s" && !String(value).startsWith("__FORMULA_NO_CACHE__:")) value = sharedStrings[Number(value)] ?? "";
+        if ((type === "" || type === "n") && !String(value).startsWith("__FORMULA_NO_CACHE__:")) {
+          value = formatNumericByStyle(value, styleIndex, styles);
+        }
         if (type === "b") value = value === "1";
         row[col] = value;
       }
@@ -167,6 +246,10 @@
     const sharedXml = sharedEntry ? td.decode(await unzipEntry(bytes, sharedEntry)) : "";
     const shared = parseSharedStrings(sharedXml);
 
+    const stylesEntry = entries.get("xl/styles.xml");
+    const stylesXml = stylesEntry ? td.decode(await unzipEntry(bytes, stylesEntry)) : "";
+    const styles = parseStylesXml(stylesXml);
+
     let sheetEntry = entries.get("xl/worksheets/sheet1.xml");
     if (!sheetEntry) {
       const first = [...entries.keys()].find((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n));
@@ -175,7 +258,7 @@
     if (!sheetEntry) throw new Error("No worksheet found in XLSX.");
 
     const sheetXml = td.decode(await unzipEntry(bytes, sheetEntry));
-    return parseSheetXml(sheetXml, shared);
+    return parseSheetXml(sheetXml, shared, styles);
   }
 
   function buildAliasIndex(aliases = DEFAULT_ALIASES) {
@@ -290,6 +373,10 @@
     normalizeHeader,
     parseCsv,
     parseSharedStrings,
+    parseStylesXml,
+    zeroMaskWidth,
+    exactIntegerString,
+    formatNumericByStyle,
     parseSheetXml,
     listZipEntries,
     parseXlsx,

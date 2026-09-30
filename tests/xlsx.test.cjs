@@ -38,4 +38,26 @@ test("Formula without cached value becomes cell-level error", () => {
   assert.ok(result.issues.some(i => i.cell === "B2" && /no cached value/i.test(i.message)));
 });
 
+test("XLSX custom zero mask restores leading zeros", () => {
+  const styles = X.parseStylesXml(
+    '<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="000000000000"/></numFmts><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>'
+  );
+  const xml = '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Barcode</t></is></c></row><row r="2"><c r="A2" s="1"><v>12345</v></c></row></sheetData></worksheet>';
+  const rows = X.parseSheetXml(xml,[],styles);
+  assert.equal(rows[1][0],"000000012345");
+});
+
+test("XLSX zero mask restores exact scientific integer without Number rounding", () => {
+  const styles = { xfs:[{}, { formatCode:"000000000000000000" }] };
+  assert.equal(X.formatNumericByStyle("1.23456789012345E+14",1,styles),"000123456789012345");
+  assert.equal(X.exactIntegerString("1.2345E+5"),"123450");
+});
+
+test("Non-zero-mask number format does not rewrite numeric content", () => {
+  const styles = X.parseStylesXml(
+    '<styleSheet><numFmts count="1"><numFmt numFmtId="165" formatCode="0.00"/></numFmts><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="165"/></cellXfs></styleSheet>'
+  );
+  assert.equal(X.formatNumericByStyle("12.3",1,styles),"12.3");
+});
+
 console.log("XLSX tests passed.");
