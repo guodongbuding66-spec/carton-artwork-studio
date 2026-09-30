@@ -208,6 +208,8 @@ function publicIdentity(identity) {
       referenceWrite: can(identity, "REFERENCE_WRITE"),
       productionPolicyWrite: can(identity, "PRODUCTION_POLICY_WRITE"),
       productionPolicyApprove: can(identity, "PRODUCTION_POLICY_APPROVE"),
+      productionAssetWrite: can(identity, "PRODUCTION_ASSET_WRITE"),
+      productionAssetApprove: can(identity, "PRODUCTION_ASSET_APPROVE"),
       productionExport: can(identity, "EXPORT_PRODUCTION"),
       admin: can(identity, "ADMIN")
     }
@@ -594,6 +596,156 @@ export default {
           reason:b.comment||"Production policy review decision"
         });
         return json({data:{code,status:next,reviewer:identity.email}},{status:201});
+      }
+
+      if(request.method==="GET"&&url.pathname==="/api/production-assets"){
+        const type=String(url.searchParams.get("type")||"").toUpperCase();
+        const where=[],binds=[];
+        if(type){where.push("pa.asset_type=?");binds.push(type);}
+        const {results}=await env.DB.prepare(`
+          SELECT pa.id,pa.asset_type AS assetType,pa.code,pa.version,pa.filename,pa.sha256,
+                 pa.size_bytes AS sizeBytes,pa.media_type AS mediaType,pa.metadata_json AS metadataJson,
+                 pa.status,pa.uploaded_by AS uploadedBy,pa.submitted_by AS submittedBy,
+                 pa.submitted_at AS submittedAt,pa.approved_by AS approvedBy,pa.approved_at AS approvedAt,
+                 pa.created_at AS createdAt,pa.updated_at AS updatedAt,
+                 (SELECT paa.decision FROM production_asset_approvals paa WHERE paa.production_asset_id=pa.id ORDER BY paa.created_at DESC LIMIT 1) AS lastDecision,
+                 (SELECT paa.comment FROM production_asset_approvals paa WHERE paa.production_asset_id=pa.id ORDER BY paa.created_at DESC LIMIT 1) AS lastComment
+          FROM production_assets pa
+          ${where.length?`WHERE ${where.join(" AND ")}`:""}
+          ORDER BY pa.asset_type,pa.code,pa.created_at DESC
+        `).bind(...binds).all();
+        return json({data:results.map((x)=>{
+          let metadata={};
+          try{metadata=JSON.parse(x.metadataJson||"{}");}catch{}
+          return {...x,metadata};
+        })});
+      }
+
+      if(request.method==="POST"&&url.pathname==="/api/production-assets/upload"){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const type=String(url.searchParams.get("type")||"").toUpperCase();
+        if(!["FONT","ICC_PROFILE"].includes(type))return err(400,"INVALID_ASSET_TYPE","type must be FONT or ICC_PROFILE.");
+        const code=safeAssetCode(url.searchParams.get("code"));
+        const version=String(url.searchParams.get("version")||"").trim();
+        const filename=String(url.searchParams.get("filename")||"asset.bin").replace(/[^a-zA-Z0-9._-]+/g,"_");
+        if(!code||!version)return err(400,"ASSET_IDENTITY_REQUIRED","code and version are required.");
+
+        const existing=await env.DB.prepare(
+          "SELECT id,status FROM production_assets WHERE asset_type=? AND code=? AND version=?"
+        ).bind(type,code,version).first();
+        if(existing)return err(409,"ASSET_VERSION_EXISTS","This asset type/code/version already exists.");
+
+        const declared=Number(request.headers.get("content-length")||0);
+        if(declared>12*1024*1024)return err(413,"ASSET_TOO_LARGE","Production asset exceeds 12 MB limit.");
+        const bytes=new Uint8Array(await request.arrayBuffer());
+        if(bytes.length>12*1024*1024)return err(413,"ASSET_TOO_LARGE","Production asset exceeds 12 MB limit.");
+        const inspection=inspectProductionAsset(type,bytes);
+        if(!inspection.ok)return err(400,"ASSET_VALIDATION_FAILED","Production asset validation failed.",inspection.errors);
+
+        const digest=await crypto.subtle.digest("SHA-256",bytes);
+        const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        const objectKey=`_production-assets/${type.toLowerCase()}/${code}/${version}/${sha256.slice(0,16)}-${filename}`;
+        const metadata={
+          ...inspection.metadata,
+          license:String(request.headers.get("x-asset-license")||"").trim(),
+          notes:String(request.headers.get("x-asset-notes")||"").trim()
+        };
+        const id=crypto.randomUUID();
+        try{
+          await env.ARTWORK_FILES.put(objectKey,bytes,{httpMetadata:{contentType:request.headers.get("content-type")||"application/octet-stream"}});
+          await env.DB.prepare(`
+            INSERT INTO production_assets(
+              id,asset_type,code,version,filename,object_key,sha256,size_bytes,media_type,metadata_json,
+              status,uploaded_by,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,'DRAFT',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+          `).bind(
+            id,type,code,version,filename,objectKey,sha256,bytes.length,
+            request.headers.get("content-type")||"application/octet-stream",JSON.stringify(metadata),identity.email
+          ).run();
+        }catch(e){
+          try{await env.ARTWORK_FILES.delete(objectKey);}catch{}
+          throw e;
+        }
+        await audit(env,identity,"PRODUCTION_ASSET",id,"UPLOAD",{
+          newValue:{assetType:type,code,version,filename,sha256,sizeBytes:bytes.length,metadata},
+          reason:"Production asset uploaded to controlled registry"
+        });
+        return json({data:{id,assetType:type,code,version,filename,sha256,sizeBytes:bytes.length,status:"DRAFT",metadata}},{status:201});
+      }
+
+      const assetSubmitMatch=/^\/api\/production-assets\/([^/]+)\/submit$/.exec(url.pathname);
+      if(request.method==="POST"&&assetSubmitMatch){
+        const id=assetSubmitMatch[1],b=await bodyJson(request);
+        const asset=await env.DB.prepare("SELECT * FROM production_assets WHERE id=?").bind(id).first();
+        if(!asset)return err(404,"NOT_FOUND","Production asset not found.");
+        if(!["DRAFT","REJECTED"].includes(String(asset.status).toUpperCase())){
+          return err(409,"ASSET_SUBMIT_STATE","Only DRAFT or REJECTED assets can be submitted.");
+        }
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const object=await env.ARTWORK_FILES.head(asset.object_key);
+        if(!object)return err(409,"ASSET_OBJECT_MISSING","Production asset object is missing from R2.");
+        await env.DB.prepare(`
+          UPDATE production_assets
+          SET status='SUBMITTED',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,
+              approved_by=NULL,approved_at=NULL,updated_at=CURRENT_TIMESTAMP
+          WHERE id=?
+        `).bind(identity.email,id).run();
+        await audit(env,identity,"PRODUCTION_ASSET",id,"SUBMIT_REVIEW",{
+          newValue:{status:"SUBMITTED",assetType:asset.asset_type,code:asset.code,version:asset.version},
+          reason:b.reason||"Production asset submitted for approval"
+        });
+        return json({data:{id,status:"SUBMITTED",submittedBy:identity.email}},{status:201});
+      }
+
+      const assetApprovalMatch=/^\/api\/production-assets\/([^/]+)\/approval$/.exec(url.pathname);
+      if(request.method==="POST"&&assetApprovalMatch){
+        const id=assetApprovalMatch[1],b=await bodyJson(request);
+        const asset=await env.DB.prepare("SELECT * FROM production_assets WHERE id=?").bind(id).first();
+        if(!asset)return err(404,"NOT_FOUND","Production asset not found.");
+        if(String(asset.status).toUpperCase()!=="SUBMITTED"){
+          return err(409,"ASSET_NOT_SUBMITTED","Only SUBMITTED assets can be approved or rejected.");
+        }
+        if(String(asset.submitted_by||"").toLowerCase()===identity.email.toLowerCase()){
+          await securityEvent(env,identity,"PRODUCTION_ASSET_SELF_APPROVAL_BLOCKED",request,{productionAssetId:id});
+          return err(409,"FOUR_EYES_REQUIRED","The production asset submitter cannot approve or reject the same asset.");
+        }
+        const decision=String(b.decision||"").toUpperCase();
+        if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
+        if(decision==="APPROVE"){
+          if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+          const object=await env.ARTWORK_FILES.head(asset.object_key);
+          if(!object)return err(409,"ASSET_OBJECT_MISSING","Production asset object is missing from R2.");
+        }
+        const approvalId=crypto.randomUUID();
+        const statements=[
+          env.DB.prepare(`
+            INSERT INTO production_asset_approvals(id,production_asset_id,reviewer,decision,comment,created_at)
+            VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
+          `).bind(approvalId,id,identity.email,decision,b.comment||"")
+        ];
+        if(decision==="APPROVE"){
+          statements.push(env.DB.prepare(`
+            UPDATE production_assets SET status='RETIRED',updated_at=CURRENT_TIMESTAMP
+            WHERE asset_type=? AND code=? AND status='APPROVED' AND id<>?
+          `).bind(asset.asset_type,asset.code,id));
+          statements.push(env.DB.prepare(`
+            UPDATE production_assets
+            SET status='APPROVED',approved_by=?,approved_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+          `).bind(identity.email,id));
+        }else{
+          statements.push(env.DB.prepare(`
+            UPDATE production_assets
+            SET status='REJECTED',approved_by=NULL,approved_at=NULL,updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+          `).bind(id));
+        }
+        await env.DB.batch(statements);
+        await audit(env,identity,"PRODUCTION_ASSET",id,decision,{
+          newValue:{status:decision==="APPROVE"?"APPROVED":"REJECTED",reviewer:identity.email,assetType:asset.asset_type,code:asset.code,version:asset.version},
+          reason:b.comment||"Production asset review decision"
+        });
+        return json({data:{id,status:decision==="APPROVE"?"APPROVED":"REJECTED",reviewer:identity.email}},{status:201});
       }
 
       if (request.method === "GET" && url.pathname === "/api/templates") {
