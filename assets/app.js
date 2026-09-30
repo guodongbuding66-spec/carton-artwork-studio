@@ -360,7 +360,13 @@
 
   function renderContent(){
     const tabs=["factories","customers","products","countries","shared"];
-    const factories=D.factories.map(f=>[f.name,`<span class="mono">${f.crn}</span>`,f.country,f.effective,'<button class="btn small" data-impact="1">Edit CRN</button>']);
+    const factories=state.factories.map(f=>[
+      f.name,
+      `<span class="mono">${esc(f.crn)}</span>`,
+      f.country,
+      f.effectiveAt||f.effective||"—",
+      permitted("admin")?`<button class="btn small" data-impact="${esc(f.id)}">Impact / Edit</button>`:"—"
+    ]);
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.contentTab===t?"active":""}" data-content-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${state.contentTab==="factories"?table(["Factory","CRN","Country","Effective",""],factories,true):`<div class="card-body"><div class="notice">该 Master Data 模块已预留。所有正式 Artwork Revision 保存冻结 Snapshot，Master Data 后续变化不会污染历史稿。</div></div>`}</section>`;
   }
 
@@ -368,10 +374,18 @@
     const tabs=["profiles","reports","compare"];
     let body="";
     if(state.qualityTab==="profiles") body=table(["Profile","Version","Status","Checks"],[["US_SIDE_SEAL_K_ONLY_V1","1","<span class='badge green'>Locked</span>","Data / Layout / Codes / Print"]],true);
-    if(state.qualityTab==="reports") body=table(["Artwork","Profile","Status","Time","Output Hash"],[
-      ["ART-260930-001","US_SIDE_SEAL_K_ONLY_V1","<span class='badge amber'>Warning</span>","09:25","b14f…92da"],["ART-260929-008","US_SIDE_SEAL_K_ONLY_V1","<span class='badge red'>Error</span>","Yesterday","—"]
-    ],true);
-    if(state.qualityTab==="compare") body=`<div class="card-body"><div class="notice">Version Compare roadmap: Text / Graphics / Code / Dieline · Side-by-side / Overlay / Difference / Flicker.</div></div>`;
+    if(state.qualityTab==="reports"){
+      const s=summary();
+      const recent=(state.auditLogs||[]).filter(x=>x.objectType==="PREFLIGHT").slice(0,50).map(x=>[
+        x.actor||"—",
+        x.createdAt||"—",
+        x.action||"RUN",
+        x.objectId||"—",
+        x.reason||"—"
+      ]);
+      body=`<div class="card-body"><div class="kpis" style="margin:0"><div class="kpi"><div class="kpi-label">Current Errors</div><div class="kpi-value" style="color:#bc2f3b">${s.error}</div></div><div class="kpi"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:#a86b00">${s.warning}</div></div><div class="kpi"><div class="kpi-label">Passed</div><div class="kpi-value" style="color:#16835d">${s.pass}</div></div></div></div>${recent.length?table(["Actor","Time","Action","Preflight","Reason"],recent):`<div class="card-body"><div class="notice">暂无可读取的持久化 Preflight Audit 记录。当前工作稿检查结果显示在上方。</div></div>`}`;
+    }
+    if(state.qualityTab==="compare") body=`<div class="card-body"><div class="notice">Version Compare roadmap: Text / Graphics / Code / Dieline · Side-by-side / Overlay / Difference / Flicker。当前不显示虚构比对结果。</div></div>`;
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
   }
 
@@ -385,22 +399,33 @@
       roles.map(role=>`<label style="display:inline-block;margin:2px 8px 2px 0"><input type="checkbox" data-role-user="${esc(u.id)}" data-role="${role}" ${u.roles?.includes(role)?"checked":""}/> ${role}</label>`).join(""),
       `<button class="btn small" data-save-user-roles="${esc(u.id)}">Save Roles</button>`
     ]);
+    const auditRows=(state.auditLogs||[]).slice(0,100).map(x=>[
+      x.actor||"—",x.createdAt||"—",x.objectType||"—",x.action||"—",x.objectId||"—",x.reason||"—"
+    ]);
     return `
-      <section class="card"><div class="card-head"><h3>Access / RBAC Users</h3><span class="subtle">Cloudflare Access 提供身份，D1 控制应用角英</span></div><div class="card-body">
+      <section class="card"><div class="card-head"><h3>Access / RBAC Users</h3><span class="subtle">Cloudflare Access 提供身份，D1 控制应用角色</span></div><div class="card-body">
         <div class="row2"><div class="field"><label>Email</label><input id="admin-user-email" class="input" placeholder="name@company.com"/></div><div class="field"><label>Display Name</label><input id="admin-user-name" class="input" placeholder="Name"/></div></div>
         <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-user">Create User</button></div>
       </div>${table(["Email","Name","Status","Roles",""],userRows,true)}</section>
-      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Four-eyes Approval</h3></div><div class="card-body"><div class="notice">提交人与 Reviewer 必须是不同身份。即使拥有 Admin 角色，也不能批准自己提交的同一 Revision。</div></div></section>`;
+      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Four-eyes Approval</h3></div><div class="card-body"><div class="notice">提交人与 Reviewer 必须是不同身份。即使拥有 Admin 角色，也不能批准自己提交的同一 Revision。</div></div></section>
+      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Audit Log</h3><span class="subtle">D1 immutable-style operation trail</span><span class="spacer"></span><button class="btn small" data-action="refresh-audit">Refresh</button></div>${auditRows.length?table(["Actor","Time","Object","Action","ID","Reason"],auditRows):'<div class="card-body"><div class="notice">暂无 Audit Log。</div></div>'}</section>`;
   }
-
 
   function table(headers, rows, html=false){
     return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${html?String(v):esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   }
 
   function renderDialog(){
-    if(state.dialog!=="impact") return "";
-    return `<div class="dialog-backdrop"><div class="dialog"><div class="dialog-head">CRN Impact Analysis</div><div class="dialog-body"><div class="impact"><div><strong>3</strong>templates</div><div><strong>27</strong>draft artworks</div><div><strong>5</strong>approved-unproduced</div><div><strong>164</strong>historical</div></div><div class="notice warn" style="margin-top:12px">历史 Revision 为冻结 Snapshot，不自动修改。需要更新的未生产稿应创建新 Revision。</div><div class="toolbar" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-action="close-dialog">Close</button><button class="btn primary" data-action="impact-revision">Create New Revisions</button></div></div></div></div>`;
+    if(state.dialog!=="impact"||!state.impact) return "";
+    const i=state.impact, f=i.factory||{}, a=i.currentArtworks||{};
+    const canEdit=permitted("admin");
+    return `<div class="dialog-backdrop"><div class="dialog"><div class="dialog-head">Factory Impact Analysis</div><div class="dialog-body">
+      <div class="row2"><div class="field"><label>Factory</label><input id="impact-factory-name" class="input" value="${esc(f.name||"")}" ${canEdit?"":"disabled"}/></div><div class="field"><label>CRN</label><input id="impact-factory-crn" class="input mono" value="${esc(f.crn||"")}" ${canEdit?"":"disabled"}/></div></div>
+      <div class="row2"><div class="field"><label>Country</label><input id="impact-factory-country" class="input" value="${esc(f.country||"")}" ${canEdit?"":"disabled"}/></div><div class="field"><label>Effective</label><input id="impact-factory-effective" class="input" value="${esc(f.effectiveAt||"")}" ${canEdit?"":"disabled"}/></div></div>
+      <div class="impact" style="margin-top:12px"><div><strong>${a.total||0}</strong>current artworks</div><div><strong>${a.draft||0}</strong>draft</div><div><strong>${a.inReview||0}</strong>in review</div><div><strong>${a.approved||0}</strong>approved</div><div><strong>${a.approvedUnproduced||0}</strong>approved-unproduced</div><div><strong>${i.revisionCount||0}</strong>historical revisions</div></div>
+      <div class="notice warn" style="margin-top:12px">${esc(i.note||"Historical Revision snapshots remain frozen.")}</div>
+      <div class="toolbar" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-action="close-dialog">Close</button>${canEdit?'<button class="btn primary" data-action="save-factory">Save Factory Master</button>':""}</div>
+    </div></div></div>`;
   }
 
   function bind(){
