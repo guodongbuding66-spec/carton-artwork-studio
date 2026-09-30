@@ -1,14 +1,27 @@
 import assert from "node:assert/strict";
 import { inspectFont, inspectIcc, inspectProductionAsset, safeAssetCode } from "../worker/production-assets.js";
 
-const ttf=new Uint8Array(28);
+function putU16(b,o,v){b[o]=(v>>>8)&255;b[o+1]=v&255;}
+function putU32(b,o,v){b[o]=(v>>>24)&255;b[o+1]=(v>>>16)&255;b[o+2]=(v>>>8)&255;b[o+3]=v&255;}
+
+const tags=["cmap","head","hhea","hmtx","maxp","glyf","loca"];
+const ttf=new Uint8Array(12+tags.length*16);
 ttf.set([0,1,0,0],0);
-ttf[4]=0;ttf[5]=1;
-ttf.set(new TextEncoder().encode("name"),12);
-ttf[20]=0;ttf[21]=0;ttf[22]=0;ttf[23]=28;
-ttf[24]=0;ttf[25]=0;ttf[26]=0;ttf[27]=0;
+putU16(ttf,4,tags.length);
+let p=12;
+for(const tag of tags){
+  ttf.set(new TextEncoder().encode(tag),p);
+  putU32(ttf,p+8,ttf.length);
+  putU32(ttf,p+12,0);
+  p+=16;
+}
 assert.equal(inspectFont(ttf).ok,true);
 assert.equal(inspectFont(ttf).metadata.container,"TrueType");
+
+const missingCmap=ttf.slice();
+missingCmap.set(new TextEncoder().encode("name"),12);
+assert.equal(inspectFont(missingCmap).ok,false);
+assert.ok(inspectFont(missingCmap).errors.some(x=>/cmap/i.test(x)));
 
 const badFont=new TextEncoder().encode("not-a-font");
 assert.equal(inspectFont(badFont).ok,false);
