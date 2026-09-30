@@ -48,6 +48,9 @@ assert.equal(permissionForRequest("PATCH","/api/reference-records/r1"),"REFERENC
 assert.equal(permissionForRequest("PATCH","/api/production-policies/BARCODE_POLICY"),"PRODUCTION_POLICY_WRITE");
 assert.equal(permissionForRequest("POST","/api/production-policies/BARCODE_POLICY/submit"),"PRODUCTION_POLICY_WRITE");
 assert.equal(permissionForRequest("POST","/api/production-policies/BARCODE_POLICY/approval"),"PRODUCTION_POLICY_APPROVE");
+assert.equal(permissionForRequest("POST","/api/production-assets/upload"),"PRODUCTION_ASSET_WRITE");
+assert.equal(permissionForRequest("POST","/api/production-assets/a1/submit"),"PRODUCTION_ASSET_WRITE");
+assert.equal(permissionForRequest("POST","/api/production-assets/a1/approval"),"PRODUCTION_ASSET_APPROVE");
 assert.equal(permissionForRequest("GET","/api/system/readiness"),"ADMIN");
 assert.equal(permissionForRequest("POST","/api/system/readiness/probe"),"ADMIN");
 
