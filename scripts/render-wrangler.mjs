@@ -4,10 +4,11 @@ const target = process.argv[2] || "staging";
 if (target !== "staging") throw new Error("Only staging config generation is supported by this script.");
 
 const databaseId = process.env.CLOUDFLARE_D1_DATABASE_ID;
-const bucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME || "carton-artwork-studio-staging-files";
+const bucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME;
 const bootstrapAdmin = process.env.CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL || "";
 
 if (!databaseId) throw new Error("CLOUDFLARE_D1_DATABASE_ID is required.");
+if (!bucketName) throw new Error("CLOUDFLARE_R2_BUCKET_NAME is required.");
 
 const config = {
   "$schema": "node_modules/wrangler/config-schema.json",
