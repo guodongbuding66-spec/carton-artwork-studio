@@ -441,6 +441,74 @@
     if(action==="impact-revision"){state.dialog=null;render();toast("已生成受影响 Artwork 的新 Revision 任务","success");}
   }
 
+  async function loadComments(){
+    if(!state.apiOnline||!state.identity||!state.remoteArtworkId){
+      state.comments=[];render();return;
+    }
+    state.commentsLoading=true;render();
+    try{
+      const response=await api.comments(state.remoteArtworkId,state.artwork.revision);
+      state.comments=response.data||[];
+    }catch(e){
+      state.comments=[];
+      toast(e.message||String(e),"error");
+    }finally{
+      state.commentsLoading=false;render();
+    }
+  }
+
+  async function addComment(){
+    if(!permitted("commentWrite")||!state.remoteArtworkId){toast("没有评论权限或 Artwork 尚未同步。","error");return;}
+    const body=document.getElementById("comment-body")?.value?.trim()||"";
+    const blocking=Boolean(document.getElementById("comment-blocking")?.checked);
+    if(!body){toast("请输入审核意见。","error");return;}
+    try{
+      await api.addComment(state.remoteArtworkId,{revision:state.artwork.revision,body,blocking});
+      await loadComments();
+      toast(blocking?"Blocking comment 已添加":"Comment 已添加","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function resolveComment(id){
+    if(!permitted("review")){toast("只有 Reviewer / Admin 可以解决 Blocking comment。","error");return;}
+    try{
+      await api.resolveComment(id);
+      await loadComments();
+      toast("Blocking comment 已解决","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function loadAdminUsers(){
+    if(!state.apiOnline||!permitted("admin")){state.adminUsers=[];render();return;}
+    try{
+      const response=await api.adminUsers();
+      state.adminUsers=response.data||[];
+    }catch(e){toast(e.message||String(e),"error");}
+    render();
+  }
+
+  async function createAdminUser(){
+    if(!permitted("admin")){toast("需要 Admin 权限。","error");return;}
+    const email=document.getElementById("admin-user-email")?.value?.trim()||"";
+    const displayName=document.getElementById("admin-user-name")?.value?.trim()||"";
+    if(!email){toast("请输入 Email。","error");return;}
+    try{
+      await api.createUser({email,displayName});
+      await loadAdminUsers();
+      toast("User 已创建","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function saveUserRoles(userId){
+    if(!permitted("admin")){toast("需要 Admin 权限。","error");return;}
+    const roles=[...document.querySelectorAll(`[data-role-user="${CSS.escape(userId)}"]:checked`)].map(x=>x.dataset.role);
+    try{
+      await api.setUserRoles(userId,roles);
+      await loadAdminUsers();
+      toast("Roles 已更新","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
   async function ensureRemoteArtwork(){
     localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
     if(!state.apiOnline)return null;
