@@ -1,0 +1,10 @@
+{
+  "template": "US_SIDE_SEAL",
+  "sample": "KF210215US-02PM-001",
+  "geometry": {
+    "totalWidthMm": 1599.692,
+    "totalHeightMm": 1639.672
+  },
+  "pdfBytes": 0,
+  "sha256": "TO_BE_CAPTURED"
+}
