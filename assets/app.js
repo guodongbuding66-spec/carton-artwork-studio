@@ -40,7 +40,12 @@
     remoteArtworkId: localStorage.getItem("cas:remoteArtworkId") || null,
     remoteRevision: null,
     remoteImportJobId: null,
-    apiBindings: { d1:false, r2:false, assets:false }
+    apiBindings: { d1:false, r2:false, assets:false },
+    identity: null,
+    authError: null,
+    comments: [],
+    commentsLoading: false,
+    adminUsers: []
   };
 
   const navItems = [
@@ -87,6 +92,14 @@
   function summary() { return D.preflightSummary(checks()); }
   function factory() { return D.findFactory(state.artwork.factoryId); }
   function canonical() { return D.canonicalData(state.artwork); }
+  function hasRole(role){return Boolean(state.identity?.roles?.includes(role));}
+  function permitted(key){return Boolean(state.identity?.permissions?.[key]);}
+  function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
+  function identityLabel(){
+    if(state.identity) return `${state.identity.email} · ${state.identity.roles.join(", ")||"NO ROLE"}`;
+    if(state.apiChecked&&state.authError) return "Access required";
+    return state.apiChecked?"Local / unauthenticated":"Checking identity…";
+  }
 
   function shell(body, titleZh, titleEn) {
     return `
@@ -96,14 +109,14 @@
           <nav class="nav">
             ${navItems.map(([id,ic,zh,en]) => `<button class="nav-btn ${state.page===id?"active":""}" data-page="${id}"><span class="nav-icon">${ic}</span><span>${zh}</span><span>${en}</span></button>`).join("")}
           </nav>
-          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline?"API Connected":state.apiChecked?"Local Mode":"API Checking…"}</span></div>
+          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline&&state.identity?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline&&state.identity?"Access Connected":state.apiChecked?"Access Required / Local":"API Checking…"}</span><div class="subtle" style="margin-top:6px;word-break:break-word">${esc(identityLabel())}</div></div>
         </aside>
         <section class="main">
           <header class="topbar">
             <div class="breadcrumb">Carton Artwork Studio /</div><div class="page-title">${esc(titleZh)}</div><div class="breadcrumb">${esc(titleEn)}</div>
             <div class="spacer"></div>
             <label class="search"><input placeholder="搜索 SKU / Contract / CRN…" /></label>
-            <span class="dev">DEV</span><button class="icon-btn" title="Notifications">◔</button><div class="avatar">DG</div>
+            <span class="dev">DEV</span><span class="subtle mono">${state.identity?esc(state.identity.email):"No Access identity"}</span><button class="icon-btn" title="Notifications">◔</button><div class="avatar">${state.identity?esc((state.identity.displayName||state.identity.email).slice(0,2).toUpperCase()):"—"}</div>
           </header>
           <main class="content">${body}</main>
         </section>
