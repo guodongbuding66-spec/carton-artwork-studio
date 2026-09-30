@@ -483,6 +483,115 @@
     if(action==="impact-revision"){state.dialog=null;render();toast("已生成受影响 Artwork 的新 Revision 任务","success");}
   }
 
+  async function loadReferenceData(renderAfter=true){
+    if(!state.apiOnline||!state.identity?.roles?.length){
+      state.remoteArtworks=[];
+      state.templates=[];
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const [factoryResponse,templateResponse,artworkResponse]=await Promise.all([
+        api.factories(),api.templates(),api.artworks()
+      ]);
+      if(factoryResponse.data?.length) state.factories=factoryResponse.data;
+      state.templates=templateResponse.data||[];
+      state.remoteArtworks=artworkResponse.data||[];
+    }catch(e){
+      toast("Reference data load failed: "+(e.message||e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function loadRemoteArtworks(q=""){
+    if(!state.apiOnline||!state.identity?.roles?.length){
+      state.remoteArtworks=[];render();return;
+    }
+    try{
+      const response=await api.artworks({q});
+      state.remoteArtworks=response.data||[];
+    }catch(e){
+      state.remoteArtworks=[];
+      toast(e.message||String(e),"error");
+    }
+    render();
+  }
+
+  async function openRemoteArtwork(id){
+    if(!state.apiOnline||!state.identity){toast("Cloudflare Access 未连接。","error");return;}
+    try{
+      const remote=await api.artwork(id);
+      const row=remote.data.artwork;
+      let snapshot={};
+      try{snapshot=JSON.parse(row.canonical_data_json||"{}");}catch{}
+      state.artwork=D.artworkFromCanonical(snapshot,{
+        sku:row.sku,
+        contractNo:row.contract_no,
+        factoryId:row.factory_id,
+        packageCount:row.package_count,
+        currentPackage:row.current_package,
+        status:A.statusFromApi(row.status),
+        revision:row.current_revision
+      });
+      state.remoteArtworkId=id;
+      state.remoteRevision=state.artwork.revision;
+      state.comments=[];
+      localStorage.setItem("cas:remoteArtworkId",id);
+      localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      state.page="artwork";
+      state.tab="artwork";
+      await loadComments();
+      render();
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function loadFactoryImpact(id){
+    if(!state.apiOnline||!state.identity){toast("Cloudflare API 未连接。","error");return;}
+    try{
+      const response=await api.factoryImpact(id);
+      state.impact=response.data;
+      state.dialog="impact";
+      render();
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function saveFactoryMaster(){
+    if(!permitted("admin")||!state.impact?.factory){toast("需要 Admin 权限。","error");return;}
+    const id=state.impact.factory.id;
+    const payload={
+      name:document.getElementById("impact-factory-name")?.value?.trim()||"",
+      crn:document.getElementById("impact-factory-crn")?.value?.trim()||"",
+      country:document.getElementById("impact-factory-country")?.value?.trim()||"",
+      effectiveAt:document.getElementById("impact-factory-effective")?.value?.trim()||null,
+      reason:"Updated from Factory Impact dialog"
+    };
+    try{
+      await api.updateFactory(id,payload);
+      state.dialog=null;
+      state.impact=null;
+      const response=await api.factories();
+      state.factories=response.data||[];
+      await loadRemoteArtworks();
+      toast("Factory Master 已更新；历史 Revision Snapshot 未修改。","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function loadAudit(renderAfter=true){
+    if(!state.apiOnline||!permitted("auditRead")){
+      state.auditLogs=[];
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const response=await api.audit({limit:100});
+      state.auditLogs=response.data||[];
+    }catch(e){
+      state.auditLogs=[];
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
   async function loadComments(){
     if(!state.apiOnline||!state.identity||!state.remoteArtworkId){
       state.comments=[];render();return;
