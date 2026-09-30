@@ -883,6 +883,110 @@ export default {
         });
       }
 
+      const pdfxCandidateMatch=/^\/api\/artworks\/([^/]+)\/pdfx4-candidate-validation$/.exec(url.pathname);
+      if(request.method==="POST"&&pdfxCandidateMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const artworkId=pdfxCandidateMatch[1];
+        const fontAssetId=String(url.searchParams.get("fontAssetId")||"").trim();
+        const iccAssetId=String(url.searchParams.get("iccAssetId")||"").trim();
+        const outputConditionIdentifier=String(url.searchParams.get("outputConditionIdentifier")||"").trim();
+        if(!fontAssetId||!iccAssetId||!outputConditionIdentifier){
+          return err(400,"PDFX_CANDIDATE_INPUT_REQUIRED","fontAssetId, iccAssetId and outputConditionIdentifier are required.");
+        }
+
+        const [fontAsset,iccAsset,artwork,qrPolicy]=await Promise.all([
+          env.DB.prepare(`
+            SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+                   metadata_json AS metadataJson,status,approved_by AS approvedBy,approved_at AS approvedAt
+            FROM production_assets WHERE id=? AND asset_type='FONT' AND status='APPROVED'
+          `).bind(fontAssetId).first(),
+          env.DB.prepare(`
+            SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+                   metadata_json AS metadataJson,status,approved_by AS approvedBy,approved_at AS approvedAt
+            FROM production_assets WHERE id=? AND asset_type='ICC_PROFILE' AND status='APPROVED'
+          `).bind(iccAssetId).first(),
+          env.DB.prepare(`
+            SELECT id,sku,contract_no AS contractNo,factory_id AS factoryId,status,current_revision AS currentRevision,
+                   canonical_data_json AS canonicalDataJson
+            FROM artworks WHERE id=?
+          `).bind(artworkId).first(),
+          env.DB.prepare("SELECT config_json AS configJson FROM production_policies WHERE code='QR_POLICY'").first()
+        ]);
+        if(!fontAsset)return err(404,"APPROVED_FONT_NOT_FOUND","Approved FONT asset not found.");
+        if(!iccAsset)return err(404,"APPROVED_ICC_NOT_FOUND","Approved ICC_PROFILE asset not found.");
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+
+        let fontMetadata={},iccMetadata={};
+        try{fontMetadata=JSON.parse(fontAsset.metadataJson||"{}");}catch{}
+        try{iccMetadata=JSON.parse(iccAsset.metadataJson||"{}");}catch{}
+        if(!/^TrueType/i.test(String(fontMetadata.container||""))){
+          return err(409,"FONT_OUTLINE_UNSUPPORTED","PDF/X-4 candidate renderer currently supports approved TrueType-outline assets only.");
+        }
+        if(String(iccMetadata.colorSpace||"").toUpperCase()!=="CMYK"){
+          return err(409,"ICC_COLORSPACE_UNSUPPORTED","PDF/X-4 candidate requires an approved CMYK ICC output profile.");
+        }
+
+        let verifiedFont,verifiedIcc;
+        try{
+          [verifiedFont,verifiedIcc]=await Promise.all([
+            readVerifiedProductionAsset(env,{...fontAsset,metadata:fontMetadata}),
+            readVerifiedProductionAsset(env,{...iccAsset,metadata:iccMetadata})
+          ]);
+        }catch(e){
+          return err(409,e.message||"ASSET_READ_FAILED","Pinned candidate asset cannot be used.",e.detail);
+        }
+
+        const qrConfig=parseJsonObject(qrPolicy?.configJson);
+        const qrEcc=["L","M","Q","H"].includes(String(qrConfig.ecc||"").toUpperCase())?String(qrConfig.ecc).toUpperCase():"M";
+        let rendered;
+        try{
+          rendered=renderEmbeddedArtworkPdf({
+            snapshot:parseJsonObject(artwork.canonicalDataJson),
+            metadata:{
+              sku:artwork.sku,contractNo:artwork.contractNo,factoryId:artwork.factoryId,
+              revision:artwork.currentRevision,status:artwork.status
+            },
+            fontBytes:verifiedFont.bytes,
+            iccBytes:verifiedIcc.bytes,
+            pdfxProfile:"PDF/X-4",
+            outputConditionIdentifier,
+            qrEcc,
+            mode:"proof"
+          });
+        }catch(e){
+          return err(409,"PDFX4_CANDIDATE_RENDER_FAILED","PDF/X-4 candidate render failed.",e.message||String(e));
+        }
+        const structural=rendered.pdfxCandidate?.structural;
+        if(!structural?.ok){
+          return err(409,"PDFX4_STRUCTURAL_CHECK_FAILED","Generated PDF/X-4 candidate failed internal structural checks.",structural?.checks||[]);
+        }
+        const digest=await crypto.subtle.digest("SHA-256",rendered.bytes);
+        const pdfSha=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        await audit(env,identity,"PDFX_CANDIDATE",artworkId,"RENDER",{
+          newValue:{
+            revision:artwork.currentRevision,pdfSha256:pdfSha,
+            fontAsset:{id:fontAsset.id,sha256:fontAsset.sha256},
+            iccAsset:{id:iccAsset.id,sha256:iccAsset.sha256},
+            outputConditionIdentifier,structuralChecks:structural.checks
+          },
+          reason:"Internal PDF/X-4 candidate render; not certified for production"
+        });
+        const filename=(`PDFX4Candidate_${artwork.sku||artworkId}_${artwork.currentRevision}.pdf`).replace(/[^a-zA-Z0-9._-]+/g,"_");
+        return new Response(rendered.bytes,{
+          status:200,
+          headers:{
+            "content-type":"application/pdf",
+            "content-disposition":`attachment; filename="${filename}"`,
+            "cache-control":"no-store",
+            "x-cas-renderer":"pdfx4-candidate-1.8.0",
+            "x-cas-pdf-sha256":pdfSha,
+            "x-cas-font-sha256":fontAsset.sha256,
+            "x-cas-icc-sha256":iccAsset.sha256,
+            "x-cas-pdfx-candidate":"STRUCTURAL_PASS"
+          }
+        });
+      }
+
       const productionRenderMatch=/^\/api\/artworks\/([^/]+)\/render-production-pdf$/.exec(url.pathname);
       if(request.method==="POST"&&productionRenderMatch){
         if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
