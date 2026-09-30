@@ -7,8 +7,10 @@
   const X = window.CartonImport;
   const B = window.CartonBatch;
   const Z = window.CartonZip;
+  const A = window.CartonApi;
+  const api = A?.createClient ? A.createClient() : null;
   const app = document.getElementById("app");
-  if (!D || !C || !P || !X || !B || !Z) throw new Error("Carton Artwork Studio modules failed to load.");
+  if (!D || !C || !P || !X || !B || !Z || !A || !api) throw new Error("Carton Artwork Studio modules failed to load.");
 
   const state = {
     page: "artwork",
@@ -31,7 +33,12 @@
     batchSource: null,
     batchGenerating: false,
     dialog: null,
-    resolvedBlockingComment: false
+    resolvedBlockingComment: false,
+    apiOnline: false,
+    apiChecked: false,
+    apiBusy: false,
+    remoteArtworkId: localStorage.getItem("cas:remoteArtworkId") || null,
+    remoteRevision: null
   };
 
   const navItems = [
@@ -87,7 +94,7 @@
           <nav class="nav">
             ${navItems.map(([id,ic,zh,en]) => `<button class="nav-btn ${state.page===id?"active":""}" data-page="${id}"><span class="nav-icon">${ic}</span><span>${zh}</span><span>${en}</span></button>`).join("")}
           </nav>
-          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm</div>
+          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline?"API Connected":state.apiChecked?"Local Mode":"API Checking…"}</span></div>
         </aside>
         <section class="main">
           <header class="topbar">
@@ -146,10 +153,11 @@
       <div class="artwork-header">
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
         <div class="spacer"></div>
-        <select class="select" style="width:128px" data-art="status"><option value="draft" ${sel("draft")}>Draft</option><option value="in_review" ${sel("in_review")}>In Review</option><option value="approved" ${sel("approved")}>Approved</option></select>
-        <button class="btn" data-action="save">保存草稿</button>
-        <button class="btn" data-action="preflight">运行检查</button>
-        <button class="btn primary" data-action="submit">提交审核</button>
+        <span class="badge ${state.artwork.status==="approved"?"green":state.artwork.status==="in_review"?"blue":state.artwork.status==="rejected"?"red":"amber"}">${esc(state.artwork.status.replace("_"," ").toUpperCase())}</span>
+        <button class="btn" data-action="save" ${state.apiBusy?"disabled":""}>保存草稿</button>
+        <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
+        <button class="btn primary" data-action="submit" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy?"disabled":""}>提交审核</button>
+        ${state.artwork.status==="in_review"?`<button class="btn success" data-action="approve" ${!state.resolvedBlockingComment||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
         <button class="btn" data-action="proof">导出审核稿</button>
         <button class="btn success" data-action="production" ${prod?"":"disabled"}>下载生产稿</button>
       </div>
