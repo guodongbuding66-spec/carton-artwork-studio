@@ -5,8 +5,10 @@
   const C = window.CartonCodes;
   const P = window.CartonPdf;
   const X = window.CartonImport;
+  const B = window.CartonBatch;
+  const Z = window.CartonZip;
   const app = document.getElementById("app");
-  if (!D || !C || !P || !X) throw new Error("Carton Artwork Studio modules failed to load.");
+  if (!D || !C || !P || !X || !B || !Z) throw new Error("Carton Artwork Studio modules failed to load.");
 
   const state = {
     page: "artwork",
@@ -23,7 +25,11 @@
     batchStep: 0,
     batchRows: [],
     batchIssues: [],
+    batchRecords: [],
+    batchReview: [],
+    batchMapping: null,
     batchSource: null,
+    batchGenerating: false,
     dialog: null,
     resolvedBlockingComment: false
   };
@@ -184,8 +190,8 @@
     return `<div class="canvas"><div class="artboard" style="transform:scale(${state.zoom})">${dielineSvg()}</div></div>`;
   }
 
-  function dielineSvg(mode="editor") {
-    const a=state.artwork,g=geometry(),c=computed(), safe=22;
+  function dielineSvg(mode="editor", artwork=state.artwork) {
+    const a=artwork,g=D.sideSealGeometry(a),c=D.computed(a), safe=22;
     const proof=mode==="proof", production=mode==="production";
     const showD=production?false:state.showDieline;
     const showS=production?false:state.showSafe;
@@ -196,7 +202,7 @@
     const safeBox=showS?`<rect x="${g.H+safe}" y="${g.H+g.W+g.H+safe}" width="${g.L-safe*2}" height="${g.W-safe*2}" fill="none" stroke="#15976d" stroke-dasharray="6 4"/>`:"";
     const labels=showP?g.panels.map(p=>`<text x="${p.x+p.w/2}" y="${p.y+p.h/2}" text-anchor="middle" fill="#aab4be" font-size="16" font-family="Arial">${p.id}</text>`).join(""):"";
     const bx=g.H+45, by=g.H+g.W+g.H+68;
-    const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118, state.artwork.codeBlockProfile);
+    const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118, a.codeBlockProfile, a);
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
     const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
@@ -215,13 +221,13 @@
     </svg>`;
   }
 
-  function renderCodeBlock(x,y,profile){
-    const dims=D.codeBlockDimensions(profile), b=C.code128Bars(state.artwork.barcode,{moduleMm:.42,heightMm:25});
+  function renderCodeBlock(x,y,profile,artwork=state.artwork){
+    const dims=D.codeBlockDimensions(profile), b=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
     const scale=Math.min((dims.w-72)/b.widthMm,1.15);
     const bars=b.bars.map(r=>`<rect x="${(x+10+r.x*scale).toFixed(2)}" y="${y+14}" width="${(r.w*scale).toFixed(2)}" height="${r.h}" fill="#000"/>`).join("");
-    const qm=C.qrPreviewMatrix(state.artwork.qr,25), qSize=Math.min(54,dims.h-14), mod=qSize/qm.length, qx=x+dims.w-qSize-8,qy=y+7;
-    const qr=qm.flatMap((row,rr)=>row.map((v,cc)=>v?`<rect x="${(qx+cc*mod).toFixed(2)}" y="${(qy+rr*mod).toFixed(2)}" width="${mod.toFixed(2)}" height="${mod.toFixed(2)}" fill="#000"/>`:"")).join("");
-    return `<g><rect x="${x}" y="${y}" width="${dims.w}" height="${dims.h}" rx="2" fill="#fff" stroke="#8d98a3"/>${bars}<text x="${x+12}" y="${y+48}" font-family="Arial" font-size="8">${esc(state.artwork.barcode)}</text>${qr}<text x="${x+8}" y="${y+dims.h-5}" font-family="Arial" font-size="7" fill="#555">🔒 Locked CodeBlock · QR technical preview</text></g>`;
+    const qm=C.qrMatrix(artwork.qr,"M").matrix, qSize=Math.min(54,dims.h-14), quiet=4, mod=qSize/(qm.length+quiet*2), qx=x+dims.w-qSize-8,qy=y+7;
+    const qr=qm.flatMap((row,rr)=>row.map((v,cc)=>v?`<rect x="${(qx+(cc+quiet)*mod).toFixed(2)}" y="${(qy+(rr+quiet)*mod).toFixed(2)}" width="${mod.toFixed(2)}" height="${mod.toFixed(2)}" fill="#000"/>`:"")).join("");
+    return `<g><rect x="${x}" y="${y}" width="${dims.w}" height="${dims.h}" rx="2" fill="#fff" stroke="#8d98a3"/>${bars}<text x="${x+12}" y="${y+48}" font-family="Arial" font-size="8">${esc(artwork.barcode)}</text>${qr}<text x="${x+8}" y="${y+dims.h-5}" font-family="Arial" font-size="7" fill="#555">🔒 Locked CodeBlock · QR M · standards encoder</text></g>`;
   }
 
   function renderPreflight(){
@@ -233,19 +239,18 @@
 
   function renderBatch(){
     const steps=["Upload","Mapping","Validate","Review","Generate"];
-    const mock=state.batchRows.length?state.batchRows:[
-      {row:2,sku:"KF210215US-02PM-001",status:"PASS",issue:"—"},
-      {row:3,sku:"KF210215US-02PM-002",status:"ERROR",issue:"F3 · G.W. is empty"},
-      {row:5,sku:"KF210215US-02PM-004",status:"ERROR",issue:"H5 · Factory missing"},
-      {row:7,sku:"KF210215US-02PM-006",status:"ERROR",issue:"K7 · Barcode missing"}
-    ];
+    const stats=B.summarize(state.batchReview);
+    const review=state.batchReview.slice(0,100);
+    const mapping=state.batchMapping?Object.entries(state.batchMapping):[];
     return `
       <div class="stepper">${steps.map((x,i)=>`<div class="step ${i<state.batchStep?"done":i===state.batchStep?"active":""}">${i+1}. ${x}</div>`).join("")}</div>
-      <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><select class="select" style="width:210px"><option>US Packing List Default</option></select></div><div class="card-body">
+      <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><span class="badge blue">US Packing List Default</span></div><div class="card-body">
         <label class="dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
-        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run">Dry Run</button><button class="btn" data-action="download-errors">Download Error Rows</button><span class="subtle">Demo baseline: 60 total / 57 passed / 3 failed</span></div>
+        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
       </div></section>
-      <section class="card"><div class="card-head"><h3>Import Review</h3><span class="subtle">单元格级错误定位</span></div>${table(["Row","SKU","Status","Issue"],mock.map(r=>[r.row,r.sku,`<span class="badge ${r.status==="PASS"?"green":"red"}">${r.status}</span>`,r.issue]),true)}</section>`;
+      ${state.batchSource?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL</div><div class="kpi-value">${stats.total}</div></div><div class="kpi"><div class="kpi-label">PASSED</div><div class="kpi-value" style="color:#16835d">${stats.passed}</div></div><div class="kpi"><div class="kpi-label">FAILED</div><div class="kpi-value" style="color:#bc2f3b">${stats.failed}</div></div><div class="kpi"><div class="kpi-label">MAPPING</div><div class="kpi-value">${mapping.length}</div><div class="kpi-foot">fields detected</div></div></div>`:""}
+      ${mapping.length?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Detected Mapping</h3><span class="subtle">自动表头映射，可保存为 Mapping Profile（D1 schema 已预留）</span></div>${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}</section>`:""}
+      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Import Review</h3><span class="subtle">真实行级 Preflight · 最多显示前 100 行</span></div>${review.length?table(["Row","SKU","Status","Issue"],review.map(r=>[r.row,r.sku,`<span class="badge ${r.status==="PASS"?"green":"red"}">${r.status}</span>`,r.issue]),true):`<div class="card-body"><div class="notice">尚未载入文件。导入后系统会先做 Excel 解析，再将每一行转换为 Canonical Artwork Data 并运行阻断检查。</div></div>`}</section>`;
   }
 
   function renderTemplates(){
@@ -344,37 +349,93 @@
     if(action==="resolve-comment"){state.resolvedBlockingComment=true;render();toast("Blocking comment 已解决","success");}
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
-    if(action==="dry-run"){state.batchStep=Math.max(state.batchStep,3);render();toast("Dry Run 完成","success");}
-    if(action==="download-errors"){downloadText("failed_rows.csv","row,sku,cell,error\n3,KF210215US-02PM-002,F3,G.W. is empty\n5,KF210215US-02PM-004,H5,Factory is empty\n7,KF210215US-02PM-006,K7,Barcode is empty\n","text/csv;charset=utf-8");}
+    if(action==="dry-run"){
+      state.batchReview=B.buildReview(state.batchRecords,state.batchIssues,D,{defaults:D.defaultArtwork,factories:D.factories});
+      state.batchStep=Math.max(state.batchStep,3);render();
+      const s=B.summarize(state.batchReview);toast(`Dry Run: ${s.passed} passed / ${s.failed} failed`,s.failed?"error":"success");
+    }
+    if(action==="download-errors"){downloadText("failed_rows.csv",B.failedRowsCsv(state.batchReview),"text/csv;charset=utf-8");}
+    if(action==="batch-generate") return exportBatchProofs();
     if(action==="close-dialog"){state.dialog=null;render();}
     if(action==="impact-revision"){state.dialog=null;render();toast("已生成受影响 Artwork 的新 Revision 任务","success");}
   }
 
   function exportProof(){
-    const g=geometry(), c=computed(), code=C.code128Bars(state.artwork.barcode,{moduleMm:.42,heightMm:25});
-    const blob=P.createPdfBlob({artwork:state.artwork,geometry:g,computed:c,codeModel:code,mode:"proof"});
-    downloadBlob(fileBase()+"_Proof.pdf",blob); toast("已生成 1:1 mm Vector Proof PDF","success");
+    const g=geometry(), c=computed(), code=C.code128Bars(state.artwork.barcode,{moduleMm:.42,heightMm:25}), qr=C.qrMatrix(state.artwork.qr,"M").matrix;
+    const blob=P.createPdfBlob({artwork:state.artwork,geometry:g,computed:c,codeModel:code,qrMatrix:qr,mode:"proof"});
+    downloadBlob(fileBase()+"_Proof.pdf",blob); toast("已生成 1:1 mm Vector Proof PDF（Code128 + QR 均为矢量）","success");
+  }
+
+  async function productionArtifactSet(artwork, mode="production"){
+    const g=D.sideSealGeometry(artwork), comp=D.computed(artwork);
+    const code=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
+    const qr=C.qrMatrix(artwork.qr,"M").matrix;
+    const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode});
+    const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork)}`;
+    const snapshot=JSON.stringify(D.canonicalData(artwork),null,2);
+    const pfGroups=D.runPreflight(artwork), pfSummary=D.preflightSummary(pfGroups);
+    const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
+    const manifest=D.manifest(artwork,"vector-svg-pdf-0.5.0");
+    manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
+    manifest.barcode={symbology:"Code 128-B PoC",vector:true};
+    manifest.sha256={
+      pdf:await sha256(pdfBytes),
+      svg:await sha256(svg),
+      snapshot:await sha256(snapshot),
+      preflight:await sha256(preflight)
+    };
+    const base=B.safeBase(artwork);
+    return {base,files:[
+      {name:"Production.pdf",data:pdfBytes},
+      {name:"Production.svg",data:svg},
+      {name:"DataSnapshot.json",data:snapshot},
+      {name:"PreflightReport.json",data:preflight},
+      {name:"Manifest.json",data:JSON.stringify(manifest,null,2)}
+    ]};
   }
 
   async function exportProduction(){
     const s=summary();
     if(state.artwork.status!=="approved"||s.blocking>0||!state.resolvedBlockingComment){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
-    const g=geometry(), c=computed(), code=C.code128Bars(state.artwork.barcode,{moduleMm:.42,heightMm:25});
-    const pdf=P.createPdfBlob({artwork:state.artwork,geometry:g,computed:c,codeModel:code,mode:"production"});
-    const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg("production")}`;
-    const snap=JSON.stringify(canonical(),null,2);
-    const report=JSON.stringify({summary:s,groups:checks(),generatedAt:new Date().toISOString()},null,2);
-    const manifest=D.manifest(state.artwork);
-    manifest.sha256={svg:await sha256(svg),snapshot:await sha256(snap),preflight:await sha256(report)};
-    downloadBlob(fileBase()+"_Production.pdf",pdf);
-    downloadText(fileBase()+"_Production.svg",svg,"image/svg+xml;charset=utf-8");
-    downloadText(fileBase()+"_Manifest.json",JSON.stringify(manifest,null,2),"application/json;charset=utf-8");
-    toast("Production PDF / SVG / SHA-256 Manifest 已生成","success");
+    const built=await productionArtifactSet(state.artwork,"production");
+    built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nQR ECC: M\nFont embedding / PDF-X remain separate production gates.\n"});
+    downloadBlob(built.base+"_ProductionBundle.zip",Z.createZipBlob(built.files));
+    toast("Production Bundle ZIP 已生成：PDF / SVG / Snapshot / Preflight / SHA-256 Manifest","success");
   }
 
-  async function sha256(text){
+  async function exportBatchProofs(){
+    const passed=state.batchReview.filter(r=>r.status==="PASS");
+    if(!passed.length){toast("没有可生成的通过记录","error");return;}
+    state.batchGenerating=true;render();
+    try{
+      const files=[],index=[];
+      for(const row of passed){
+        const art={...row.artwork,status:"draft",revision:"R01"};
+        const g=D.sideSealGeometry(art),comp=D.computed(art),code=C.code128Bars(art.barcode,{moduleMm:.42,heightMm:25}),qr=C.qrMatrix(art.qr,"M").matrix;
+        const pdf=P.createPdfBytes({artwork:art,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof"});
+        const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg("proof",art)}`;
+        const snap=JSON.stringify(D.canonicalData(art),null,2);
+        const prefix=`row-${String(row.row).padStart(4,"0")}_${B.safeBase(art)}/`;
+        files.push({name:prefix+"Proof.pdf",data:pdf},{name:prefix+"Proof.svg",data:svg},{name:prefix+"DataSnapshot.json",data:snap});
+        index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
+      }
+      const stats=B.summarize(state.batchReview);
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.5.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
+      downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
+      state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.batchGenerating=false;render();}
+  }
+
+  async function sha256(value){
     if(!crypto?.subtle)return "unavailable";
-    const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));
+    let bytes;
+    if(value instanceof Uint8Array) bytes=value;
+    else if(value instanceof ArrayBuffer) bytes=new Uint8Array(value);
+    else if(value instanceof Blob) bytes=new Uint8Array(await value.arrayBuffer());
+    else bytes=new TextEncoder().encode(String(value??""));
+    const buf=await crypto.subtle.digest("SHA-256",bytes);
     return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
   }
 
@@ -382,12 +443,17 @@
     try{
       const parsed=await X.parseFile(file);
       const result=X.rowsToRecords(parsed.rows,{fillDown:true});
+      const review=B.buildReview(result.records,result.issues,D,{defaults:D.defaultArtwork,factories:D.factories});
       state.batchSource=`${file.name} · ${parsed.source}`;
-      state.batchRows=result.records.slice(0,100).map(r=>{
-        const errs=result.issues.filter(i=>i.row===r._row);
-        return {row:r._row,sku:r.sku||"—",status:errs.length?"ERROR":"PASS",issue:errs[0]?`${errs[0].cell} · ${errs[0].message}`:"—"};
-      });
-      state.batchIssues=result.issues;state.batchStep=3;render();toast(`读取 ${result.records.length} 行，发现 ${result.issues.length} 个问题`,result.issues.length?"error":"success");
+      state.batchRecords=result.records;
+      state.batchIssues=result.issues;
+      state.batchMapping=result.header.mapping;
+      state.batchReview=review;
+      state.batchRows=review.slice(0,100);
+      state.batchStep=3;
+      render();
+      const s=B.summarize(review);
+      toast(`读取 ${s.total} 行：${s.passed} passed / ${s.failed} failed`,s.failed?"error":"success");
     }catch(e){toast(e.message||String(e),"error");}
   }
 
