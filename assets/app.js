@@ -50,7 +50,31 @@
 
   function computed() { return D.computed(state.artwork); }
   function geometry() { return D.sideSealGeometry(state.artwork); }
-  function checks() { return D.runPreflight(state.artwork); }
+  function checksFor(artwork) {
+    const groups=D.runPreflight(artwork);
+    const barcode=groups.Codes?.find(x=>x.id==="barcode");
+    if(barcode){
+      try{
+        const values=C.code128Values(artwork.barcode);
+        barcode.status="pass";
+        barcode.title="Code 128-B vector encoding";
+        barcode.detail=`Encodable payload · checksum ${values.at(-2)} · quiet zone applied by renderer.`;
+      }catch(e){
+        barcode.status="error";barcode.blocking=true;barcode.title="Code 128-B vector encoding";barcode.detail=e.message||String(e);
+      }
+    }
+    const qr=groups.Codes?.find(x=>x.id==="qr");
+    if(qr){
+      try{
+        const model=C.qrMatrix(artwork.qr,"M");
+        qr.status="pass";qr.title="QR vector encoding";qr.detail=`Version ${model.version} · ECC M · ${model.matrix.length}×${model.matrix.length} modules.`;
+      }catch(e){
+        qr.status="error";qr.blocking=true;qr.title="QR vector encoding";qr.detail=e.message||String(e);
+      }
+    }
+    return groups;
+  }
+  function checks() { return checksFor(state.artwork); }
   function summary() { return D.preflightSummary(checks()); }
   function factory() { return D.findFactory(state.artwork.factoryId); }
   function canonical() { return D.canonicalData(state.artwork); }
@@ -373,7 +397,7 @@
     const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode});
     const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork)}`;
     const snapshot=JSON.stringify(D.canonicalData(artwork),null,2);
-    const pfGroups=D.runPreflight(artwork), pfSummary=D.preflightSummary(pfGroups);
+    const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
     const manifest=D.manifest(artwork,"vector-svg-pdf-0.5.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
