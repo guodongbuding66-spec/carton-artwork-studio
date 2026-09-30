@@ -59,7 +59,9 @@
     remoteRevisions: [],
     compareFrom: null,
     compareTo: null,
-    revisionCompare: null
+    revisionCompare: null,
+    compareMode: "side",
+    compareOpacity: 0.5
   };
 
   const navItems = [
@@ -503,6 +505,33 @@
     return String(value);
   }
 
+  function frozenModel(side){
+    const snapshot=side?.snapshot||{};
+    const artwork=D.artworkFromCanonical(snapshot,{
+      revision:side?.revision,
+      status:A.statusFromApi(side?.status||"DRAFT")
+    });
+    const frozenFactory=snapshot.factory ? [{
+      id:snapshot.factory.id,
+      name:snapshot.factory.name,
+      crn:snapshot.factory.crn,
+      country:snapshot.factory.country
+    }] : [];
+    return {artwork,factories:frozenFactory};
+  }
+
+  function renderCompareVisual(compare){
+    if(!compare?.from?.snapshot||!compare?.to?.snapshot) return "";
+    const left=frozenModel(compare.from), right=frozenModel(compare.to);
+    const leftSvg=dielineSvg("editor",left.artwork,{factories:left.factories,qrEcc:"M"});
+    const rightSvg=dielineSvg("editor",right.artwork,{factories:right.factories,qrEcc:"M"});
+    const toolbar=`<div class="toolbar" style="margin:10px 0"><button class="btn small ${state.compareMode==="side"?"primary":""}" data-compare-mode="side">Side by side</button><button class="btn small ${state.compareMode==="overlay"?"primary":""}" data-compare-mode="overlay">Overlay</button>${state.compareMode==="overlay"?`<label class="subtle" style="margin-left:8px">To opacity <input id="compare-opacity" type="range" min="0" max="1" step=".05" value="${state.compareOpacity}"/></label>`:""}</div>`;
+    if(state.compareMode==="overlay"){
+      return `${toolbar}<div class="card-body"><div style="position:relative;overflow:auto;min-height:520px;background:#fff;border:1px solid #d8dee6"><div style="position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:center;overflow:auto">${leftSvg}</div><div id="compare-overlay-top" style="position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:center;overflow:auto;opacity:${state.compareOpacity}">${rightSvg}</div></div><div class="subtle" style="margin-top:6px">${esc(compare.from.revision)} = base · ${esc(compare.to.revision)} = overlay</div></div>`;
+    }
+    return `${toolbar}<div class="row2" style="align-items:start"><section class="card"><div class="card-head"><strong>${esc(compare.from.revision)}</strong><span class="subtle">${esc(compare.from.status||"")}</span></div><div class="card-body" style="overflow:auto;max-height:650px">${leftSvg}</div></section><section class="card"><div class="card-head"><strong>${esc(compare.to.revision)}</strong><span class="subtle">${esc(compare.to.status||"")}</span></div><div class="card-body" style="overflow:auto;max-height:650px">${rightSvg}</div></section></div>`;
+  }
+
   function renderRevisionCompare(){
     if(!state.remoteArtworkId){
       return '<div class="card-body"><div class="notice">先从 Dashboard 打开一个 D1 Artwork，才能比较历史 Revision。</div></div>';
@@ -525,10 +554,11 @@
           <div class="field"><label>From Revision</label><select id="compare-from" class="input">${optionHtml(state.compareFrom)}</select></div>
           <div class="field"><label>To Revision</label><select id="compare-to" class="input">${optionHtml(state.compareTo)}</select></div>
         </div>
-        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="run-compare">Compare Canonical Data</button></div>
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="run-compare">Compare Revision</button></div>
         ${compare?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL CHANGES</div><div class="kpi-value">${compare.total}</div></div><div class="kpi"><div class="kpi-label">CHANGED</div><div class="kpi-value">${compare.changed}</div></div><div class="kpi"><div class="kpi-label">ADDED</div><div class="kpi-value">${compare.added}</div></div><div class="kpi"><div class="kpi-label">REMOVED</div><div class="kpi-value">${compare.removed}</div></div></div>`:""}
       </div>
-      ${compare?(rows.length?table(["Canonical Path","From","To","Change"],rows,true):'<div class="card-body"><div class="notice">两个 Revision 的 Canonical Data 完全一致。</div></div>'):'<div class="card-body"><div class="notice">选择两个 Revision 后执行 Compare。比较基于冻结的 Canonical Snapshot，不使用演示结果。</div></div>'}
+      ${compare?renderCompareVisual(compare):""}
+      ${compare?(rows.length?table(["Canonical Path","From","To","Change"],rows,true):'<div class="card-body"><div class="notice">两个 Revision 的 Canonical Data 完全一致。</div></div>'):'<div class="card-body"><div class="notice">选择两个 Revision 后执行 Compare。比较和预览都来自冻结的 Canonical Snapshot。</div></div>'}
     `;
   }
 
