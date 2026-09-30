@@ -347,7 +347,7 @@
     return h.toString(16).padStart(8, "0");
   }
 
-  function manifest(artwork, rendererVersion = "vector-svg-pdf-0.4.0") {
+  function manifest(artwork, rendererVersion = "vector-svg-pdf-0.5.0") {
     const snapshot = canonicalData(artwork);
     const payload = stableStringify({ snapshot, rendererVersion });
     return {
