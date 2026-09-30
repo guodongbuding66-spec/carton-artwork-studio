@@ -49,6 +49,15 @@
       async factories() {
         return request("/api/factories");
       },
+      async factoryImpact(id) {
+        return request(`/api/factories/${encodeURIComponent(id)}/impact`);
+      },
+      async updateFactory(id, payload) {
+        return request(`/api/factories/${encodeURIComponent(id)}`, {
+          method:"PATCH",
+          body:JSON.stringify(payload)
+        });
+      },
       async templates() {
         return request("/api/templates");
       },
@@ -161,6 +170,12 @@
       },
       async adminUsers() {
         return request("/api/admin/users");
+      },
+      async audit(params = {}) {
+        const q = new URLSearchParams();
+        if (params.limit) q.set("limit", String(params.limit));
+        if (params.objectType) q.set("objectType", params.objectType);
+        return request("/api/audit" + (q.size ? "?" + q : ""));
       },
       async createUser(payload) {
         return request("/api/admin/users", { method:"POST", body:JSON.stringify(payload) });
