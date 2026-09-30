@@ -10,7 +10,8 @@ export const RENDERER_CAPABILITIES = Object.freeze({
   qrEcc: Object.freeze(["L","M","Q","H"]),
   fontEmbedding: true,
   fontOutlining: false,
-  pdfxProfiles: Object.freeze([])
+  pdfxProfiles: Object.freeze([]),
+  pdfxCandidateProfiles: Object.freeze(["PDF/X-4"])
 });
 
 export function parsePolicyConfig(value) {
