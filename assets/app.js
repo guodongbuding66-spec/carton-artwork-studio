@@ -505,7 +505,7 @@
     if(revisions.length<2){
       return '<div class="card-body"><div class="notice">当前 Artwork 少于 2 个持久化 Revision，暂无可比较版本。</div></div>';
     }
-    const options=revisions.map(r=>`<option value="${esc(r.revision)}">${esc(r.revision)} · ${esc(r.status||"")}</option>`).join("");
+    const optionHtml=(selected)=>revisions.map(r=>`<option value="${esc(r.revision)}" ${r.revision===selected?"selected":""}>${esc(r.revision)} · ${esc(r.status||"")}</option>`).join("");
     const compare=state.revisionCompare;
     const rows=(compare?.changes||[]).map(x=>[
       `<span class="mono">${esc(x.path)}</span>`,
@@ -516,8 +516,8 @@
     return `
       <div class="card-body">
         <div class="row2">
-          <div class="field"><label>From Revision</label><select id="compare-from" class="input">${options}</select></div>
-          <div class="field"><label>To Revision</label><select id="compare-to" class="input">${options}</select></div>
+          <div class="field"><label>From Revision</label><select id="compare-from" class="input">${optionHtml(state.compareFrom)}</select></div>
+          <div class="field"><label>To Revision</label><select id="compare-to" class="input">${optionHtml(state.compareTo)}</select></div>
         </div>
         <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="run-compare">Compare Canonical Data</button></div>
         ${compare?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL CHANGES</div><div class="kpi-value">${compare.total}</div></div><div class="kpi"><div class="kpi-label">CHANGED</div><div class="kpi-value">${compare.changed}</div></div><div class="kpi"><div class="kpi-label">ADDED</div><div class="kpi-value">${compare.added}</div></div><div class="kpi"><div class="kpi-label">REMOVED</div><div class="kpi-value">${compare.removed}</div></div></div>`:""}
