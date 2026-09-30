@@ -387,8 +387,8 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{state.page=b.dataset.page;render();});
-    document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;render();});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="admin")await loadAdminUsers();});
+    document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=()=>{state.templateTab=b.dataset.templateTab;render();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=()=>{state.contentTab=b.dataset.contentTab;render();});
     document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=()=>{state.qualityTab=b.dataset.qualityTab;render();});
@@ -412,6 +412,8 @@
       render();
     });
     document.querySelectorAll("[data-action]").forEach(b=>b.onclick=()=>handleAction(b.dataset.action));
+    document.querySelectorAll("[data-resolve-comment]").forEach(b=>b.onclick=()=>resolveComment(b.dataset.resolveComment));
+    document.querySelectorAll("[data-save-user-roles]").forEach(b=>b.onclick=()=>saveUserRoles(b.dataset.saveUserRoles));
     const file=document.getElementById("batch-file");
     if(file) file.onchange=async()=>{ if(file.files?.[0]) await importBatch(file.files[0]); };
   }
@@ -423,7 +425,8 @@
     if(action==="approve") return reviewDecision("APPROVE");
     if(action==="reject") return reviewDecision("REJECT");
     if(action==="new-revision") return createNewRevision();
-    if(action==="resolve-comment"){state.resolvedBlockingComment=true;render();toast("Blocking comment 已解决","success");}
+    if(action==="add-comment") return addComment();
+    if(action==="create-user") return createAdminUser();
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
     if(action==="dry-run"){
