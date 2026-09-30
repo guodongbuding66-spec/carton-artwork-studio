@@ -681,6 +681,11 @@ export default {
         if(!["DRAFT","REJECTED"].includes(String(asset.status).toUpperCase())){
           return err(409,"ASSET_SUBMIT_STATE","Only DRAFT or REJECTED assets can be submitted.");
         }
+        let assetMetadata={};
+        try{assetMetadata=JSON.parse(asset.metadata_json||"{}");}catch{}
+        if(!String(assetMetadata.license||"").trim()){
+          return err(409,"ASSET_LICENSE_REQUIRED","License / source metadata is required before a production asset can be submitted.");
+        }
         if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
         const object=await env.ARTWORK_FILES.head(asset.object_key);
         if(!object)return err(409,"ASSET_OBJECT_MISSING","Production asset object is missing from R2.");
@@ -713,8 +718,17 @@ export default {
         if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
         if(decision==="APPROVE"){
           if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
-          const object=await env.ARTWORK_FILES.head(asset.object_key);
+          const object=await env.ARTWORK_FILES.get(asset.object_key);
           if(!object)return err(409,"ASSET_OBJECT_MISSING","Production asset object is missing from R2.");
+          const bytes=new Uint8Array(await object.arrayBuffer());
+          const digest=await crypto.subtle.digest("SHA-256",bytes);
+          const currentSha=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+          if(currentSha!==asset.sha256){
+            await securityEvent(env,identity,"PRODUCTION_ASSET_HASH_MISMATCH",request,{productionAssetId:id,expected:asset.sha256,actual:currentSha});
+            return err(409,"ASSET_HASH_MISMATCH","Production asset bytes no longer match the uploaded SHA-256.");
+          }
+          const inspection=inspectProductionAsset(asset.asset_type,bytes);
+          if(!inspection.ok)return err(409,"ASSET_REVALIDATION_FAILED","Production asset failed approval-time validation.",inspection.errors);
         }
         const approvalId=crypto.randomUUID();
         const statements=[
