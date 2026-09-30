@@ -19,6 +19,8 @@ assert.equal(validateProductionPolicy("PDFX_POLICY",{profile:"PDF/X-4"}).ok,fals
 
 assert.equal(RENDERER_CAPABILITIES.fontEmbedding,true);
 assert.equal(RENDERER_CAPABILITIES.fontOutlining,false);
+assert.equal(RENDERER_CAPABILITIES.iccOutputIntent,true);
+assert.equal(RENDERER_CAPABILITIES.pdfxMetadataCandidate,true);
 assert.deepEqual([...RENDERER_CAPABILITIES.pdfxProfiles],[]);
 
 const rows=[
