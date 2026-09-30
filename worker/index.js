@@ -268,7 +268,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.7.0",
+        version: "1.8.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -1027,19 +1027,32 @@ export default {
         const policyMap=new Map(policyRows.map((p)=>[p.code,parseJsonObject(p.configJson)]));
         const fontPolicy=policyMap.get("FONT_POLICY")||{};
         const qrPolicy=policyMap.get("QR_POLICY")||{};
+        const pdfxPolicy=policyMap.get("PDFX_POLICY")||{};
         const fontAsset=approvedAssets.find((a)=>
           a.assetType==="FONT" &&
           String(a.code).toUpperCase()===String(fontPolicy.assetCode||"").toUpperCase() &&
           String(a.version)===String(fontPolicy.assetVersion||"")
         );
+        const iccAsset=approvedAssets.find((a)=>
+          a.assetType==="ICC_PROFILE" &&
+          String(a.code).toUpperCase()===String(pdfxPolicy.iccAssetCode||"").toUpperCase() &&
+          String(a.version)===String(pdfxPolicy.iccAssetVersion||"")
+        );
         if(!fontAsset)return err(409,"PINNED_FONT_NOT_FOUND","Pinned approved FONT asset was not found.");
-        let verified;
-        try{verified=await readVerifiedProductionAsset(env,fontAsset);}
-        catch(e){
+        if(!iccAsset)return err(409,"PINNED_ICC_NOT_FOUND","Pinned approved ICC_PROFILE asset was not found.");
+        let verifiedFont,verifiedIcc;
+        try{
+          [verifiedFont,verifiedIcc]=await Promise.all([
+            readVerifiedProductionAsset(env,fontAsset),
+            readVerifiedProductionAsset(env,iccAsset)
+          ]);
+        }catch(e){
           if(e.message==="ASSET_HASH_MISMATCH"){
-            await securityEvent(env,identity,"PRODUCTION_ASSET_HASH_MISMATCH",request,{productionAssetId:fontAsset.id,expected:fontAsset.sha256});
+            await securityEvent(env,identity,"PRODUCTION_ASSET_HASH_MISMATCH",request,{
+              fontAssetId:fontAsset.id,iccAssetId:iccAsset.id
+            });
           }
-          return err(409,e.message||"ASSET_READ_FAILED","Pinned font asset cannot be used.",e.detail);
+          return err(409,e.message||"ASSET_READ_FAILED","Pinned production asset cannot be used.",e.detail);
         }
 
         const snapshot=parseJsonObject(artwork.canonicalDataJson);
@@ -1051,10 +1064,16 @@ export default {
               sku:artwork.sku,contractNo:artwork.contractNo,factoryId:artwork.factoryId,
               revision:artwork.currentRevision,status:artwork.status
             },
-            fontBytes:verified.bytes,
+            fontBytes:verifiedFont.bytes,
+            iccBytes:verifiedIcc.bytes,
+            pdfxProfile:String(pdfxPolicy.profile||""),
+            outputConditionIdentifier:String(pdfxPolicy.outputConditionIdentifier||""),
             qrEcc:String(qrPolicy.ecc||"M").toUpperCase(),
             mode:"production"
           });
+          if(pdfxPolicy.profile&&rendered.pdfxCandidate&&!rendered.pdfxCandidate.structural?.ok){
+            return err(409,"PDFX4_STRUCTURAL_CHECK_FAILED","Server production PDF failed internal PDF/X-4 structural checks.",rendered.pdfxCandidate.structural?.checks||[]);
+          }
         }catch(e){
           return err(409,"PRODUCTION_RENDER_FAILED","Server production PDF rendering failed.",e.message||String(e));
         }
@@ -1062,11 +1081,13 @@ export default {
         const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
         const objectKey=`artworks/${artworkId}/${artwork.currentRevision}/Production-${sha256.slice(0,16)}.pdf`;
         const manifest={
-          rendererVersion:"embedded-truetype-1.7.0",
+          rendererVersion:"pdfx4-embedded-truetype-1.8.0",
           artworkId,
           revision:artwork.currentRevision,
           artifactSha256:sha256,
           fontAsset:{id:fontAsset.id,code:fontAsset.code,version:fontAsset.version,sha256:fontAsset.sha256,approvedBy:fontAsset.approvedBy,approvedAt:fontAsset.approvedAt},
+          iccAsset:{id:iccAsset.id,code:iccAsset.code,version:iccAsset.version,sha256:iccAsset.sha256,approvedBy:iccAsset.approvedBy,approvedAt:iccAsset.approvedAt},
+          pdfx:{profile:pdfxPolicy.profile,outputConditionIdentifier:pdfxPolicy.outputConditionIdentifier,structural:rendered.pdfxCandidate?.structural||null},
           readiness,
           policies:policyRows.map((p)=>({code:p.code,status:p.status,config:parseJsonObject(p.configJson),approvedBy:p.approvedBy,approvedAt:p.approvedAt})),
           generatedAt:new Date().toISOString(),
@@ -1077,9 +1098,9 @@ export default {
         await env.DB.prepare(`
           INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
           VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
-        `).bind(exportId,artworkId,artwork.currentRevision,"PRODUCTION_PDF",objectKey,sha256,"embedded-truetype-1.7.0",JSON.stringify(manifest)).run();
+        `).bind(exportId,artworkId,artwork.currentRevision,"PRODUCTION_PDF",objectKey,sha256,"pdfx4-embedded-truetype-1.8.0",JSON.stringify(manifest)).run();
         await audit(env,identity,"EXPORT",exportId,"SERVER_RENDER_PRODUCTION_PDF",{
-          newValue:{artworkId,revision:artwork.currentRevision,objectKey,sha256,fontAssetId:fontAsset.id},
+          newValue:{artworkId,revision:artwork.currentRevision,objectKey,sha256,fontAssetId:fontAsset.id,iccAssetId:iccAsset.id,pdfxProfile:pdfxPolicy.profile},
           reason:"Authoritative server-side embedded-font production PDF"
         });
         const filename=(`${artwork.sku||artworkId}_${artwork.currentRevision}_Production.pdf`).replace(/[^a-zA-Z0-9._-]+/g,"_");
@@ -1091,8 +1112,10 @@ export default {
             "cache-control":"no-store",
             "x-cas-export-id":exportId,
             "x-cas-artifact-sha256":sha256,
-            "x-cas-renderer":"embedded-truetype-1.7.0",
-            "x-cas-font-sha256":fontAsset.sha256
+            "x-cas-renderer":"pdfx4-embedded-truetype-1.8.0",
+            "x-cas-font-sha256":fontAsset.sha256,
+            "x-cas-icc-sha256":iccAsset.sha256,
+            "x-cas-pdfx-profile":String(pdfxPolicy.profile||"")
           }
         });
       }
