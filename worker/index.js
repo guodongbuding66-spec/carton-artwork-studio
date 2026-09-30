@@ -21,7 +21,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "0.4.0",
+        version: "0.5.0",
         runtime: "cloudflare-workers",
         bindings: { d1: Boolean(env.DB), r2: Boolean(env.ARTWORK_FILES), assets: Boolean(env.ASSETS) },
         time: new Date().toISOString()
@@ -151,6 +151,158 @@ export default {
           env.DB.prepare("UPDATE artworks SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(next,artworkId)
         ]);
         return json({data:{id,status:next}},{status:201});
+      }
+
+
+      if (request.method === "GET" && url.pathname === "/api/mapping-profiles") {
+        const { results } = await env.DB.prepare(`
+          SELECT id,name,template_code AS templateCode,mapping_json AS mappingJson,
+                 aliases_json AS aliasesJson,created_by AS createdBy,
+                 created_at AS createdAt,updated_at AS updatedAt
+          FROM mapping_profiles ORDER BY updated_at DESC
+        `).all();
+        return json({ data: results.map((x) => ({
+          ...x,
+          mapping: x.mappingJson ? JSON.parse(x.mappingJson) : {},
+          aliases: x.aliasesJson ? JSON.parse(x.aliasesJson) : {}
+        })) });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/mapping-profiles") {
+        const b = await bodyJson(request);
+        if (!b.name || !b.templateCode || !b.mapping || typeof b.mapping !== "object") {
+          return err(400,"INVALID_MAPPING_PROFILE","name, templateCode and mapping are required.");
+        }
+        const id = b.id || crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO mapping_profiles(id,name,template_code,mapping_json,aliases_json,created_by,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            template_code=excluded.template_code,
+            mapping_json=excluded.mapping_json,
+            aliases_json=excluded.aliases_json,
+            updated_at=CURRENT_TIMESTAMP
+        `).bind(id,b.name,b.templateCode,JSON.stringify(b.mapping),JSON.stringify(b.aliases||{}),b.actor||"api").run();
+        return json({data:{id}},{status:201});
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/import-jobs") {
+        const { results } = await env.DB.prepare(`
+          SELECT id,source_name AS sourceName,source_type AS sourceType,
+                 mapping_profile_id AS mappingProfileId,status,total_rows AS totalRows,
+                 passed_rows AS passedRows,failed_rows AS failedRows,summary_json AS summaryJson,
+                 created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt
+          FROM import_jobs ORDER BY created_at DESC LIMIT 100
+        `).all();
+        return json({data:results});
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/import-jobs") {
+        const b = await bodyJson(request);
+        if (!b.sourceName || !b.sourceType) return err(400,"INVALID_IMPORT_JOB","sourceName and sourceType are required.");
+        const id=crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO import_jobs(id,source_name,source_type,mapping_profile_id,status,total_rows,passed_rows,failed_rows,summary_json,created_by,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        `).bind(
+          id,b.sourceName,b.sourceType,b.mappingProfileId||null,b.status||"UPLOADED",
+          Number(b.totalRows||0),Number(b.passedRows||0),Number(b.failedRows||0),
+          JSON.stringify(b.summary||{}),b.actor||"api"
+        ).run();
+        return json({data:{id}},{status:201});
+      }
+
+      const importJobMatch=/^\/api\/import-jobs\/([^/]+)$/.exec(url.pathname);
+      if(request.method==="GET"&&importJobMatch){
+        const id=importJobMatch[1];
+        const job=await env.DB.prepare(`
+          SELECT id,source_name AS sourceName,source_type AS sourceType,mapping_profile_id AS mappingProfileId,
+                 status,total_rows AS totalRows,passed_rows AS passedRows,failed_rows AS failedRows,
+                 summary_json AS summaryJson,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt
+          FROM import_jobs WHERE id=?
+        `).bind(id).first();
+        if(!job)return err(404,"NOT_FOUND","Import job not found.");
+        const {results:rows}=await env.DB.prepare(`
+          SELECT id,row_no AS rowNo,sku,status,canonical_data_json AS canonicalDataJson,
+                 issues_json AS issuesJson,created_at AS createdAt
+          FROM import_rows WHERE job_id=? ORDER BY row_no LIMIT 1000
+        `).bind(id).all();
+        return json({data:{job,rows}});
+      }
+
+      const importRowsMatch=/^\/api\/import-jobs\/([^/]+)\/rows$/.exec(url.pathname);
+      if(request.method==="POST"&&importRowsMatch){
+        const jobId=importRowsMatch[1],b=await bodyJson(request),rows=Array.isArray(b.rows)?b.rows:[];
+        if(rows.length>500)return err(413,"TOO_MANY_ROWS","Upload at most 500 rows per request.");
+        const job=await env.DB.prepare("SELECT id FROM import_jobs WHERE id=?").bind(jobId).first();
+        if(!job)return err(404,"NOT_FOUND","Import job not found.");
+        const stmts=rows.map((r)=>env.DB.prepare(`
+          INSERT INTO import_rows(id,job_id,row_no,sku,status,canonical_data_json,issues_json,created_at)
+          VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+          ON CONFLICT(job_id,row_no) DO UPDATE SET
+            sku=excluded.sku,status=excluded.status,canonical_data_json=excluded.canonical_data_json,issues_json=excluded.issues_json
+        `).bind(
+          crypto.randomUUID(),jobId,Number(r.rowNo||r.row||0),r.sku||null,r.status||"ERROR",
+          JSON.stringify(r.canonicalData||{}),JSON.stringify(r.issues||[])
+        ));
+        if(stmts.length) await env.DB.batch(stmts);
+        const counts=await env.DB.prepare(`
+          SELECT COUNT(*) AS total,
+                 SUM(CASE WHEN status='PASS' THEN 1 ELSE 0 END) AS passed,
+                 SUM(CASE WHEN status<>'PASS' THEN 1 ELSE 0 END) AS failed
+          FROM import_rows WHERE job_id=?
+        `).bind(jobId).first();
+        await env.DB.prepare(`
+          UPDATE import_jobs SET total_rows=?,passed_rows=?,failed_rows=?,status='REVIEWED',updated_at=CURRENT_TIMESTAMP WHERE id=?
+        `).bind(Number(counts?.total||0),Number(counts?.passed||0),Number(counts?.failed||0),jobId).run();
+        return json({data:{jobId,total:Number(counts?.total||0),passed:Number(counts?.passed||0),failed:Number(counts?.failed||0)}},{status:201});
+      }
+
+      const exportMatch=/^\/api\/artworks\/([^/]+)\/exports$/.exec(url.pathname);
+      if(request.method==="POST"&&exportMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const artworkId=exportMatch[1];
+        const artwork=await env.DB.prepare("SELECT id,current_revision FROM artworks WHERE id=?").bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        const kind=(url.searchParams.get("kind")||"artifact").toUpperCase();
+        const revision=url.searchParams.get("revision")||artwork.current_revision||"R01";
+        const filename=(url.searchParams.get("filename")||"artifact.bin").replace(/[^a-zA-Z0-9._-]+/g,"_");
+        const contentType=request.headers.get("content-type")||"application/octet-stream";
+        const declared=Number(request.headers.get("content-length")||0);
+        if(declared>25*1024*1024)return err(413,"ARTIFACT_TOO_LARGE","Artifact exceeds 25 MB API upload limit.");
+        const bytes=new Uint8Array(await request.arrayBuffer());
+        if(bytes.length>25*1024*1024)return err(413,"ARTIFACT_TOO_LARGE","Artifact exceeds 25 MB API upload limit.");
+        const digest=await crypto.subtle.digest("SHA-256",bytes);
+        const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        const objectKey=`artworks/${artworkId}/${revision}/${Date.now()}-${filename}`;
+        await env.ARTWORK_FILES.put(objectKey,bytes,{httpMetadata:{contentType}});
+        const id=crypto.randomUUID();
+        await env.DB.batch([
+          env.DB.prepare(`
+            INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
+            VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
+          `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"0.5.0",request.headers.get("x-artwork-manifest")||null),
+          env.DB.prepare(`
+            INSERT INTO audit_logs(id,actor,object_type,object_id,action,new_value_json,reason,created_at)
+            VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+          `).bind(crypto.randomUUID(),request.headers.get("x-actor")||"api","EXPORT",id,"UPLOAD",JSON.stringify({artworkId,revision,kind,objectKey,sha256}),"Artifact persisted to R2")
+        ]);
+        return json({data:{id,objectKey,sha256,size:bytes.length,contentType}},{status:201});
+      }
+
+      const exportDownloadMatch=/^\/api\/exports\/([^/]+)$/.exec(url.pathname);
+      if(request.method==="GET"&&exportDownloadMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const rec=await env.DB.prepare("SELECT * FROM exports WHERE id=?").bind(exportDownloadMatch[1]).first();
+        if(!rec)return err(404,"NOT_FOUND","Export artifact not found.");
+        const object=await env.ARTWORK_FILES.get(rec.object_key);
+        if(!object)return err(404,"R2_OBJECT_NOT_FOUND","Export metadata exists but R2 object is missing.");
+        const headers=new Headers();
+        object.writeHttpMetadata(headers);
+        headers.set("etag",object.httpEtag);
+        headers.set("content-disposition",`attachment; filename="${String(rec.kind||"artifact").toLowerCase()}-${rec.revision||"R01"}"`);
+        return new Response(object.body,{headers});
       }
 
       return err(404,"NOT_FOUND","API route not found.",url.pathname);
