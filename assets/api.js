@@ -38,6 +38,37 @@
       return payload;
     }
 
+    async function requestBlob(path, init = {}) {
+      const headers = new Headers(init.headers || {});
+      const body = init.body;
+      if (body != null && !(body instanceof Blob) && !(body instanceof ArrayBuffer) && !(body instanceof Uint8Array) && !headers.has("content-type")) {
+        headers.set("content-type", "application/json");
+      }
+      const response = await fetchImpl(baseUrl + path, { ...init, headers });
+      if (!response.ok) {
+        const type = response.headers?.get?.("content-type") || "";
+        const payload = type.includes("application/json") ? await response.json() : await response.text();
+        const error = new Error(payload?.message || payload?.error || `Request failed: ${response.status}`);
+        error.status = response.status;
+        error.code = payload?.error || "HTTP_ERROR";
+        error.detail = payload?.detail;
+        throw error;
+      }
+      const disposition=response.headers?.get?.("content-disposition")||"";
+      const filenameMatch=/filename="?([^";]+)"?/i.exec(disposition);
+      return {
+        blob:await response.blob(),
+        filename:filenameMatch?.[1]||"artifact.bin",
+        status:response.status,
+        headers:{
+          artifactSha256:response.headers?.get?.("x-cas-artifact-sha256")||response.headers?.get?.("x-cas-pdf-sha256")||"",
+          fontSha256:response.headers?.get?.("x-cas-font-sha256")||"",
+          renderer:response.headers?.get?.("x-cas-renderer")||"",
+          exportId:response.headers?.get?.("x-cas-export-id")||""
+        }
+      };
+    }
+
     return {
       request,
       async health() {
@@ -97,6 +128,17 @@
       async decideProductionAsset(id, decision, payload = {}) {
         return request(`/api/production-assets/${encodeURIComponent(id)}/approval`, {
           method:"POST", body:JSON.stringify({...payload,decision})
+        });
+      },
+      async renderFontEmbedValidation(artworkId, assetId) {
+        const q=new URLSearchParams({assetId});
+        return requestBlob(`/api/artworks/${encodeURIComponent(artworkId)}/font-embed-validation?${q}`, {
+          method:"POST", body:"{}"
+        });
+      },
+      async renderProductionPdf(artworkId) {
+        return requestBlob(`/api/artworks/${encodeURIComponent(artworkId)}/render-production-pdf`, {
+          method:"POST", body:"{}"
         });
       },
       async systemReadiness() {
@@ -265,6 +307,8 @@
         const headers = new Headers({ "content-type": blob.type || "application/octet-stream" });
         if (meta.actor) headers.set("x-actor", meta.actor);
         if (meta.manifest) headers.set("x-artwork-manifest", typeof meta.manifest === "string" ? meta.manifest : JSON.stringify(meta.manifest));
+        if (meta.authoritativePdfExportId) headers.set("x-authoritative-pdf-export", meta.authoritativePdfExportId);
+        if (meta.authoritativePdfSha256) headers.set("x-authoritative-pdf-sha256", meta.authoritativePdfSha256);
         return request(`/api/artworks/${encodeURIComponent(artworkId)}/exports?${q}`, {
           method:"POST", headers, body:blob
         });
