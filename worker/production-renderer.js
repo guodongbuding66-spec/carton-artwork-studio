@@ -13,6 +13,9 @@ export function renderEmbeddedArtworkPdf({
   snapshot,
   metadata={},
   fontBytes,
+  iccBytes=null,
+  pdfxProfile="",
+  outputConditionIdentifier="",
   qrEcc="M",
   mode="production"
 }) {
@@ -44,7 +47,11 @@ export function renderEmbeddedArtworkPdf({
     codeModel,
     qrMatrix:qrModel.matrix,
     mode,
-    fontBytes
+    fontBytes,
+    iccBytes,
+    pdfxProfile,
+    outputConditionIdentifier,
+    documentTitle:`${artwork.sku} ${artwork.revision}`
   });
   return {
     bytes,
@@ -55,6 +62,10 @@ export function renderEmbeddedArtworkPdf({
       ecc:qrModel.errorCorrectionLevel,
       version:qrModel.version
     },
+    pdfxCandidate:pdfxProfile?{
+      profile:pdfxProfile,
+      structural:P.inspectPdfX4Candidate(bytes)
+    }:null,
     barcode:{
       symbology:"CODE128-B",
       widthMm:codeModel.widthMm,
