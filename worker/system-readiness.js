@@ -17,9 +17,10 @@ export function buildSystemReadiness(input = {}) {
   const roleUsers=input.roleUsers||{};
   const operatorEmails=new Set((roleUsers.OPERATOR||[]).map((x)=>String(x).toLowerCase()));
   const reviewerEmails=new Set((roleUsers.REVIEWER||[]).map((x)=>String(x).toLowerCase()));
-  const distinctFourEyes=[...operatorEmails].some((email)=>![...reviewerEmails].every((r)=>r===email)) ||
-    [...reviewerEmails].some((email)=>!operatorEmails.has(email)) ||
-    (operatorEmails.size>0 && reviewerEmails.size>0 && new Set([...operatorEmails,...reviewerEmails]).size>=2);
+  const distinctFourEyes=
+    operatorEmails.size>0 &&
+    reviewerEmails.size>0 &&
+    new Set([...operatorEmails,...reviewerEmails]).size>=2;
 
   const stagingChecks=[
     gate("AUTH_BYPASS_DISABLED","Development auth bypass disabled",!input.authBypassEnabled,
