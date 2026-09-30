@@ -440,9 +440,21 @@
         f.effectiveAt||f.effective||"—",
         permitted("admin")?`<button class="btn small" data-impact="${esc(f.id)}">Impact / Edit</button>`:"—"
       ]);
-      body=factories.length
+      const factoryCreator=permitted("admin")?`
+        <div class="card-body" style="border-bottom:1px solid #e5e9ee">
+          <div class="row2">
+            <div class="field"><label>Factory Name</label><input id="factory-create-name" class="input" placeholder="Factory legal / master name"/></div>
+            <div class="field"><label>CRN</label><input id="factory-create-crn" class="input mono" placeholder="Customs registration code"/></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>Country</label><input id="factory-create-country" class="input" placeholder="China"/></div>
+            <div class="field"><label>Effective</label><input id="factory-create-effective" class="input" placeholder="YYYY-MM-DD"/></div>
+          </div>
+          <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-factory">Create Active Factory</button></div>
+        </div>`:"";
+      body=`${factoryCreator}${factories.length
         ? table(["Factory","CRN","Country","Effective",""],factories,true)
-        : '<div class="card-body"><div class="notice warn">Cloudflare Access / D1 未连接或当前没有 Factory Master 数据。这里不显示演示数据。</div></div>';
+        : '<div class="card-body"><div class="notice warn">Cloudflare Access / D1 未连接或当前没有 Active Factory Master。请由 Admin 创建正式 Factory；系统不会把 SAMPLE Factory 当成生产数据。</div></div>'}`;
     }else{
       const ns=contentNamespace();
       const rows=(state.referenceRecords||[]).filter(x=>x.namespace===ns).map(x=>[
@@ -715,6 +727,7 @@
     if(action==="add-comment") return addComment();
     if(action==="create-user") return createAdminUser();
     if(action==="create-reference") return createReferenceRecord();
+    if(action==="create-factory") return createFactoryMaster();
     if(action==="create-template-version") return createTemplateVersion();
     if(action==="save-template-draft") return saveTemplateDraft();
     if(action==="submit-template-version") return submitTemplateVersion();
@@ -877,6 +890,22 @@
       toast(e.message||String(e),"error");
     }
     if(renderAfter) render();
+  }
+
+  async function createFactoryMaster(){
+    if(!state.apiOnline||!permitted("admin")){toast("需要 Admin 权限和 D1 连接。","error");return;}
+    const name=document.getElementById("factory-create-name")?.value?.trim()||"";
+    const crn=document.getElementById("factory-create-crn")?.value?.trim()||"";
+    const country=document.getElementById("factory-create-country")?.value?.trim()||"";
+    const effectiveAt=document.getElementById("factory-create-effective")?.value?.trim()||null;
+    if(!name||!crn||!country){toast("Factory Name、CRN、Country 必填。","error");return;}
+    try{
+      await api.createFactory({name,crn,country,effectiveAt,status:"ACTIVE",reason:"Created from Content Master"});
+      state.factories=(await api.factories()).data||[];
+      await loadSystemReadiness(false);
+      render();
+      toast("Active Factory Master 已创建","success");
+    }catch(e){toast(e.message||String(e),"error");}
   }
 
   async function createReferenceRecord(){
