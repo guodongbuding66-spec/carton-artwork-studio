@@ -58,6 +58,22 @@ async function securityEvent(env, identity, eventType, request, detail = {}) {
   }
 }
 
+async function loadApprovedProductionAssets(env) {
+  const {results}=await env.DB.prepare(`
+    SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+           size_bytes AS sizeBytes,media_type AS mediaType,metadata_json AS metadataJson,
+           status,approved_by AS approvedBy,approved_at AS approvedAt
+    FROM production_assets
+    WHERE status='APPROVED'
+    ORDER BY asset_type,code,version
+  `).all();
+  return (results||[]).map((x)=>{
+    let metadata={};
+    try{metadata=JSON.parse(x.metadataJson||"{}");}catch{}
+    return {...x,metadata};
+  });
+}
+
 const REQUIRED_SCHEMA_TABLES = Object.freeze([
   "templates","template_versions","template_approvals",
   "factories","artworks","artwork_revisions","comments","approvals",
@@ -106,11 +122,14 @@ async function collectSystemReadiness(env, identity) {
     if(roleUsers[row.role]) roleUsers[row.role].push(row.email);
   }
 
-  const {results:policyRows}=await env.DB.prepare(`
-    SELECT code,display_name AS displayName,status,config_json AS configJson
-    FROM production_policies ORDER BY code
-  `).all();
-  const productionReadiness=summarizeProductionReadiness(policyRows);
+  const [{results:policyRows},approvedAssets]=await Promise.all([
+    env.DB.prepare(`
+      SELECT code,display_name AS displayName,status,config_json AS configJson
+      FROM production_policies ORDER BY code
+    `).all(),
+    loadApprovedProductionAssets(env)
+  ]);
+  const productionReadiness=summarizeProductionReadiness(policyRows,undefined,approvedAssets);
 
   const report=buildSystemReadiness({
     identitySource:identity?.source||null,
@@ -497,11 +516,14 @@ export default {
       }
 
       if(request.method==="GET"&&url.pathname==="/api/production-readiness"){
-        const {results}=await env.DB.prepare(`
-          SELECT code,display_name AS displayName,status,config_json AS configJson
-          FROM production_policies ORDER BY code
-        `).all();
-        return json({data:summarizeProductionReadiness(results)});
+        const [{results},approvedAssets]=await Promise.all([
+          env.DB.prepare(`
+            SELECT code,display_name AS displayName,status,config_json AS configJson
+            FROM production_policies ORDER BY code
+          `).all(),
+          loadApprovedProductionAssets(env)
+        ]);
+        return json({data:summarizeProductionReadiness(results,undefined,approvedAssets)});
       }
 
       const policyMatch=/^\/api\/production-policies\/([^/]+)$/.exec(url.pathname);
@@ -1401,12 +1423,17 @@ export default {
                    approved_by AS approvedBy,approved_at AS approvedAt,updated_at AS updatedAt
             FROM production_policies ORDER BY code
           `).all();
-          const readiness=summarizeProductionReadiness(policyRows);
+          const approvedAssets=await loadApprovedProductionAssets(env);
+          const readiness=summarizeProductionReadiness(policyRows,undefined,approvedAssets);
           if(!readiness.ready){
             return err(409,"PRODUCTION_READINESS_BLOCKED","Production export is blocked until all production policies are approved and valid.",readiness.gates);
           }
           productionEvidence={
             readiness,
+            assets:approvedAssets.map((a)=>({
+              id:a.id,assetType:a.assetType,code:a.code,version:a.version,sha256:a.sha256,
+              approvedBy:a.approvedBy,approvedAt:a.approvedAt,metadata:a.metadata
+            })),
             policies:policyRows.map((p)=>({
               code:p.code,displayName:p.displayName,status:p.status,
               config:p.configJson?JSON.parse(p.configJson):{},
