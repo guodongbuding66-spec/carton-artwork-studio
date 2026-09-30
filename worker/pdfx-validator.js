@@ -36,6 +36,7 @@ export function validateValidatorResponse(payload, expected={}) {
   }
   const artifactSha256=String(data.artifactSha256||data.artifact_sha256||"").toLowerCase();
   if(!artifactSha256) errors.push("Validator must return artifactSha256.");
+  else if(!/^[0-9a-f]{64}$/.test(artifactSha256)) errors.push("Validator artifactSha256 must be a 64-character lowercase/uppercase hex SHA-256.");
   if(expected.artifactSha256 && artifactSha256!==String(expected.artifactSha256).toLowerCase()){
     errors.push("Validator artifact SHA-256 does not match the submitted PDF.");
   }
@@ -73,7 +74,7 @@ export async function runExternalPdfxValidation(bytesLike, options={}, env={}) {
   const profile=String(options.profile||"PDF/X-4");
   const artifactSha256=String(options.artifactSha256||"").toLowerCase();
   if(!bytes.length) throw new Error("PDFX_VALIDATOR_EMPTY_PDF");
-  if(!artifactSha256) throw new Error("PDFX_VALIDATOR_SHA_REQUIRED");
+  if(!/^[0-9a-f]{64}$/.test(artifactSha256)) throw new Error("PDFX_VALIDATOR_SHA_REQUIRED");
 
   const headers=new Headers({
     "content-type":"application/pdf",
