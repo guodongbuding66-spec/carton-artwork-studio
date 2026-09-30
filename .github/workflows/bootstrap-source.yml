@@ -1,0 +1,49 @@
+name: Bootstrap source snapshot
+
+on:
+  push:
+    paths:
+      - 'bootstrap/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat bootstrap/payload.*.b64 | base64 -d > /tmp/carton-artwork-studio.zip
+          echo "4ab209a58ddaca9bfa3fedfbcf67726941ff5b780d8f5ec3ce01a27a6941fde4  /tmp/carton-artwork-studio.zip" | sha256sum -c -
+          rm -rf /tmp/carton-source
+          mkdir -p /tmp/carton-source
+          unzip -q /tmp/carton-artwork-studio.zip -d /tmp/carton-source
+          cp -a /tmp/carton-source/carton-artwork-studio/. .
+
+      - name: Verify source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run check
+
+      - name: Commit synchronized source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Source already synchronized."
+            exit 0
+          fi
+          git commit -m "feat: sync Carton Artwork Studio v0.4.0 source"
+          git push
