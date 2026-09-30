@@ -359,11 +359,23 @@
   }
 
   function renderAdmin(){
-    const roles=[["Operator","Create artwork, edit business data, export proof"],["Reviewer","Review, comment, reject, approve"],["Template Designer","Edit template drafts and rules"],["Template Approver","Publish template versions"],["Admin","Users, roles, master data, profiles"]];
-    return `<div class="roles">${roles.map(r=>`<div class="role"><h4>${r[0]}</h4><p>${r[1]}</p></div>`).join("")}</div><section class="card" style="margin-top:12px"><div class="card-head"><h3>Audit Log</h3><span class="subtle">不可变操作记录</span></div>${table(["Who","When","Object","Action","Old","New","Reason"],[
-      ["dong guo","09:18","ART-260930-001","Factory changed","Zhejiang B","Ningbo A","Production factory confirmed"],["Helen","09:24","ART-260930-001","Blocking comment","—","Open","Verify CRN"],["System","09:25","Preflight","Run","—","1 warning","Manual run"]
-    ])}</section>`;
+    const roles=["OPERATOR","REVIEWER","TEMPLATE_DESIGNER","TEMPLATE_APPROVER","ADMIN"];
+    if(!permitted("admin")) return '<section class="card"><div class="card-body"><div class="notice warn">Admin 权限由 Cloudflare Access 身份 + D1 RBAC 决定。当前用户没有系统管理权限。</div></div></section>';
+    const userRows=state.adminUsers.map(u=>[
+      u.email,
+      u.displayName||"—",
+      u.status,
+      roles.map(role=>`<label style="display:inline-block;margin:2px 8px 2px 0"><input type="checkbox" data-role-user="${esc(u.id)}" data-role="${role}" ${u.roles?.includes(role)?"checked":""}/> ${role}</label>`).join(""),
+      `<button class="btn small" data-save-user-roles="${esc(u.id)}">Save Roles</button>`
+    ]);
+    return `
+      <section class="card"><div class="card-head"><h3>Access / RBAC Users</h3><span class="subtle">Cloudflare Access 提供身份，D1 控制应用角英</span></div><div class="card-body">
+        <div class="row2"><div class="field"><label>Email</label><input id="admin-user-email" class="input" placeholder="name@company.com"/></div><div class="field"><label>Display Name</label><input id="admin-user-name" class="input" placeholder="Name"/></div></div>
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-user">Create User</button></div>
+      </div>${table(["Email","Name","Status","Roles",""],userRows,true)}</section>
+      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Four-eyes Approval</h3></div><div class="card-body"><div class="notice">提交人与 Reviewer 必须是不同身份。即使拥有 Admin 角色，也不能批准自己提交的同一 Revision。</div></div></section>`;
   }
+
 
   function table(headers, rows, html=false){
     return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${html?String(v):esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
