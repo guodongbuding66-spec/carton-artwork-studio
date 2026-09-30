@@ -163,17 +163,17 @@
 
   function renderArtwork() {
     const s = summary();
-    const prod = state.artwork.status === "approved" && s.blocking === 0 && state.resolvedBlockingComment;
+    const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && Boolean(state.remoteArtworkId);
     return `
       <div class="artwork-header">
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
         <div class="spacer"></div>
         <span class="badge ${state.artwork.status==="approved"?"green":state.artwork.status==="in_review"?"blue":state.artwork.status==="rejected"?"red":"amber"}">${esc(state.artwork.status.replace("_"," ").toUpperCase())}</span>
-        <button class="btn" data-action="save" ${state.apiBusy?"disabled":""}>保存草稿</button>
-        <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
-        <button class="btn primary" data-action="submit" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy?"disabled":""}>提交审核</button>
-        ${state.artwork.status==="in_review"?`<button class="btn success" data-action="approve" ${!state.resolvedBlockingComment||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
-        ${state.artwork.status==="approved"?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
+        <button class="btn" data-action="save" ${state.apiBusy||!permitted("artworkWrite")?"disabled":""}>保存草稿</button>
+        <button class="btn" data-action="preflight" ${state.apiBusy||!permitted("artworkWrite")?"disabled":""}>运行检查</button>
+        <button class="btn primary" data-action="submit" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy||!permitted("artworkWrite")?"disabled":""}>提交审核</button>
+        ${state.artwork.status==="in_review"&&permitted("review")?`<button class="btn success" data-action="approve" ${!blockingCommentsResolved()||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
+        ${state.artwork.status==="approved"&&permitted("artworkWrite")?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
         <button class="btn" data-action="proof">导出审核稿</button>
         <button class="btn success" data-action="production" ${prod?"":"disabled"}>下载生产稿</button>
       </div>
@@ -185,7 +185,7 @@
   }
 
   function sel(v){ return state.artwork.status===v?"selected":""; }
-  function isArtworkLocked(){return ["in_review","approved"].includes(state.artwork.status);}
+  function isArtworkLocked(){return ["in_review","approved"].includes(state.artwork.status)||!permitted("artworkWrite");}
 
   function renderForm() {
     const a = state.artwork, f = factory(), c = computed();
