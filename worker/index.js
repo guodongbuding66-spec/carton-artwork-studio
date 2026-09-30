@@ -21,7 +21,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "0.5.0",
+        version: "0.6.0",
         runtime: "cloudflare-workers",
         bindings: { d1: Boolean(env.DB), r2: Boolean(env.ARTWORK_FILES), assets: Boolean(env.ASSETS) },
         time: new Date().toISOString()
@@ -109,6 +109,82 @@ export default {
         return json({ data:{artwork,revisions} });
       }
 
+      if (request.method === "PATCH" && artworkMatch) {
+        const id=artworkMatch[1],b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM artworks WHERE id=?").bind(id).first();
+        if(!current)return err(404,"NOT_FOUND","Artwork not found.");
+        if(["IN_REVIEW","APPROVED"].includes(String(current.status||"").toUpperCase())) {
+          return err(409,"IMMUTABLE_REVISION","Submitted or approved artwork cannot be edited in place. Create a new revision.");
+        }
+        const next={
+          sku:b.sku ?? current.sku,
+          contractNo:b.contractNo ?? current.contract_no,
+          factoryId:b.factoryId ?? current.factory_id,
+          packageCount:Number(b.packageCount ?? current.package_count),
+          currentPackage:Number(b.currentPackage ?? current.current_package),
+          canonicalData:b.canonicalData ?? JSON.parse(current.canonical_data_json||"{}")
+        };
+        await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE artworks SET sku=?,contract_no=?,factory_id=?,package_count=?,current_package=?,
+              canonical_data_json=?,status='DRAFT',updated_at=CURRENT_TIMESTAMP WHERE id=?
+          `).bind(next.sku,next.contractNo,next.factoryId,next.packageCount,next.currentPackage,JSON.stringify(next.canonicalData),id),
+          env.DB.prepare(`
+            INSERT INTO audit_logs(id,actor,object_type,object_id,action,old_value_json,new_value_json,reason,created_at)
+            VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+          `).bind(crypto.randomUUID(),b.actor||"web","ARTWORK",id,"UPDATE_DRAFT",
+            JSON.stringify({sku:current.sku,contractNo:current.contract_no,factoryId:current.factory_id}),
+            JSON.stringify({sku:next.sku,contractNo:next.contractNo,factoryId:next.factoryId}),
+            b.reason||"Save draft")
+        ]);
+        return json({data:{id,status:"DRAFT",revision:current.current_revision}});
+      }
+
+      const submitMatch=/^\/api\/artworks\/([^/]+)\/submit$/.exec(url.pathname);
+      if(request.method==="POST"&&submitMatch){
+        const artworkId=submitMatch[1],b=await bodyJson(request);
+        const artwork=await env.DB.prepare("SELECT * FROM artworks WHERE id=?").bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        const pfStatus=String(b.preflightStatus||"").toUpperCase();
+        if(pfStatus==="ERROR"||Number(b.blockingErrors||0)>0) {
+          return err(409,"PREFLIGHT_BLOCKED","Artwork has blocking preflight errors.");
+        }
+        const current=String(artwork.current_revision||"R01");
+        const existing=await env.DB.prepare(
+          "SELECT id,status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
+        ).bind(artworkId,current).first();
+        let revision=current;
+        let revisionId=existing?.id||crypto.randomUUID();
+        const snapshot=JSON.stringify(b.dataSnapshot||JSON.parse(artwork.canonical_data_json||"{}"));
+        if(existing && !["DRAFT","REJECTED"].includes(String(existing.status||"").toUpperCase())) {
+          const n=(Number(current.replace(/\D/g,""))||0)+1;
+          revision="R"+String(n).padStart(2,"0");
+          revisionId=crypto.randomUUID();
+        }
+        const statements=[];
+        if(existing && revision===current) {
+          statements.push(env.DB.prepare(`
+            UPDATE artwork_revisions SET status='SUBMITTED',data_snapshot_json=?,
+              preflight_profile_version=?,created_by=? WHERE id=?
+          `).bind(snapshot,b.preflightProfileVersion||"US_SIDE_SEAL_K_ONLY_V1@1",b.actor||"web",revisionId));
+        } else {
+          statements.push(env.DB.prepare(`
+            INSERT INTO artwork_revisions(id,artwork_id,revision,status,data_snapshot_json,template_version_id,
+              preflight_profile_version,created_by,created_at)
+            VALUES(?,?,?,'SUBMITTED',?,?,?,?,CURRENT_TIMESTAMP)
+          `).bind(revisionId,artworkId,revision,snapshot,b.templateVersionId||null,b.preflightProfileVersion||"US_SIDE_SEAL_K_ONLY_V1@1",b.actor||"web"));
+        }
+        statements.push(env.DB.prepare(
+          "UPDATE artworks SET current_revision=?,status='IN_REVIEW',canonical_data_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?"
+        ).bind(revision,snapshot,artworkId));
+        statements.push(env.DB.prepare(`
+          INSERT INTO audit_logs(id,actor,object_type,object_id,action,new_value_json,reason,created_at)
+          VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        `).bind(crypto.randomUUID(),b.actor||"web","ARTWORK",artworkId,"SUBMIT_REVIEW",JSON.stringify({revision}),b.reason||"Submitted for review"));
+        await env.DB.batch(statements);
+        return json({data:{id:artworkId,revision,status:"IN_REVIEW"}},{status:201});
+      }
+
       const revMatch=/^\/api\/artworks\/([^/]+)\/revisions$/.exec(url.pathname);
       if(request.method==="POST"&&revMatch){
         const artworkId=revMatch[1],b=await bodyJson(request);
@@ -142,15 +218,42 @@ export default {
         const artworkId=approvalMatch[1],b=await bodyJson(request);
         const id=crypto.randomUUID(),decision=String(b.decision||"").toUpperCase();
         if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
+        const artwork=await env.DB.prepare("SELECT * FROM artworks WHERE id=?").bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        if(String(artwork.status).toUpperCase()!=="IN_REVIEW") {
+          return err(409,"NOT_IN_REVIEW","Only an artwork currently in review can be approved or rejected.");
+        }
+        const revision=b.revision||artwork.current_revision;
+        if(decision==="APPROVE"){
+          const latestPf=await env.DB.prepare(`
+            SELECT status FROM preflight_runs WHERE artwork_id=? AND revision=?
+            ORDER BY created_at DESC LIMIT 1
+          `).bind(artworkId,revision).first();
+          if(!latestPf || String(latestPf.status).toUpperCase()==="ERROR") {
+            return err(409,"PREFLIGHT_REQUIRED","A non-error preflight run for the current revision is required.");
+          }
+          const unresolved=await env.DB.prepare(`
+            SELECT COUNT(*) AS count FROM comments
+            WHERE artwork_id=? AND revision=? AND blocking=1 AND resolved=0
+          `).bind(artworkId,revision).first();
+          if(Number(unresolved?.count||0)>0) {
+            return err(409,"BLOCKING_COMMENTS","Resolve all blocking review comments before approval.");
+          }
+        }
         const next=decision==="APPROVE"?"APPROVED":"REJECTED";
         await env.DB.batch([
           env.DB.prepare(`
             INSERT INTO approvals(id,artwork_id,revision,reviewer,decision,comment,created_at)
             VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)
-          `).bind(id,artworkId,b.revision||null,b.reviewer||"reviewer",decision,b.comment||""),
-          env.DB.prepare("UPDATE artworks SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(next,artworkId)
+          `).bind(id,artworkId,revision,b.reviewer||"reviewer",decision,b.comment||""),
+          env.DB.prepare("UPDATE artworks SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(next,artworkId),
+          env.DB.prepare("UPDATE artwork_revisions SET status=? WHERE artwork_id=? AND revision=?").bind(next,artworkId,revision),
+          env.DB.prepare(`
+            INSERT INTO audit_logs(id,actor,object_type,object_id,action,new_value_json,reason,created_at)
+            VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+          `).bind(crypto.randomUUID(),b.reviewer||"reviewer","ARTWORK",artworkId,decision,JSON.stringify({revision,status:next}),b.comment||"Review decision")
         ]);
-        return json({data:{id,status:next}},{status:201});
+        return json({data:{id,status:next,revision}},{status:201});
       }
 
 
