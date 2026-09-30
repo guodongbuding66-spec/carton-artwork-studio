@@ -93,7 +93,7 @@ async function collectSystemReadiness(env, identity) {
     env.DB.prepare(`
       SELECT status,created_at AS createdAt,report_json AS reportJson
       FROM system_readiness_runs
-      WHERE scope='R2' AND status='PASS'
+      WHERE scope='R2'
       ORDER BY created_at DESC LIMIT 1
     `).first()
   ]);
@@ -157,26 +157,28 @@ async function collectSystemReadiness(env, identity) {
 }
 
 async function runR2DeepProbe(env) {
-  if(!env.ARTWORK_FILES) return {status:"FAIL",ok:false,error:"ARTWORK_FILES binding is missing."};
+  if(!env.ARTWORK_FILES) return {status:"FAIL",ok:false,error:"ARTWORK_FILES binding is missing.",write:false,read:false,delete:false};
   const token=crypto.randomUUID();
   const key=`_system-readiness/${token}.txt`;
   const payload=`carton-artwork-studio:r2-probe:${token}`;
-  let deleted=false;
+  let wrote=false,read=false,deleted=false;
   try {
     await env.ARTWORK_FILES.put(key,payload,{httpMetadata:{contentType:"text/plain; charset=utf-8"}});
+    wrote=true;
     const object=await env.ARTWORK_FILES.get(key);
     if(!object) throw new Error("R2 object could not be read back.");
     const bytes=new Uint8Array(await object.arrayBuffer());
     const actual=new TextDecoder().decode(bytes);
     if(actual!==payload) throw new Error("R2 read-back payload mismatch.");
+    read=true;
     await env.ARTWORK_FILES.delete(key);
     deleted=true;
-    return {status:"PASS",ok:true,key,bytes:bytes.length,write:true,read:true,delete:true};
+    return {status:"PASS",ok:true,key,bytes:bytes.length,write:wrote,read,delete:deleted};
   } catch(e) {
-    if(!deleted) {
+    if(wrote&&!deleted) {
       try { await env.ARTWORK_FILES.delete(key); deleted=true; } catch {}
     }
-    return {status:"FAIL",ok:false,key,error:e?.message||String(e),write:true,read:false,delete:deleted};
+    return {status:"FAIL",ok:false,key,error:e?.message||String(e),write:wrote,read,delete:deleted};
   }
 }
 
