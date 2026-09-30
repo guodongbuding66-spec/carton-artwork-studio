@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.0.0
+## 当前版本：1.1.0
 
 ### 已实现
 
@@ -51,6 +51,36 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.1.0 关键工程进展
+
+### 1. Excel / XLSX leading-zero fidelity
+
+Import Engine 现在解析 `xl/styles.xml` 与自定义 Number Format。
+
+对于 Excel 中以数值存储、但通过 `000000...` 格式显示前导零的 SKU / Barcode / 编码字段，会在导入时恢复显示值，而不是把前导零永久丢失。
+
+同时增加了字符串级科学计数法整数还原，避免先转 JavaScript Number 再遇到大整数精度损失。
+
+### 2. Production renderer visual regression
+
+新增固定样例的 Production PDF Snapshot Gate：
+
+- 真实 mm Geometry
+- Code 128 vector
+- QR vector
+- Production PDF byte length
+- SHA-256
+
+当前基线：
+
+```text
+US_SIDE_SEAL / KF210215US-02PM-001
+PDF bytes: 18653
+SHA-256: b2c122cb39d331ef5a83256cc2e34a37cb6134044234385408df379df9310591
+```
+
+后续任何渲染器、布局、条码或 QR 变化都会触发 CI regression failure，要求明确审查后才能更新基线。
 
 ## v1.0.0 关键工程进展
 
@@ -572,12 +602,12 @@ npm run check
 - QR payload / ECC 业务确认；当前模板默认 ECC M，Version 自动选择
 - Approved Font Registry / embedding / outlining 已进入 Production Policy gate，仍需提供并批准实际方案
 - PDF/X profile 已进入 Production Policy gate，仍需确认目标 profile 与转换/验证实现
-- Excel style/number-format 级 leading-zero 恢复
+- Excel style/number-format leading-zero 恢复已实现；仍需更多真实 Packing List 样本做兼容性回归
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Cloudflare Access / RBAC 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application 与 D1/R2 资源
 - D1/R2 API 与前端 Persistence Bridge 已实现，但仍需绑定正式 staging / production resources
 - immutable approval workflow 已进入后端；仍需 staging 双身份验收
-- Template visual regression
+- Production renderer snapshot regression 已实现；Template Designer 视觉差分仍待扩展
 - external print preflight adapter
 - 实物 Barcode Verifier 数据接入
 
