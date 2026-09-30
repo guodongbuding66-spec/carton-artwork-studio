@@ -143,26 +143,38 @@
   }
 
   function renderDashboard() {
-    const cards = [["Draft",18,"待完善"],["Pending Review",7,"等待审核"],["Rejected",2,"需要修订"],["Approved",46,"可生产"]];
-    const recent = [
-      ["ART-260930-001","KF210215US-02PM-001","HT24010213","R03","In Review"],
-      ["ART-260930-002","SHED-1019-US","HT24090218","R02","Approved"],
-      ["ART-260929-011","PERGOLA-US-440","HT24081107","R01","Draft"],
-      ["ART-260929-008","PLANTER-US-208","HT24080199","R04","Rejected"]
+    const rows=state.remoteArtworks||[];
+    const count=(status)=>rows.filter(x=>String(x.status||"").toUpperCase()===status).length;
+    const cards=[
+      ["Draft",count("DRAFT"),"待完善"],
+      ["Pending Review",count("IN_REVIEW"),"等待审核"],
+      ["Rejected",count("REJECTED"),"需要修订"],
+      ["Approved",count("APPROVED"),"可生产"]
     ];
+    const recent=rows.slice(0,8).map(x=>[
+      x.artworkNo||"—",
+      x.sku||"—",
+      x.contractNo||"—",
+      x.currentRevision||"—",
+      `<span class="badge ${String(x.status).toUpperCase()==="APPROVED"?"green":String(x.status).toUpperCase()==="IN_REVIEW"?"blue":String(x.status).toUpperCase()==="REJECTED"?"red":"amber"}">${esc(x.status||"—")}</span>`,
+      `<button class="btn small" data-open-artwork="${esc(x.id)}">Open</button>`
+    ]);
+    const s=summary();
+    const tpl=state.templates[0];
     return `
+      ${state.apiOnline&&state.identity?"":'<div class="notice warn" style="margin-bottom:12px">当前未连接 Cloudflare Access/D1，工作台不会显示伪造业务数据。</div>'}
       <div class="kpis">${cards.map(c=>`<div class="kpi"><div class="kpi-label">${c[0]}</div><div class="kpi-value">${c[1]}</div><div class="kpi-foot">${c[2]}</div></div>`).join("")}</div>
       <div class="grid2">
-        <section class="card"><div class="card-head"><h3>Recent Artwork</h3><span class="subtle">最近印刷稿</span></div>${table(["Artwork","SKU","Contract","Rev","Status"],recent)}</section>
+        <section class="card"><div class="card-head"><h3>Recent Artwork</h3><span class="subtle">D1 实时数据</span><span class="spacer"></span><button class="btn small" data-action="refresh-dashboard">Refresh</button></div>${recent.length?table(["Artwork","SKU","Contract","Rev","Status",""],recent,true):'<div class="card-body"><div class="notice">当前没有远程 Artwork 数据。</div></div>'}</section>
         <div>
-          <section class="card"><div class="card-head"><h3>Preflight Health</h3><span class="subtle">质量健康度</span></div><div class="card-body">
-            ${health("Data",99.7)}${health("Layout",98.4)}${health("Codes",97.9)}${health("Print",96.8)}
-            <div class="notice warn" style="margin-top:10px">3 个 Artwork 存在阻断错误，Production Export 被锁定。</div>
+          <section class="card"><div class="card-head"><h3>Current Preflight</h3><span class="subtle">当前工作稿</span></div><div class="card-body">
+            <div class="kpis" style="grid-template-columns:repeat(3,1fr);margin:0"><div class="kpi"><div class="kpi-label">Errors</div><div class="kpi-value" style="color:#bc2f3b">${s.error}</div></div><div class="kpi"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:#a86b00">${s.warning}</div></div><div class="kpi"><div class="kpi-label">Passed</div><div class="kpi-value" style="color:#16835d">${s.pass}</div></div></div>
           </div></section>
-          <section class="card"><div class="card-head"><h3>Template Status</h3></div><div class="card-body"><strong>US_SIDE_SEAL</strong><div class="subtle" style="margin-top:4px">2026.05.20 · Approved · US_SIDE_SEAL_K_ONLY_V1</div></div></section>
+          <section class="card"><div class="card-head"><h3>Template Status</h3></div><div class="card-body"><strong>${esc(tpl?.displayName||state.artwork.templateName)}</strong><div class="subtle" style="margin-top:4px">${esc(tpl?.version||state.artwork.templateVersion)} · ${esc(tpl?.status||"Local")} · ${esc(tpl?.preflightProfile||"US_SIDE_SEAL_K_ONLY_V1")}</div></div></section>
         </div>
       </div>`;
   }
+
 
   function health(name,v){ return `<div style="margin:9px 0"><div style="display:flex;justify-content:space-between"><span>${name}</span><span class="mono">${v}%</span></div><div style="height:5px;background:#edf1f4;border-radius:5px;margin-top:5px"><i style="display:block;width:${v}%;height:100%;background:#16835d;border-radius:5px"></i></div></div>`; }
 
