@@ -72,6 +72,33 @@
       async productionReadiness() {
         return request("/api/production-readiness");
       },
+      async productionAssets(type = "") {
+        const q = new URLSearchParams();
+        if (type) q.set("type", type);
+        return request("/api/production-assets" + (q.size ? "?" + q : ""));
+      },
+      async uploadProductionAsset(file, meta = {}) {
+        const q = new URLSearchParams({
+          type: meta.type || "",
+          code: meta.code || "",
+          version: meta.version || "",
+          filename: meta.filename || file?.name || "asset.bin"
+        });
+        const headers = new Headers({ "content-type": file?.type || "application/octet-stream" });
+        if (meta.license) headers.set("x-asset-license", encodeURIComponent(meta.license));
+        if (meta.notes) headers.set("x-asset-notes", encodeURIComponent(meta.notes));
+        return request("/api/production-assets/upload?" + q, { method:"POST", headers, body:file });
+      },
+      async submitProductionAsset(id, payload = {}) {
+        return request(`/api/production-assets/${encodeURIComponent(id)}/submit`, {
+          method:"POST", body:JSON.stringify(payload)
+        });
+      },
+      async decideProductionAsset(id, decision, payload = {}) {
+        return request(`/api/production-assets/${encodeURIComponent(id)}/approval`, {
+          method:"POST", body:JSON.stringify({...payload,decision})
+        });
+      },
       async systemReadiness() {
         return request("/api/system/readiness");
       },
