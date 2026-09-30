@@ -1,5 +1,6 @@
 import { ROLES, can, permissionForRequest, resolveIdentity } from "./auth.js";
 import { parseTemplateJson, validateTemplateJson } from "./template.js";
+import { parsePolicyConfig, validateProductionPolicy, summarizeProductionReadiness } from "./readiness.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -70,6 +71,9 @@ function publicIdentity(identity) {
       batchWrite: can(identity, "BATCH_WRITE"),
       templateWrite: can(identity, "TEMPLATE_WRITE"),
       templateApprove: can(identity, "TEMPLATE_APPROVE"),
+      referenceWrite: can(identity, "REFERENCE_WRITE"),
+      productionPolicyWrite: can(identity, "PRODUCTION_POLICY_WRITE"),
+      productionPolicyApprove: can(identity, "PRODUCTION_POLICY_APPROVE"),
       productionExport: can(identity, "EXPORT_PRODUCTION"),
       admin: can(identity, "ADMIN")
     }
@@ -85,7 +89,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "0.9.0",
+        version: "1.0.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -213,6 +217,188 @@ export default {
           reason:b.reason||"Factory master data update"
         });
         return json({data:{id,...next}});
+      }
+
+      if(request.method==="GET"&&url.pathname==="/api/reference-records"){
+        const namespace=String(url.searchParams.get("namespace")||"").toUpperCase();
+        const q=String(url.searchParams.get("q")||"").trim();
+        const where=[],binds=[];
+        if(namespace){where.push("namespace=?");binds.push(namespace);}
+        if(q){
+          where.push("(code LIKE ? OR display_name LIKE ?)");
+          const like=`%${q}%`;binds.push(like,like);
+        }
+        const sql=`
+          SELECT id,namespace,code,display_name AS displayName,data_json AS dataJson,
+                 effective_at AS effectiveAt,status,created_by AS createdBy,updated_by AS updatedBy,
+                 created_at AS createdAt,updated_at AS updatedAt
+          FROM reference_records
+          ${where.length?`WHERE ${where.join(" AND ")}`:""}
+          ORDER BY namespace,display_name LIMIT 500
+        `;
+        const {results}=await env.DB.prepare(sql).bind(...binds).all();
+        return json({data:results.map((x)=>({...x,data:x.dataJson?JSON.parse(x.dataJson):{}}))});
+      }
+
+      if(request.method==="POST"&&url.pathname==="/api/reference-records"){
+        const b=await bodyJson(request);
+        const namespace=String(b.namespace||"").toUpperCase();
+        if(!["CUSTOMER","PRODUCT","COUNTRY","SHARED"].includes(namespace)){
+          return err(400,"INVALID_NAMESPACE","namespace must be CUSTOMER, PRODUCT, COUNTRY or SHARED.");
+        }
+        const code=String(b.code||"").trim().toUpperCase().replace(/[^A-Z0-9_.\-]+/g,"_");
+        const displayName=String(b.displayName||"").trim();
+        if(!code||!displayName)return err(400,"INVALID_REFERENCE_RECORD","code and displayName are required.");
+        const id=crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO reference_records(
+            id,namespace,code,display_name,data_json,effective_at,status,created_by,updated_by,created_at,updated_at
+          ) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        `).bind(
+          id,namespace,code,displayName,JSON.stringify(b.data||{}),b.effectiveAt||null,
+          String(b.status||"ACTIVE").toUpperCase(),identity.email,identity.email
+        ).run();
+        await audit(env,identity,"REFERENCE_RECORD",id,"CREATE",{newValue:{namespace,code,displayName}});
+        return json({data:{id,namespace,code,displayName}},{status:201});
+      }
+
+      const referenceMatch=/^\/api\/reference-records\/([^/]+)$/.exec(url.pathname);
+      if(request.method==="PATCH"&&referenceMatch){
+        const id=referenceMatch[1],b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM reference_records WHERE id=?").bind(id).first();
+        if(!current)return err(404,"NOT_FOUND","Reference record not found.");
+        const next={
+          displayName:String(b.displayName??current.display_name).trim(),
+          data:b.data===undefined?JSON.parse(current.data_json||"{}"):b.data,
+          effectiveAt:b.effectiveAt===undefined?current.effective_at:(b.effectiveAt||null),
+          status:String(b.status??current.status).toUpperCase()
+        };
+        if(!next.displayName)return err(400,"INVALID_REFERENCE_RECORD","displayName is required.");
+        await env.DB.prepare(`
+          UPDATE reference_records
+          SET display_name=?,data_json=?,effective_at=?,status=?,updated_by=?,updated_at=CURRENT_TIMESTAMP
+          WHERE id=?
+        `).bind(next.displayName,JSON.stringify(next.data||{}),next.effectiveAt,next.status,identity.email,id).run();
+        await audit(env,identity,"REFERENCE_RECORD",id,"UPDATE",{
+          oldValue:{displayName:current.display_name,status:current.status},
+          newValue:{displayName:next.displayName,status:next.status},
+          reason:b.reason||"Reference master update"
+        });
+        return json({data:{id,...next}});
+      }
+
+      if(request.method==="GET"&&url.pathname==="/api/production-policies"){
+        const {results}=await env.DB.prepare(`
+          SELECT p.code,p.display_name AS displayName,p.status,p.config_json AS configJson,p.notes,
+                 p.updated_by AS updatedBy,p.submitted_by AS submittedBy,p.submitted_at AS submittedAt,
+                 p.approved_by AS approvedBy,p.approved_at AS approvedAt,p.updated_at AS updatedAt,
+                 (SELECT a.decision FROM production_policy_approvals a WHERE a.policy_code=p.code ORDER BY a.created_at DESC LIMIT 1) AS lastDecision,
+                 (SELECT a.comment FROM production_policy_approvals a WHERE a.policy_code=p.code ORDER BY a.created_at DESC LIMIT 1) AS lastComment
+          FROM production_policies p ORDER BY p.code
+        `).all();
+        return json({data:results.map((x)=>({...x,config:x.configJson?JSON.parse(x.configJson):{}}))});
+      }
+
+      if(request.method==="GET"&&url.pathname==="/api/production-readiness"){
+        const {results}=await env.DB.prepare(`
+          SELECT code,display_name AS displayName,status,config_json AS configJson
+          FROM production_policies ORDER BY code
+        `).all();
+        return json({data:summarizeProductionReadiness(results)});
+      }
+
+      const policyMatch=/^\/api\/production-policies\/([^/]+)$/.exec(url.pathname);
+      if(request.method==="PATCH"&&policyMatch){
+        const code=decodeURIComponent(policyMatch[1]).toUpperCase(),b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM production_policies WHERE code=?").bind(code).first();
+        if(!current)return err(404,"NOT_FOUND","Production policy not found.");
+        if(!["DRAFT","REJECTED"].includes(String(current.status).toUpperCase())){
+          return err(409,"POLICY_IMMUTABLE","Only DRAFT or REJECTED policies can be edited.");
+        }
+        let config=current.config_json||"{}";
+        if(b.config!==undefined){
+          try{config=JSON.stringify(parsePolicyConfig(b.config));}
+          catch{return err(400,"POLICY_CONFIG_INVALID","Policy config must be valid JSON.");}
+        }
+        const notes=b.notes===undefined?current.notes:String(b.notes||"");
+        await env.DB.prepare(`
+          UPDATE production_policies
+          SET status='DRAFT',config_json=?,notes=?,updated_by=?,submitted_by=NULL,submitted_at=NULL,
+              approved_by=NULL,approved_at=NULL,updated_at=CURRENT_TIMESTAMP
+          WHERE code=?
+        `).bind(config,notes,identity.email,code).run();
+        await audit(env,identity,"PRODUCTION_POLICY",code,"UPDATE_DRAFT",{
+          oldValue:{status:current.status,config:current.config_json},
+          newValue:{status:"DRAFT",config},
+          reason:b.reason||"Production policy update"
+        });
+        return json({data:{code,status:"DRAFT"}});
+      }
+
+      const policySubmitMatch=/^\/api\/production-policies\/([^/]+)\/submit$/.exec(url.pathname);
+      if(request.method==="POST"&&policySubmitMatch){
+        const code=decodeURIComponent(policySubmitMatch[1]).toUpperCase(),b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM production_policies WHERE code=?").bind(code).first();
+        if(!current)return err(404,"NOT_FOUND","Production policy not found.");
+        if(!["DRAFT","REJECTED"].includes(String(current.status).toUpperCase())){
+          return err(409,"POLICY_SUBMIT_STATE","Only DRAFT or REJECTED policies can be submitted.");
+        }
+        const validation=validateProductionPolicy(code,current.config_json);
+        if(!validation.ok)return err(409,"POLICY_VALIDATION_FAILED","Production policy validation failed.",validation.errors);
+        await env.DB.prepare(`
+          UPDATE production_policies
+          SET status='SUBMITTED',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+          WHERE code=?
+        `).bind(identity.email,code).run();
+        await audit(env,identity,"PRODUCTION_POLICY",code,"SUBMIT_REVIEW",{
+          newValue:{status:"SUBMITTED"},
+          reason:b.reason||"Production policy submitted for approval"
+        });
+        return json({data:{code,status:"SUBMITTED",submittedBy:identity.email}},{status:201});
+      }
+
+      const policyApprovalMatch=/^\/api\/production-policies\/([^/]+)\/approval$/.exec(url.pathname);
+      if(request.method==="POST"&&policyApprovalMatch){
+        const code=decodeURIComponent(policyApprovalMatch[1]).toUpperCase(),b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM production_policies WHERE code=?").bind(code).first();
+        if(!current)return err(404,"NOT_FOUND","Production policy not found.");
+        if(String(current.status).toUpperCase()!=="SUBMITTED"){
+          return err(409,"POLICY_NOT_SUBMITTED","Only SUBMITTED policies can be approved or rejected.");
+        }
+        if(String(current.submitted_by||"").toLowerCase()===identity.email.toLowerCase()){
+          await securityEvent(env,identity,"POLICY_SELF_APPROVAL_BLOCKED",request,{code});
+          return err(409,"FOUR_EYES_REQUIRED","The policy submitter cannot approve or reject the same policy.");
+        }
+        const decision=String(b.decision||"").toUpperCase();
+        if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
+        if(decision==="APPROVE"){
+          const validation=validateProductionPolicy(code,current.config_json);
+          if(!validation.ok)return err(409,"POLICY_VALIDATION_FAILED","Production policy validation failed.",validation.errors);
+        }
+        const approvalId=crypto.randomUUID(),next=decision==="APPROVE"?"APPROVED":"REJECTED";
+        const stmts=[env.DB.prepare(`
+          INSERT INTO production_policy_approvals(id,policy_code,reviewer,decision,comment,created_at)
+          VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
+        `).bind(approvalId,code,identity.email,decision,b.comment||"")];
+        if(decision==="APPROVE"){
+          stmts.push(env.DB.prepare(`
+            UPDATE production_policies
+            SET status='APPROVED',approved_by=?,approved_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+            WHERE code=?
+          `).bind(identity.email,code));
+        }else{
+          stmts.push(env.DB.prepare(`
+            UPDATE production_policies
+            SET status='REJECTED',approved_by=NULL,approved_at=NULL,updated_at=CURRENT_TIMESTAMP
+            WHERE code=?
+          `).bind(code));
+        }
+        await env.DB.batch(stmts);
+        await audit(env,identity,"PRODUCTION_POLICY",code,decision,{
+          newValue:{status:next,reviewer:identity.email},
+          reason:b.comment||"Production policy review decision"
+        });
+        return json({data:{code,status:next,reviewer:identity.email}},{status:201});
       }
 
       if (request.method === "GET" && url.pathname === "/api/templates") {
@@ -811,6 +997,16 @@ export default {
         }
 
         const kind=(url.searchParams.get("kind")||"artifact").toUpperCase();
+        if(kind.includes("PRODUCTION")){
+          const {results:policyRows}=await env.DB.prepare(`
+            SELECT code,display_name AS displayName,status,config_json AS configJson
+            FROM production_policies ORDER BY code
+          `).all();
+          const readiness=summarizeProductionReadiness(policyRows);
+          if(!readiness.ready){
+            return err(409,"PRODUCTION_READINESS_BLOCKED","Production export is blocked until all production policies are approved and valid.",readiness.gates);
+          }
+        }
         const revision=url.searchParams.get("revision")||artwork.current_revision||"R01";
         if(revision!==artwork.current_revision) {
           return err(409,"STALE_REVISION","Production artifact revision must match the current approved revision.");
@@ -845,7 +1041,7 @@ export default {
         await env.DB.prepare(`
           INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
           VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
-        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"0.7.0",request.headers.get("x-artwork-manifest")||null).run();
+        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"1.0.0",request.headers.get("x-artwork-manifest")||null).run();
         await audit(env, identity, "EXPORT", id, "UPLOAD", {
           newValue:{artworkId,revision,kind,objectKey,sha256},
           reason:"Artifact persisted to R2"
