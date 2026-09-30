@@ -63,6 +63,8 @@
         headers:{
           artifactSha256:response.headers?.get?.("x-cas-artifact-sha256")||response.headers?.get?.("x-cas-pdf-sha256")||"",
           fontSha256:response.headers?.get?.("x-cas-font-sha256")||"",
+          iccSha256:response.headers?.get?.("x-cas-icc-sha256")||"",
+          pdfxCandidate:response.headers?.get?.("x-cas-pdfx-candidate")||"",
           renderer:response.headers?.get?.("x-cas-renderer")||"",
           exportId:response.headers?.get?.("x-cas-export-id")||""
         }
@@ -133,6 +135,12 @@
       async renderFontEmbedValidation(artworkId, assetId) {
         const q=new URLSearchParams({assetId});
         return requestBlob(`/api/artworks/${encodeURIComponent(artworkId)}/font-embed-validation?${q}`, {
+          method:"POST", body:"{}"
+        });
+      },
+      async renderOutputIntentValidation(artworkId, iccAssetId) {
+        const q=new URLSearchParams({iccAssetId});
+        return requestBlob(`/api/artworks/${encodeURIComponent(artworkId)}/output-intent-validation?${q}`, {
           method:"POST", body:"{}"
         });
       },
