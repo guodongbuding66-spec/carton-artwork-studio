@@ -5,3 +5,7 @@ DEV_USER_ROLES=ADMIN,OPERATOR,REVIEWER,TEMPLATE_DESIGNER,TEMPLATE_APPROVER
 
 # Production/staging bootstrap:
 # BOOTSTRAP_ADMIN_EMAIL=owner@company.com
+
+# v2.0 trusted PDF/X validator bridge:
+# PDFX_VALIDATOR_URL=https://validator.example.com/api/validate
+# PDFX_VALIDATOR_TOKEN=replace-with-local-development-token
