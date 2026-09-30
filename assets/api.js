@@ -61,6 +61,32 @@
       async templates() {
         return request("/api/templates");
       },
+      async createTemplate(payload) {
+        return request("/api/templates", { method:"POST", body:JSON.stringify(payload) });
+      },
+      async templateVersions(templateId) {
+        return request(`/api/templates/${encodeURIComponent(templateId)}/versions`);
+      },
+      async createTemplateVersion(templateId, payload) {
+        return request(`/api/templates/${encodeURIComponent(templateId)}/versions`, {
+          method:"POST", body:JSON.stringify(payload)
+        });
+      },
+      async updateTemplateVersion(versionId, payload) {
+        return request(`/api/template-versions/${encodeURIComponent(versionId)}`, {
+          method:"PATCH", body:JSON.stringify(payload)
+        });
+      },
+      async submitTemplateVersion(versionId, payload = {}) {
+        return request(`/api/template-versions/${encodeURIComponent(versionId)}/submit`, {
+          method:"POST", body:JSON.stringify(payload)
+        });
+      },
+      async decideTemplateVersion(versionId, decision, payload = {}) {
+        return request(`/api/template-versions/${encodeURIComponent(versionId)}/approval`, {
+          method:"POST", body:JSON.stringify({...payload,decision})
+        });
+      },
       async artworks(params = {}) {
         const q = new URLSearchParams();
         if (params.status) q.set("status", statusToApi(params.status));
