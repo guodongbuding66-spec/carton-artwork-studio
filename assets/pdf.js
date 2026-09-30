@@ -401,7 +401,14 @@
     return lines.join("\n");
   }
 
-  function createEmbeddedPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode = "production", fontBytes }) {
+  function xmlEsc(v) {
+    return String(v ?? "").replace(/[&<>"]/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" })[ch]);
+  }
+
+  function createEmbeddedPdfBytes({
+    artwork, geometry, computed, codeModel, qrMatrix, mode = "production",
+    fontBytes, iccBytes = null, outputIntent = null
+  }) {
     const fontModel = parseTrueTypeFont(fontBytes);
     const widthPt = mm(geometry.totalWidth);
     const heightPt = mm(geometry.totalHeight);
@@ -411,21 +418,43 @@
     const fontFile = fontModel.bytes;
     const widths = makeWidths(fontModel);
     const bbox = fontModel.bbox.join(" ");
-    const objects = new Array(10);
-    objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+    const hasIcc = iccBytes instanceof Uint8Array && iccBytes.length > 0;
+    const objects = new Array(hasIcc ? 13 : 10);
+    objects[1] = hasIcc
+      ? "<< /Type /Catalog /Pages 2 0 R /OutputIntents [10 0 R] /Metadata 12 0 R >>"
+      : "<< /Type /Catalog /Pages 2 0 R >>";
     objects[2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
-    objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`;
+    objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}] /TrimBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}] /BleedBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`;
     objects[4] = makeStream("", stream);
     objects[5] = "<< /Type /Font /Subtype /Type0 /BaseFont /CASEmbeddedFont /Encoding /Identity-H /DescendantFonts [6 0 R] /ToUnicode 9 0 R >>";
     objects[6] = `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /CASEmbeddedFont /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /CIDToGIDMap /Identity /DW 1000 /W [${widths}] >>`;
     objects[7] = `<< /Type /FontDescriptor /FontName /CASEmbeddedFont /Flags 32 /FontBBox [${bbox}] /ItalicAngle 0 /Ascent ${fontModel.ascent} /Descent ${fontModel.descent} /CapHeight ${fontModel.ascent} /StemV 80 /FontFile2 8 0 R >>`;
     objects[8] = makeStream(`/Length1 ${fontFile.length}`, fontFile);
     objects[9] = makeStream("", toUnicode);
-    return buildBinaryPdf(objects, "1.4");
+
+    if (hasIcc) {
+      const oi = outputIntent || {};
+      const identifier = escPdfText(oi.identifier || "Custom");
+      const info = escPdfText(oi.info || oi.identifier || "Custom ICC Output Profile");
+      const registry = escPdfText(oi.registryName || "https://www.color.org");
+      objects[10] = `<< /Type /OutputIntent /S /GTS_PDFX /OutputConditionIdentifier (${identifier}) /RegistryName (${registry}) /Info (${info}) /DestOutputProfile 11 0 R >>`;
+      const n = Number(oi.components || 4);
+      objects[11] = makeStream(`/N ${[1,3,4].includes(n)?n:4}`, iccBytes);
+      const pdfx = xmlEsc(oi.pdfxVersion || "PDF/X-4");
+      const title = xmlEsc(oi.title || "Carton Artwork Production");
+      const xmp = `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:pdfxid="http://www.npes.org/pdfx/ns/id/" xmlns:dc="http://purl.org/dc/elements/1.1/"><pdfxid:GTS_PDFXVersion>${pdfx}</pdfxid:GTS_PDFXVersion><dc:title><rdf:Alt><rdf:li xml:lang="x-default">${title}</rdf:li></rdf:Alt></dc:title></rdf:Description></rdf:RDF></x:xmpmeta>
+<?xpacket end="w"?>`;
+      objects[12] = makeStream("/Type /Metadata /Subtype /XML", new TextEncoder().encode(xmp));
+    }
+    return buildBinaryPdf(objects, hasIcc ? "1.6" : "1.4");
   }
 
-  function createPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode = "production", fontBytes = null }) {
-    if (fontBytes) return createEmbeddedPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode, fontBytes });
+  function createPdfBytes({
+    artwork, geometry, computed, codeModel, qrMatrix, mode = "production",
+    fontBytes = null, iccBytes = null, outputIntent = null
+  }) {
+    if (fontBytes) return createEmbeddedPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode, fontBytes, iccBytes, outputIntent });
     const widthPt = mm(geometry.totalWidth);
     const heightPt = mm(geometry.totalHeight);
     const stream = buildArtworkOps(artwork, geometry, computed, codeModel, { mode, qrMatrix });
