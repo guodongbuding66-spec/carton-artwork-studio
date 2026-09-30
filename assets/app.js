@@ -40,7 +40,12 @@
     remoteArtworkId: localStorage.getItem("cas:remoteArtworkId") || null,
     remoteRevision: null,
     remoteImportJobId: null,
-    apiBindings: { d1:false, r2:false, assets:false }
+    apiBindings: { d1:false, r2:false, assets:false },
+    identity: null,
+    authError: null,
+    comments: [],
+    commentsLoading: false,
+    adminUsers: []
   };
 
   const navItems = [
@@ -87,6 +92,14 @@
   function summary() { return D.preflightSummary(checks()); }
   function factory() { return D.findFactory(state.artwork.factoryId); }
   function canonical() { return D.canonicalData(state.artwork); }
+  function hasRole(role){return Boolean(state.identity?.roles?.includes(role));}
+  function permitted(key){return Boolean(state.identity?.permissions?.[key]);}
+  function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
+  function identityLabel(){
+    if(state.identity) return `${state.identity.email} · ${state.identity.roles.join(", ")||"NO ROLE"}`;
+    if(state.apiChecked&&state.authError) return "Access required";
+    return state.apiChecked?"Local / unauthenticated":"Checking identity…";
+  }
 
   function shell(body, titleZh, titleEn) {
     return `
@@ -96,14 +109,14 @@
           <nav class="nav">
             ${navItems.map(([id,ic,zh,en]) => `<button class="nav-btn ${state.page===id?"active":""}" data-page="${id}"><span class="nav-icon">${ic}</span><span>${zh}</span><span>${en}</span></button>`).join("")}
           </nav>
-          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline?"API Connected":state.apiChecked?"Local Mode":"API Checking…"}</span></div>
+          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline&&state.identity?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline&&state.identity?"Access Connected":state.apiChecked?"Access Required / Local":"API Checking…"}</span><div class="subtle" style="margin-top:6px;word-break:break-word">${esc(identityLabel())}</div></div>
         </aside>
         <section class="main">
           <header class="topbar">
             <div class="breadcrumb">Carton Artwork Studio /</div><div class="page-title">${esc(titleZh)}</div><div class="breadcrumb">${esc(titleEn)}</div>
             <div class="spacer"></div>
             <label class="search"><input placeholder="搜索 SKU / Contract / CRN…" /></label>
-            <span class="dev">DEV</span><button class="icon-btn" title="Notifications">◔</button><div class="avatar">DG</div>
+            <span class="dev">DEV</span><span class="subtle mono">${state.identity?esc(state.identity.email):"No Access identity"}</span><button class="icon-btn" title="Notifications">◔</button><div class="avatar">${state.identity?esc((state.identity.displayName||state.identity.email).slice(0,2).toUpperCase()):"—"}</div>
           </header>
           <main class="content">${body}</main>
         </section>
@@ -150,17 +163,17 @@
 
   function renderArtwork() {
     const s = summary();
-    const prod = state.artwork.status === "approved" && s.blocking === 0 && state.resolvedBlockingComment;
+    const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && Boolean(state.remoteArtworkId);
     return `
       <div class="artwork-header">
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
         <div class="spacer"></div>
         <span class="badge ${state.artwork.status==="approved"?"green":state.artwork.status==="in_review"?"blue":state.artwork.status==="rejected"?"red":"amber"}">${esc(state.artwork.status.replace("_"," ").toUpperCase())}</span>
-        <button class="btn" data-action="save" ${state.apiBusy?"disabled":""}>保存草稿</button>
-        <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
-        <button class="btn primary" data-action="submit" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy?"disabled":""}>提交审核</button>
-        ${state.artwork.status==="in_review"?`<button class="btn success" data-action="approve" ${!state.resolvedBlockingComment||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
-        ${state.artwork.status==="approved"?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
+        <button class="btn" data-action="save" ${state.apiBusy||!permitted("artworkWrite")?"disabled":""}>保存草稿</button>
+        <button class="btn" data-action="preflight" ${state.apiBusy||!permitted("artworkWrite")?"disabled":""}>运行检查</button>
+        <button class="btn primary" data-action="submit" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy||!permitted("artworkWrite")?"disabled":""}>提交审核</button>
+        ${state.artwork.status==="in_review"&&permitted("review")?`<button class="btn success" data-action="approve" ${!blockingCommentsResolved()||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
+        ${state.artwork.status==="approved"&&permitted("artworkWrite")?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
         <button class="btn" data-action="proof">导出审核稿</button>
         <button class="btn success" data-action="production" ${prod?"":"disabled"}>下载生产稿</button>
       </div>
@@ -172,7 +185,7 @@
   }
 
   function sel(v){ return state.artwork.status===v?"selected":""; }
-  function isArtworkLocked(){return ["in_review","approved"].includes(state.artwork.status);}
+  function isArtworkLocked(){return ["in_review","approved"].includes(state.artwork.status)||!permitted("artworkWrite");}
 
   function renderForm() {
     const a = state.artwork, f = factory(), c = computed();
@@ -222,8 +235,21 @@
   function renderCenter(){
     if(state.tab==="snapshot") return `<div class="snapshot"><pre>${esc(JSON.stringify(canonical(),null,2))}</pre></div>`;
     if(state.tab==="compare") return `<div class="compare"><div class="change"><strong>Factory</strong><div class="change-values"><div class="old">Zhejiang Factory B</div><div>→</div><div class="new">${esc(factory()?.name||"—")}</div></div></div><div class="change"><strong>CRN</strong><div class="change-values"><div class="old mono">3307820AB1</div><div>→</div><div class="new mono">${esc(computed().crn)}</div></div></div><div class="notice">下一阶段加入 Overlay / Difference / Flicker 图形比对。</div></div>`;
-    if(state.tab==="comments") return `<div class="comments"><div class="comment"><span class="badge ${state.resolvedBlockingComment?"green":"red"}">${state.resolvedBlockingComment?"Resolved":"Blocking"}</span> <strong>QA · Helen</strong><p>请确认本批次工厂 CRN 与最新海关备案文件一致。</p>${state.resolvedBlockingComment?"":'<button class="btn small" data-action="resolve-comment">标记已解决</button>'}</div><div class="comment"><span class="badge green">Resolved</span> <strong>Packaging · Leo</strong><p>Barcode + QR 已按批准组合尺寸统一。</p></div></div>`;
+    if(state.tab==="comments") return renderComments();
     return `<div class="canvas"><div class="artboard" style="transform:scale(${state.zoom})">${dielineSvg()}</div></div>`;
+  }
+
+  function renderComments(){
+    const rows=state.comments;
+    const list=state.commentsLoading
+      ? '<div class="notice">Loading review comments…</div>'
+      : rows.length
+        ? rows.map(x=>`<div class="comment"><span class="badge ${x.blocking?(x.resolved?"green":"red"):"blue"}">${x.blocking?(x.resolved?"Blocking · Resolved":"Blocking"):"Comment"}</span> <strong>${esc(x.author)}</strong><span class="subtle"> · ${esc(x.revision||"")}</span><p>${esc(x.body)}</p>${x.blocking&&!x.resolved&&permitted("review")?`<button class="btn small" data-resolve-comment="${esc(x.id)}">标记已解决</button>`:""}</div>`).join("")
+        : '<div class="notice">当前 Revision 暂无审核评论。</div>';
+    const composer=permitted("commentWrite")&&state.remoteArtworkId
+      ? `<section class="card" style="margin-bottom:10px"><div class="card-body"><textarea id="comment-body" class="input" rows="3" placeholder="输入审核意见…"></textarea><div class="toolbar" style="margin-top:8px">${permitted("review")?'<label><input id="comment-blocking" type="checkbox"/> Blocking comment</label>':""}<span class="spacer"></span><button class="btn primary" data-action="add-comment">Add Comment</button></div></div></section>`
+      : '<div class="notice warn" style="margin-bottom:10px">连接 Cloudflare Access 且兛备评论权限后可添加审核意见。</div>';
+    return `<div class="comments">${composer}${list}</div>`;
   }
 
   function dielineSvg(mode="editor", artwork=state.artwork) {
@@ -282,7 +308,7 @@
       <div class="stepper">${steps.map((x,i)=>`<div class="step ${i<state.batchStep?"done":i===state.batchStep?"active":""}">${i+1}. ${x}</div>`).join("")}</div>
       <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><span class="badge blue">US Packing List Default</span></div><div class="card-body">
         <label class="dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
-        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&state.apiOnline?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
+        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length&&permitted("batchWrite")?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&state.apiOnline&&permitted("batchWrite")?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating&&permitted("batchWrite")?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
       </div></section>
       ${state.batchSource?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL</div><div class="kpi-value">${stats.total}</div></div><div class="kpi"><div class="kpi-label">PASSED</div><div class="kpi-value" style="color:#16835d">${stats.passed}</div></div><div class="kpi"><div class="kpi-label">FAILED</div><div class="kpi-value" style="color:#bc2f3b">${stats.failed}</div></div><div class="kpi"><div class="kpi-label">MAPPING</div><div class="kpi-value">${mapping.length}</div><div class="kpi-foot">fields detected</div></div></div>`:""}
       ${mapping.length?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Detected Mapping</h3><span class="subtle">自动表头映射，可保存为 Mapping Profile（D1 schema 已预留）</span></div>${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}</section>`:""}
@@ -333,11 +359,23 @@
   }
 
   function renderAdmin(){
-    const roles=[["Operator","Create artwork, edit business data, export proof"],["Reviewer","Review, comment, reject, approve"],["Template Designer","Edit template drafts and rules"],["Template Approver","Publish template versions"],["Admin","Users, roles, master data, profiles"]];
-    return `<div class="roles">${roles.map(r=>`<div class="role"><h4>${r[0]}</h4><p>${r[1]}</p></div>`).join("")}</div><section class="card" style="margin-top:12px"><div class="card-head"><h3>Audit Log</h3><span class="subtle">不可变操作记录</span></div>${table(["Who","When","Object","Action","Old","New","Reason"],[
-      ["dong guo","09:18","ART-260930-001","Factory changed","Zhejiang B","Ningbo A","Production factory confirmed"],["Helen","09:24","ART-260930-001","Blocking comment","—","Open","Verify CRN"],["System","09:25","Preflight","Run","—","1 warning","Manual run"]
-    ])}</section>`;
+    const roles=["OPERATOR","REVIEWER","TEMPLATE_DESIGNER","TEMPLATE_APPROVER","ADMIN"];
+    if(!permitted("admin")) return '<section class="card"><div class="card-body"><div class="notice warn">Admin 权限由 Cloudflare Access 身份 + D1 RBAC 决定。当前用户没有系统管理权限。</div></div></section>';
+    const userRows=state.adminUsers.map(u=>[
+      u.email,
+      u.displayName||"—",
+      u.status,
+      roles.map(role=>`<label style="display:inline-block;margin:2px 8px 2px 0"><input type="checkbox" data-role-user="${esc(u.id)}" data-role="${role}" ${u.roles?.includes(role)?"checked":""}/> ${role}</label>`).join(""),
+      `<button class="btn small" data-save-user-roles="${esc(u.id)}">Save Roles</button>`
+    ]);
+    return `
+      <section class="card"><div class="card-head"><h3>Access / RBAC Users</h3><span class="subtle">Cloudflare Access 提供身份，D1 控制应用角英</span></div><div class="card-body">
+        <div class="row2"><div class="field"><label>Email</label><input id="admin-user-email" class="input" placeholder="name@company.com"/></div><div class="field"><label>Display Name</label><input id="admin-user-name" class="input" placeholder="Name"/></div></div>
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-user">Create User</button></div>
+      </div>${table(["Email","Name","Status","Roles",""],userRows,true)}</section>
+      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Four-eyes Approval</h3></div><div class="card-body"><div class="notice">提交人与 Reviewer 必须是不同身份。即使拥有 Admin 角色，也不能批准自己提交的同一 Revision。</div></div></section>`;
   }
+
 
   function table(headers, rows, html=false){
     return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${html?String(v):esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
@@ -349,8 +387,8 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{state.page=b.dataset.page;render();});
-    document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;render();});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="admin")await loadAdminUsers();});
+    document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=()=>{state.templateTab=b.dataset.templateTab;render();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=()=>{state.contentTab=b.dataset.contentTab;render();});
     document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=()=>{state.qualityTab=b.dataset.qualityTab;render();});
@@ -374,6 +412,8 @@
       render();
     });
     document.querySelectorAll("[data-action]").forEach(b=>b.onclick=()=>handleAction(b.dataset.action));
+    document.querySelectorAll("[data-resolve-comment]").forEach(b=>b.onclick=()=>resolveComment(b.dataset.resolveComment));
+    document.querySelectorAll("[data-save-user-roles]").forEach(b=>b.onclick=()=>saveUserRoles(b.dataset.saveUserRoles));
     const file=document.getElementById("batch-file");
     if(file) file.onchange=async()=>{ if(file.files?.[0]) await importBatch(file.files[0]); };
   }
@@ -385,7 +425,8 @@
     if(action==="approve") return reviewDecision("APPROVE");
     if(action==="reject") return reviewDecision("REJECT");
     if(action==="new-revision") return createNewRevision();
-    if(action==="resolve-comment"){state.resolvedBlockingComment=true;render();toast("Blocking comment 已解决","success");}
+    if(action==="add-comment") return addComment();
+    if(action==="create-user") return createAdminUser();
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
     if(action==="dry-run"){
@@ -400,7 +441,76 @@
     if(action==="impact-revision"){state.dialog=null;render();toast("已生成受影响 Artwork 的新 Revision 任务","success");}
   }
 
+  async function loadComments(){
+    if(!state.apiOnline||!state.identity||!state.remoteArtworkId){
+      state.comments=[];render();return;
+    }
+    state.commentsLoading=true;render();
+    try{
+      const response=await api.comments(state.remoteArtworkId,state.artwork.revision);
+      state.comments=response.data||[];
+    }catch(e){
+      state.comments=[];
+      toast(e.message||String(e),"error");
+    }finally{
+      state.commentsLoading=false;render();
+    }
+  }
+
+  async function addComment(){
+    if(!permitted("commentWrite")||!state.remoteArtworkId){toast("没有评论权限或 Artwork 尚未同步。","error");return;}
+    const body=document.getElementById("comment-body")?.value?.trim()||"";
+    const blocking=Boolean(document.getElementById("comment-blocking")?.checked);
+    if(!body){toast("请输入审核意见。","error");return;}
+    try{
+      await api.addComment(state.remoteArtworkId,{revision:state.artwork.revision,body,blocking});
+      await loadComments();
+      toast(blocking?"Blocking comment 已添加":"Comment 已添加","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function resolveComment(id){
+    if(!permitted("review")){toast("只有 Reviewer / Admin 可以解决 Blocking comment。","error");return;}
+    try{
+      await api.resolveComment(id);
+      await loadComments();
+      toast("Blocking comment 已解决","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function loadAdminUsers(){
+    if(!state.apiOnline||!permitted("admin")){state.adminUsers=[];render();return;}
+    try{
+      const response=await api.adminUsers();
+      state.adminUsers=response.data||[];
+    }catch(e){toast(e.message||String(e),"error");}
+    render();
+  }
+
+  async function createAdminUser(){
+    if(!permitted("admin")){toast("需要 Admin 权限。","error");return;}
+    const email=document.getElementById("admin-user-email")?.value?.trim()||"";
+    const displayName=document.getElementById("admin-user-name")?.value?.trim()||"";
+    if(!email){toast("请输入 Email。","error");return;}
+    try{
+      await api.createUser({email,displayName});
+      await loadAdminUsers();
+      toast("User 已创建","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function saveUserRoles(userId){
+    if(!permitted("admin")){toast("需要 Admin 权限。","error");return;}
+    const roles=[...document.querySelectorAll(`[data-role-user="${CSS.escape(userId)}"]:checked`)].map(x=>x.dataset.role);
+    try{
+      await api.setUserRoles(userId,roles);
+      await loadAdminUsers();
+      toast("Roles 已更新","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
   async function ensureRemoteArtwork(){
+    if(!permitted("artworkWrite")) throw new Error("Artwork Write permission is required.");
     localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
     if(!state.apiOnline)return null;
     const canonicalData=D.canonicalData(state.artwork);
@@ -426,6 +536,7 @@
   }
 
   async function saveDraft(){
+    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     if(["in_review","approved"].includes(state.artwork.status)){
       toast("已提交或已批准的 Revision 不允许原地修改；需要创建新 Revision。","error");return;
     }
@@ -451,6 +562,7 @@
   }
 
   async function runPreflightAction(){
+    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     state.pfBusy=true;state.apiBusy=true;render();
     try{
       if(!state.remoteArtworkId&&state.apiOnline)await ensureRemoteArtwork();
@@ -463,6 +575,7 @@
   }
 
   async function submitForReview(){
+    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     const s=summary();
     if(s.blocking>0){toast("存在 blocking errors，无法提交审核","error");return;}
     state.apiBusy=true;render();
@@ -485,29 +598,32 @@
       state.artwork.revision=response.data.revision;
       state.remoteRevision=response.data.revision;
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      await loadComments();
       toast(`${response.data.revision} 已提交审核`,"success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
   }
 
   async function reviewDecision(decision){
+    if(!permitted("review")){toast("需要 Reviewer / Admin 权限。","error");return;}
     if(!state.apiOnline||!state.remoteArtworkId){toast("Reviewer decision 需要 Cloudflare API。","error");return;}
-    if(decision==="APPROVE"&&!state.resolvedBlockingComment){toast("请先解决 Blocking comment。","error");return;}
+    if(decision==="APPROVE"&&!blockingCommentsResolved()){toast("请先解决所有 Blocking comment。","error");return;}
     state.apiBusy=true;render();
     try{
       const response=await api.decision(state.remoteArtworkId,decision,{
         revision:state.artwork.revision,
-        reviewer:"demo-reviewer",
         comment:decision==="APPROVE"?"Preflight and artwork reviewed.":"Revision required."
       });
       state.artwork.status=response.data.status.toLowerCase();
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      await loadComments();
       toast(decision==="APPROVE"?"Revision 已批准":"Revision 已退回","success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
   }
 
   async function createNewRevision(){
+    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     if(!state.apiOnline||!state.remoteArtworkId){toast("创建新 Revision 需要 Cloudflare API。","error");return;}
     state.apiBusy=true;render();
     try{
@@ -518,7 +634,7 @@
       });
       state.artwork.revision=response.data.revision;
       state.artwork.status="draft";
-      state.resolvedBlockingComment=false;
+      state.comments=[];
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
       toast(`${response.data.revision} Draft 已创建`,"success");
     }catch(e){toast(e.message||String(e),"error");}
@@ -540,7 +656,7 @@
     const snapshot=JSON.stringify(D.canonicalData(artwork),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
-    const manifest=D.manifest(artwork,"vector-svg-pdf-0.5.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-0.7.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
     manifest.barcode={symbology:"Code 128-B PoC",vector:true};
     manifest.sha256={
@@ -561,7 +677,12 @@
 
   async function exportProduction(){
     const s=summary();
-    if(state.artwork.status!=="approved"||s.blocking>0||!state.resolvedBlockingComment){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
+    if(!permitted("productionExport")||!state.apiOnline||!state.remoteArtworkId){toast("Production Export 需要 Cloudflare Access + Production Export 权限。","error");return;}
+    if(state.artwork.status!=="approved"||s.blocking>0||!blockingCommentsResolved()){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
+    try{
+      const remote=await api.artwork(state.remoteArtworkId);
+      if(String(remote.data.artwork.status||"").toUpperCase()!=="APPROVED"||remote.data.artwork.current_revision!==state.artwork.revision){toast("服务器端当前 Revision 未批准或已过期，已阻止生产稿导出。","error");return;}
+    }catch(e){toast("无法验证服务器端批准状态："+(e.message||e),"error");return;}
     const built=await productionArtifactSet(state.artwork,"production");
     built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nQR ECC: M\nFont embedding / PDF-X remain separate production gates.\n"});
     const bundle=Z.createZipBlob(built.files);
@@ -569,7 +690,7 @@
     downloadBlob(filename,bundle);
     if(state.apiOnline&&state.apiBindings.r2&&state.remoteArtworkId){
       try{
-        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.6.0",actor:"web",manifest:built.manifest});
+        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.7.0",actor:"web",manifest:built.manifest});
         toast("Production Bundle 已下载并同步到 R2","success");
       }catch(e){toast("本地 Bundle 已生成，但 R2 同步失败："+(e.message||e),"error");}
     }else toast("Production Bundle ZIP 已生成；R2 尚未连接","success");
@@ -592,7 +713,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.5.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.7.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
@@ -612,6 +733,7 @@
   }
 
   async function importBatch(file){
+    if(!permitted("batchWrite")){toast("需要 Batch Write 权限。","error");return;}
     try{
       const parsed=await X.parseFile(file);
       const result=X.rowsToRecords(parsed.rows,{fillDown:true});
@@ -626,7 +748,7 @@
       render();
       const s=B.summarize(review);
       toast(`读取 ${s.total} 行：${s.passed} passed / ${s.failed} failed`,s.failed?"error":"success");
-      if(state.apiOnline){
+      if(state.apiOnline&&permitted("batchWrite")){
         try{await persistBatchJob(file,parsed.source);toast(`Import Job 已同步 D1：${state.remoteImportJobId}`,"success");}
         catch(e){toast("Batch 已在本地解析，但 D1 同步失败："+(e.message||e),"error");}
       }
@@ -634,7 +756,7 @@
   }
 
   async function persistBatchJob(file, sourceType){
-    if(!state.apiOnline)return null;
+    if(!state.apiOnline||!permitted("batchWrite"))return null;
     const stats=B.summarize(state.batchReview);
     const created=await api.createImportJob({
       sourceName:file.name,
@@ -661,7 +783,7 @@
   }
 
   async function saveMappingProfile(){
-    if(!state.apiOnline||!state.batchMapping){toast("Mapping Profile 需要 Cloudflare D1 API。","error");return;}
+    if(!state.apiOnline||!state.batchMapping||!permitted("batchWrite")){toast("Mapping Profile 需要 Cloudflare D1 API + Batch Write 权限。","error");return;}
     try{
       const mapping={};
       for(const [field,col] of Object.entries(state.batchMapping)) mapping[field]=X.columnLabel(col);
@@ -687,19 +809,34 @@
       const health=await api.health();
       state.apiBindings=health.bindings||state.apiBindings;
       state.apiOnline=Boolean(health.ok&&health.bindings?.d1);
-      if(state.apiOnline&&state.remoteArtworkId){
+      if(state.apiOnline){
+        try{
+          const me=await api.me();
+          state.identity=me.data||null;
+          state.authError=null;
+        }catch(e){
+          state.identity=null;
+          state.authError=e;
+        }
+      }
+      if(state.apiOnline&&state.identity?.roles?.length&&state.remoteArtworkId){
         try{
           const remote=await api.artwork(state.remoteArtworkId);
           const row=remote.data.artwork;
           state.artwork.status=A.statusFromApi(row.status);
           state.artwork.revision=row.current_revision||state.artwork.revision;
           state.remoteRevision=state.artwork.revision;
+          await loadComments();
         }catch(e){
           if(e.status===404){state.remoteArtworkId=null;localStorage.removeItem("cas:remoteArtworkId");}
+          else if(e.status===401||e.status===403){state.authError=e;}
         }
       }
-    }catch{
+      if(state.page==="admin"&&permitted("admin")) await loadAdminUsers();
+    }catch(e){
       state.apiOnline=false;
+      state.identity=null;
+      state.authError=e;
     }finally{
       state.apiChecked=true;render();
     }

@@ -1,6 +1,12 @@
+import { ROLES, can, permissionForRequest, resolveIdentity } from "./auth.js";
+
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
-  headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...(init.headers || {}) }
+  headers: {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    ...(init.headers || {})
+  }
 });
 
 function err(status, code, message, detail) {
@@ -12,6 +18,62 @@ async function bodyJson(request) {
   catch { throw new Error("INVALID_JSON"); }
 }
 
+async function audit(env, identity, objectType, objectId, action, options = {}) {
+  await env.DB.prepare(`
+    INSERT INTO audit_logs(id,actor,object_type,object_id,action,old_value_json,new_value_json,reason,created_at)
+    VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+  `).bind(
+    crypto.randomUUID(),
+    identity?.email || "system",
+    objectType,
+    objectId || null,
+    action,
+    options.oldValue == null ? null : JSON.stringify(options.oldValue),
+    options.newValue == null ? null : JSON.stringify(options.newValue),
+    options.reason || null
+  ).run();
+}
+
+async function securityEvent(env, identity, eventType, request, detail = {}) {
+  try {
+    const url = new URL(request.url);
+    await env.DB.prepare(`
+      INSERT INTO security_events(id,actor_email,event_type,method,path,detail_json,created_at)
+      VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)
+    `).bind(
+      crypto.randomUUID(),
+      identity?.email || null,
+      eventType,
+      request.method,
+      url.pathname,
+      JSON.stringify(detail)
+    ).run();
+  } catch {
+    // Security logging must never replace the primary response.
+  }
+}
+
+function publicIdentity(identity) {
+  return {
+    id: identity.id,
+    email: identity.email,
+    displayName: identity.displayName,
+    status: identity.status,
+    roles: identity.roles,
+    source: identity.source,
+    permissions: {
+      artworkWrite: can(identity, "ARTWORK_WRITE"),
+      review: can(identity, "REVIEW"),
+      commentWrite: can(identity, "COMMENT_WRITE"),
+      batchWrite: can(identity, "BATCH_WRITE"),
+      templateWrite: can(identity, "TEMPLATE_WRITE"),
+      templateApprove: can(identity, "TEMPLATE_APPROVE"),
+      productionExport: can(identity, "EXPORT_PRODUCTION"),
+      admin: can(identity, "ADMIN")
+    }
+  };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -21,14 +83,50 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "0.6.0",
+        version: "0.7.0",
         runtime: "cloudflare-workers",
-        bindings: { d1: Boolean(env.DB), r2: Boolean(env.ARTWORK_FILES), assets: Boolean(env.ASSETS) },
+        auth: {
+          provider: "cloudflare-access",
+          bypassEnabled: String(env.AUTH_BYPASS || "") === "1"
+        },
+        bindings: {
+          d1: Boolean(env.DB),
+          r2: Boolean(env.ARTWORK_FILES),
+          assets: Boolean(env.ASSETS)
+        },
         time: new Date().toISOString()
       });
     }
 
     if (!env.DB) return err(503, "DATABASE_NOT_BOUND", "Cloudflare D1 binding DB is not configured.");
+
+    let identity;
+    try {
+      identity = await resolveIdentity(request, env);
+    } catch (e) {
+      console.error("identity", e);
+      return err(500, "IDENTITY_ERROR", "Unable to resolve authenticated identity.");
+    }
+
+    if (!identity) {
+      await securityEvent(env, null, "UNAUTHENTICATED_API_REQUEST", request);
+      return err(401, "AUTH_REQUIRED", "Cloudflare Access authentication is required.");
+    }
+
+    if (String(identity.status).toUpperCase() === "DISABLED") {
+      await securityEvent(env, identity, "DISABLED_USER_REQUEST", request);
+      return err(403, "USER_DISABLED", "This user account is disabled.");
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/me") {
+      return json({ data: publicIdentity(identity) });
+    }
+
+    const permission = permissionForRequest(request.method, url.pathname);
+    if (permission && !can(identity, permission)) {
+      await securityEvent(env, identity, "RBAC_DENIED", request, { permission, roles: identity.roles });
+      return err(403, "FORBIDDEN", `Permission ${permission} is required.`);
+    }
 
     try {
       if (request.method === "GET" && url.pathname === "/api/factories") {
@@ -57,7 +155,10 @@ export default {
         const status=url.searchParams.get("status");
         const q=url.searchParams.get("q");
         if(status){where.push("a.status=?");binds.push(status);}
-        if(q){where.push("(a.sku LIKE ? OR a.contract_no LIKE ? OR a.artwork_no LIKE ?)");const like=`%${q}%`;binds.push(like,like,like);}
+        if(q){
+          where.push("(a.sku LIKE ? OR a.contract_no LIKE ? OR a.artwork_no LIKE ?)");
+          const like=`%${q}%`;binds.push(like,like,like);
+        }
         const sql=`
           SELECT a.id,a.artwork_no AS artworkNo,a.sku,a.contract_no AS contractNo,
                  a.status,a.current_revision AS currentRevision,a.updated_at AS updatedAt,
@@ -86,12 +187,10 @@ export default {
           id,artworkNo,b.sku||"",b.contractNo||"",b.templateId||null,b.factoryId||null,
           Number(b.packageCount||1),Number(b.currentPackage||1),b.revision||"R01",JSON.stringify(b.canonicalData||b)
         ).run();
-
-        await env.DB.prepare(`
-          INSERT INTO audit_logs(id,actor,object_type,object_id,action,new_value_json,reason,created_at)
-          VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-        `).bind(crypto.randomUUID(),b.actor||"api","ARTWORK",id,"CREATE",JSON.stringify({artworkNo}),b.reason||"API create").run();
-
+        await audit(env, identity, "ARTWORK", id, "CREATE", {
+          newValue:{artworkNo,sku:b.sku||""},
+          reason:b.reason||"API create"
+        });
         return json({ data:{id,artworkNo} },{status:201});
       }
 
@@ -124,19 +223,15 @@ export default {
           currentPackage:Number(b.currentPackage ?? current.current_package),
           canonicalData:b.canonicalData ?? JSON.parse(current.canonical_data_json||"{}")
         };
-        await env.DB.batch([
-          env.DB.prepare(`
-            UPDATE artworks SET sku=?,contract_no=?,factory_id=?,package_count=?,current_package=?,
-              canonical_data_json=?,status='DRAFT',updated_at=CURRENT_TIMESTAMP WHERE id=?
-          `).bind(next.sku,next.contractNo,next.factoryId,next.packageCount,next.currentPackage,JSON.stringify(next.canonicalData),id),
-          env.DB.prepare(`
-            INSERT INTO audit_logs(id,actor,object_type,object_id,action,old_value_json,new_value_json,reason,created_at)
-            VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-          `).bind(crypto.randomUUID(),b.actor||"web","ARTWORK",id,"UPDATE_DRAFT",
-            JSON.stringify({sku:current.sku,contractNo:current.contract_no,factoryId:current.factory_id}),
-            JSON.stringify({sku:next.sku,contractNo:next.contractNo,factoryId:next.factoryId}),
-            b.reason||"Save draft")
-        ]);
+        await env.DB.prepare(`
+          UPDATE artworks SET sku=?,contract_no=?,factory_id=?,package_count=?,current_package=?,
+            canonical_data_json=?,status='DRAFT',updated_at=CURRENT_TIMESTAMP WHERE id=?
+        `).bind(next.sku,next.contractNo,next.factoryId,next.packageCount,next.currentPackage,JSON.stringify(next.canonicalData),id).run();
+        await audit(env, identity, "ARTWORK", id, "UPDATE_DRAFT", {
+          oldValue:{sku:current.sku,contractNo:current.contract_no,factoryId:current.factory_id},
+          newValue:{sku:next.sku,contractNo:next.contractNo,factoryId:next.factoryId},
+          reason:b.reason||"Save draft"
+        });
         return json({data:{id,status:"DRAFT",revision:current.current_revision}});
       }
 
@@ -145,51 +240,60 @@ export default {
         const artworkId=submitMatch[1],b=await bodyJson(request);
         const artwork=await env.DB.prepare("SELECT * FROM artworks WHERE id=?").bind(artworkId).first();
         if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+
         const pfStatus=String(b.preflightStatus||"").toUpperCase();
         if(pfStatus==="ERROR"||Number(b.blockingErrors||0)>0) {
           return err(409,"PREFLIGHT_BLOCKED","Artwork has blocking preflight errors.");
         }
+
         const current=String(artwork.current_revision||"R01");
         const existing=await env.DB.prepare(
           "SELECT id,status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
         ).bind(artworkId,current).first();
+
         let revision=current;
         let revisionId=existing?.id||crypto.randomUUID();
         const snapshot=JSON.stringify(b.dataSnapshot||JSON.parse(artwork.canonical_data_json||"{}"));
+
         if(existing && String(existing.status||"").toUpperCase()!=="DRAFT") {
           const n=(Number(current.replace(/\D/g,""))||0)+1;
           revision="R"+String(n).padStart(2,"0");
           revisionId=crypto.randomUUID();
         }
+
         const statements=[];
         if(existing && revision===current) {
           statements.push(env.DB.prepare(`
             UPDATE artwork_revisions SET status='SUBMITTED',data_snapshot_json=?,
               preflight_profile_version=?,created_by=? WHERE id=?
-          `).bind(snapshot,b.preflightProfileVersion||"US_SIDE_SEAL_K_ONLY_V1@1",b.actor||"web",revisionId));
+          `).bind(snapshot,b.preflightProfileVersion||"US_SIDE_SEAL_K_ONLY_V1@1",identity.email,revisionId));
         } else {
           statements.push(env.DB.prepare(`
             INSERT INTO artwork_revisions(id,artwork_id,revision,status,data_snapshot_json,template_version_id,
               preflight_profile_version,created_by,created_at)
             VALUES(?,?,?,'SUBMITTED',?,?,?,?,CURRENT_TIMESTAMP)
-          `).bind(revisionId,artworkId,revision,snapshot,b.templateVersionId||null,b.preflightProfileVersion||"US_SIDE_SEAL_K_ONLY_V1@1",b.actor||"web"));
+          `).bind(revisionId,artworkId,revision,snapshot,b.templateVersionId||null,b.preflightProfileVersion||"US_SIDE_SEAL_K_ONLY_V1@1",identity.email));
         }
+
         statements.push(env.DB.prepare(
           "UPDATE artworks SET current_revision=?,status='IN_REVIEW',canonical_data_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?"
         ).bind(revision,snapshot,artworkId));
-        statements.push(env.DB.prepare(`
-          INSERT INTO audit_logs(id,actor,object_type,object_id,action,new_value_json,reason,created_at)
-          VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-        `).bind(crypto.randomUUID(),b.actor||"web","ARTWORK",artworkId,"SUBMIT_REVIEW",JSON.stringify({revision}),b.reason||"Submitted for review"));
         await env.DB.batch(statements);
+        await audit(env, identity, "ARTWORK", artworkId, "SUBMIT_REVIEW", {
+          newValue:{revision},
+          reason:b.reason||"Submitted for review"
+        });
         return json({data:{id:artworkId,revision,status:"IN_REVIEW"}},{status:201});
       }
 
       const revMatch=/^\/api\/artworks\/([^/]+)\/revisions$/.exec(url.pathname);
       if(request.method==="POST"&&revMatch){
         const artworkId=revMatch[1],b=await bodyJson(request);
-        const parent=await env.DB.prepare("SELECT current_revision FROM artworks WHERE id=?").bind(artworkId).first();
+        const parent=await env.DB.prepare("SELECT current_revision,status FROM artworks WHERE id=?").bind(artworkId).first();
         if(!parent)return err(404,"NOT_FOUND","Artwork not found.");
+        if(String(parent.status).toUpperCase()!=="APPROVED") {
+          return err(409,"REVISION_NOT_ALLOWED","Explicit new revisions are created from approved artwork.");
+        }
         const currentNum=Number(String(parent.current_revision||"R00").replace(/\D/g,""))||0;
         const revision="R"+String(currentNum+1).padStart(2,"0");
         const id=crypto.randomUUID();
@@ -197,20 +301,75 @@ export default {
           env.DB.prepare(`
             INSERT INTO artwork_revisions(id,artwork_id,revision,status,data_snapshot_json,template_version_id,preflight_profile_version,created_by,created_at)
             VALUES(?,?,?,'DRAFT',?,?,?,?,CURRENT_TIMESTAMP)
-          `).bind(id,artworkId,revision,JSON.stringify(b.dataSnapshot||b),b.templateVersionId||null,b.preflightProfileVersion||"US_SIDE_SEAL_K_ONLY_V1@1",b.actor||"api"),
+          `).bind(id,artworkId,revision,JSON.stringify(b.dataSnapshot||b),b.templateVersionId||null,b.preflightProfileVersion||"US_SIDE_SEAL_K_ONLY_V1@1",identity.email),
           env.DB.prepare("UPDATE artworks SET current_revision=?,status='DRAFT',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(revision,artworkId)
         ]);
+        await audit(env, identity, "ARTWORK", artworkId, "CREATE_REVISION", { newValue:{revision} });
         return json({data:{id,revision}},{status:201});
       }
 
       const pfMatch=/^\/api\/artworks\/([^/]+)\/preflight$/.exec(url.pathname);
       if(request.method==="POST"&&pfMatch){
         const artworkId=pfMatch[1],b=await bodyJson(request),id=crypto.randomUUID();
+        const artwork=await env.DB.prepare("SELECT current_revision FROM artworks WHERE id=?").bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        const revision=b.revision||artwork.current_revision;
         await env.DB.prepare(`
           INSERT INTO preflight_runs(id,artwork_id,revision,profile_code,profile_version,status,report_json,created_at)
           VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-        `).bind(id,artworkId,b.revision||null,b.profileCode||"US_SIDE_SEAL_K_ONLY_V1",b.profileVersion||"1",b.status||"PASS",JSON.stringify(b.report||{})).run();
-        return json({data:{id}},{status:201});
+        `).bind(id,artworkId,revision,b.profileCode||"US_SIDE_SEAL_K_ONLY_V1",b.profileVersion||"1",b.status||"PASS",JSON.stringify(b.report||{})).run();
+        await audit(env, identity, "PREFLIGHT", id, "RUN", { newValue:{artworkId,revision,status:b.status||"PASS"} });
+        return json({data:{id,revision}},{status:201});
+      }
+
+      const commentsMatch=/^\/api\/artworks\/([^/]+)\/comments$/.exec(url.pathname);
+      if(request.method==="GET"&&commentsMatch){
+        const artworkId=commentsMatch[1];
+        const artwork=await env.DB.prepare("SELECT current_revision FROM artworks WHERE id=?").bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        const revision=url.searchParams.get("revision")||artwork.current_revision;
+        const {results}=await env.DB.prepare(`
+          SELECT id,artwork_id AS artworkId,revision,author,blocking,resolved,body,
+                 created_at AS createdAt,resolved_at AS resolvedAt
+          FROM comments WHERE artwork_id=? AND revision=?
+          ORDER BY created_at ASC
+        `).bind(artworkId,revision).all();
+        return json({data:results.map((x)=>({...x,blocking:Boolean(x.blocking),resolved:Boolean(x.resolved)}))});
+      }
+
+      if(request.method==="POST"&&commentsMatch){
+        const artworkId=commentsMatch[1],b=await bodyJson(request);
+        const artwork=await env.DB.prepare("SELECT current_revision FROM artworks WHERE id=?").bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        const body=String(b.body||"").trim();
+        if(!body)return err(400,"COMMENT_REQUIRED","Comment body is required.");
+        const blocking=Boolean(b.blocking);
+        if(blocking&&!can(identity,"REVIEW")) {
+          return err(403,"BLOCKING_COMMENT_ROLE","Only Reviewer or Admin can create a blocking comment.");
+        }
+        const id=crypto.randomUUID(),revision=b.revision||artwork.current_revision;
+        await env.DB.prepare(`
+          INSERT INTO comments(id,artwork_id,revision,author,blocking,resolved,body,created_at)
+          VALUES(?,?,?,?,?,0,?,CURRENT_TIMESTAMP)
+        `).bind(id,artworkId,revision,identity.email,blocking?1:0,body).run();
+        await audit(env, identity, "COMMENT", id, "CREATE", { newValue:{artworkId,revision,blocking,body} });
+        return json({data:{id,artworkId,revision,author:identity.email,blocking,resolved:false,body}},{status:201});
+      }
+
+      const resolveCommentMatch=/^\/api\/comments\/([^/]+)\/resolve$/.exec(url.pathname);
+      if(request.method==="POST"&&resolveCommentMatch){
+        const id=resolveCommentMatch[1];
+        const comment=await env.DB.prepare("SELECT * FROM comments WHERE id=?").bind(id).first();
+        if(!comment)return err(404,"NOT_FOUND","Comment not found.");
+        if(Number(comment.resolved||0)===1)return json({data:{id,resolved:true}});
+        await env.DB.prepare(
+          "UPDATE comments SET resolved=1,resolved_at=CURRENT_TIMESTAMP WHERE id=?"
+        ).bind(id).run();
+        await audit(env, identity, "COMMENT", id, "RESOLVE", {
+          oldValue:{resolved:false},
+          newValue:{resolved:true}
+        });
+        return json({data:{id,resolved:true}});
       }
 
       const approvalMatch=/^\/api\/artworks\/([^/]+)\/approval$/.exec(url.pathname);
@@ -218,12 +377,24 @@ export default {
         const artworkId=approvalMatch[1],b=await bodyJson(request);
         const id=crypto.randomUUID(),decision=String(b.decision||"").toUpperCase();
         if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
+
         const artwork=await env.DB.prepare("SELECT * FROM artworks WHERE id=?").bind(artworkId).first();
         if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
         if(String(artwork.status).toUpperCase()!=="IN_REVIEW") {
           return err(409,"NOT_IN_REVIEW","Only an artwork currently in review can be approved or rejected.");
         }
+
         const revision=b.revision||artwork.current_revision;
+        const revisionRow=await env.DB.prepare(
+          "SELECT id,created_by AS createdBy,status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
+        ).bind(artworkId,revision).first();
+        if(!revisionRow)return err(409,"REVISION_NOT_FOUND","Submitted revision record is missing.");
+
+        if(String(revisionRow.createdBy||"").toLowerCase()===identity.email.toLowerCase()) {
+          await securityEvent(env, identity, "SELF_APPROVAL_BLOCKED", request, { artworkId, revision });
+          return err(409,"FOUR_EYES_REQUIRED","The submitter cannot approve or reject the same revision.");
+        }
+
         if(decision==="APPROVE"){
           const latestPf=await env.DB.prepare(`
             SELECT status FROM preflight_runs WHERE artwork_id=? AND revision=?
@@ -240,22 +411,22 @@ export default {
             return err(409,"BLOCKING_COMMENTS","Resolve all blocking review comments before approval.");
           }
         }
+
         const next=decision==="APPROVE"?"APPROVED":"REJECTED";
         await env.DB.batch([
           env.DB.prepare(`
             INSERT INTO approvals(id,artwork_id,revision,reviewer,decision,comment,created_at)
             VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)
-          `).bind(id,artworkId,revision,b.reviewer||"reviewer",decision,b.comment||""),
+          `).bind(id,artworkId,revision,identity.email,decision,b.comment||""),
           env.DB.prepare("UPDATE artworks SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(next,artworkId),
-          env.DB.prepare("UPDATE artwork_revisions SET status=? WHERE artwork_id=? AND revision=?").bind(next,artworkId,revision),
-          env.DB.prepare(`
-            INSERT INTO audit_logs(id,actor,object_type,object_id,action,new_value_json,reason,created_at)
-            VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-          `).bind(crypto.randomUUID(),b.reviewer||"reviewer","ARTWORK",artworkId,decision,JSON.stringify({revision,status:next}),b.comment||"Review decision")
+          env.DB.prepare("UPDATE artwork_revisions SET status=? WHERE artwork_id=? AND revision=?").bind(next,artworkId,revision)
         ]);
-        return json({data:{id,status:next,revision}},{status:201});
+        await audit(env, identity, "ARTWORK", artworkId, decision, {
+          newValue:{revision,status:next},
+          reason:b.comment||"Review decision"
+        });
+        return json({data:{id,status:next,revision,reviewer:identity.email}},{status:201});
       }
-
 
       if (request.method === "GET" && url.pathname === "/api/mapping-profiles") {
         const { results } = await env.DB.prepare(`
@@ -285,8 +456,10 @@ export default {
             template_code=excluded.template_code,
             mapping_json=excluded.mapping_json,
             aliases_json=excluded.aliases_json,
+            created_by=excluded.created_by,
             updated_at=CURRENT_TIMESTAMP
-        `).bind(id,b.name,b.templateCode,JSON.stringify(b.mapping),JSON.stringify(b.aliases||{}),b.actor||"api").run();
+        `).bind(id,b.name,b.templateCode,JSON.stringify(b.mapping),JSON.stringify(b.aliases||{}),identity.email).run();
+        await audit(env, identity, "MAPPING_PROFILE", id, "UPSERT", { newValue:{name:b.name,templateCode:b.templateCode} });
         return json({data:{id}},{status:201});
       }
 
@@ -311,8 +484,9 @@ export default {
         `).bind(
           id,b.sourceName,b.sourceType,b.mappingProfileId||null,b.status||"UPLOADED",
           Number(b.totalRows||0),Number(b.passedRows||0),Number(b.failedRows||0),
-          JSON.stringify(b.summary||{}),b.actor||"api"
+          JSON.stringify(b.summary||{}),identity.email
         ).run();
+        await audit(env, identity, "IMPORT_JOB", id, "CREATE", { newValue:{sourceName:b.sourceName,sourceType:b.sourceType} });
         return json({data:{id}},{status:201});
       }
 
@@ -366,31 +540,52 @@ export default {
       if(request.method==="POST"&&exportMatch){
         if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
         const artworkId=exportMatch[1];
-        const artwork=await env.DB.prepare("SELECT id,current_revision FROM artworks WHERE id=?").bind(artworkId).first();
+        const artwork=await env.DB.prepare("SELECT id,status,current_revision FROM artworks WHERE id=?").bind(artworkId).first();
         if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        if(String(artwork.status).toUpperCase()!=="APPROVED") {
+          return err(409,"NOT_APPROVED","Production artifacts can only be persisted for approved artwork.");
+        }
+
         const kind=(url.searchParams.get("kind")||"artifact").toUpperCase();
         const revision=url.searchParams.get("revision")||artwork.current_revision||"R01";
+        if(revision!==artwork.current_revision) {
+          return err(409,"STALE_REVISION","Production artifact revision must match the current approved revision.");
+        }
+        const rev=await env.DB.prepare(
+          "SELECT status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
+        ).bind(artworkId,revision).first();
+        if(!rev||String(rev.status).toUpperCase()!=="APPROVED") {
+          return err(409,"REVISION_NOT_APPROVED","The requested revision is not approved.");
+        }
+        const unresolved=await env.DB.prepare(`
+          SELECT COUNT(*) AS count FROM comments
+          WHERE artwork_id=? AND revision=? AND blocking=1 AND resolved=0
+        `).bind(artworkId,revision).first();
+        if(Number(unresolved?.count||0)>0) {
+          return err(409,"BLOCKING_COMMENTS","Production export is blocked by unresolved review comments.");
+        }
+
         const filename=(url.searchParams.get("filename")||"artifact.bin").replace(/[^a-zA-Z0-9._-]+/g,"_");
         const contentType=request.headers.get("content-type")||"application/octet-stream";
         const declared=Number(request.headers.get("content-length")||0);
         if(declared>25*1024*1024)return err(413,"ARTIFACT_TOO_LARGE","Artifact exceeds 25 MB API upload limit.");
         const bytes=new Uint8Array(await request.arrayBuffer());
         if(bytes.length>25*1024*1024)return err(413,"ARTIFACT_TOO_LARGE","Artifact exceeds 25 MB API upload limit.");
+
         const digest=await crypto.subtle.digest("SHA-256",bytes);
         const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
         const objectKey=`artworks/${artworkId}/${revision}/${Date.now()}-${filename}`;
         await env.ARTWORK_FILES.put(objectKey,bytes,{httpMetadata:{contentType}});
+
         const id=crypto.randomUUID();
-        await env.DB.batch([
-          env.DB.prepare(`
-            INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
-            VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
-          `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"0.5.0",request.headers.get("x-artwork-manifest")||null),
-          env.DB.prepare(`
-            INSERT INTO audit_logs(id,actor,object_type,object_id,action,new_value_json,reason,created_at)
-            VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-          `).bind(crypto.randomUUID(),request.headers.get("x-actor")||"api","EXPORT",id,"UPLOAD",JSON.stringify({artworkId,revision,kind,objectKey,sha256}),"Artifact persisted to R2")
-        ]);
+        await env.DB.prepare(`
+          INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
+          VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
+        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"0.7.0",request.headers.get("x-artwork-manifest")||null).run();
+        await audit(env, identity, "EXPORT", id, "UPLOAD", {
+          newValue:{artworkId,revision,kind,objectKey,sha256},
+          reason:"Artifact persisted to R2"
+        });
         return json({data:{id,objectKey,sha256,size:bytes.length,contentType}},{status:201});
       }
 
@@ -408,10 +603,63 @@ export default {
         return new Response(object.body,{headers});
       }
 
+      if(request.method==="GET"&&url.pathname==="/api/admin/users"){
+        const {results}=await env.DB.prepare(`
+          SELECT u.id,u.email,u.display_name AS displayName,u.status,u.created_at AS createdAt,
+                 GROUP_CONCAT(ur.role) AS rolesCsv
+          FROM users u
+          LEFT JOIN user_roles ur ON ur.user_id=u.id
+          GROUP BY u.id
+          ORDER BY lower(u.email)
+        `).all();
+        return json({data:results.map((u)=>({
+          id:u.id,email:u.email,displayName:u.displayName,status:u.status,
+          roles:u.rolesCsv?u.rolesCsv.split(",").sort():[],createdAt:u.createdAt
+        }))});
+      }
+
+      if(request.method==="POST"&&url.pathname==="/api/admin/users"){
+        const b=await bodyJson(request);
+        const email=String(b.email||"").trim().toLowerCase();
+        if(!email||!email.includes("@"))return err(400,"INVALID_EMAIL","A valid email is required.");
+        const id=crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO users(id,email,display_name,status,created_at,updated_at)
+          VALUES(?,?,?,'ACTIVE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        `).bind(id,email,b.displayName||email).run();
+        await audit(env, identity, "USER", id, "CREATE", { newValue:{email,displayName:b.displayName||email} });
+        return json({data:{id,email}},{status:201});
+      }
+
+      const userRolesMatch=/^\/api\/admin\/users\/([^/]+)\/roles$/.exec(url.pathname);
+      if(request.method==="PUT"&&userRolesMatch){
+        const userId=userRolesMatch[1],b=await bodyJson(request);
+        const user=await env.DB.prepare("SELECT id,email FROM users WHERE id=?").bind(userId).first();
+        if(!user)return err(404,"NOT_FOUND","User not found.");
+        const roles=[...new Set((Array.isArray(b.roles)?b.roles:[]).map((x)=>String(x).toUpperCase()))];
+        if(roles.some((role)=>!ROLES.includes(role)))return err(400,"INVALID_ROLE","One or more roles are invalid.");
+        const current=await env.DB.prepare("SELECT role FROM user_roles WHERE user_id=? ORDER BY role").bind(userId).all();
+        const stmts=[env.DB.prepare("DELETE FROM user_roles WHERE user_id=?").bind(userId)];
+        for(const role of roles){
+          stmts.push(env.DB.prepare(
+            "INSERT INTO user_roles(user_id,role,granted_by,granted_at) VALUES(?,?,?,CURRENT_TIMESTAMP)"
+          ).bind(userId,role,identity.email));
+        }
+        await env.DB.batch(stmts);
+        await audit(env, identity, "USER", userId, "SET_ROLES", {
+          oldValue:{roles:(current.results||[]).map((x)=>x.role)},
+          newValue:{roles}
+        });
+        return json({data:{id:userId,email:user.email,roles}});
+      }
+
       return err(404,"NOT_FOUND","API route not found.",url.pathname);
     } catch (e) {
       console.error(e);
       if(String(e?.message)==="INVALID_JSON")return err(400,"INVALID_JSON","Request body must be valid JSON.");
+      if(String(e?.message||"").includes("UNIQUE constraint failed: users.email")) {
+        return err(409,"USER_EXISTS","A user with this email already exists.");
+      }
       return err(500,"INTERNAL_ERROR",String(e?.message||e));
     }
   }

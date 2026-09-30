@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：0.6.0
+## 当前版本：0.7.0
 
 ### 已实现
 
@@ -45,12 +45,101 @@
 - Templates / Variables / Rules / Layers / Tests / Versions
 - Content Master / CRN Impact Analysis
 - Quality / Versioned Preflight Profile / Audit Log
-- Cloudflare Worker API scaffold
-- D1 baseline migration + Batch / Mapping Profile migration
+- Cloudflare Worker API + Access/RBAC gateway
+- D1 baseline migration + Batch / Mapping Profile + Users/Roles/Security migration
 - Mapping Profile / Import Job D1 APIs
-- R2 Artwork Export 上传 / 下载 API + SHA-256
+- R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v0.7.0 关键工程进展
+
+### 1. Cloudflare Access + D1 RBAC
+
+身份与权限拆成两层：
+
+```text
+Cloudflare Access identity
+          ↓
+Cf-Access-Authenticated-User-Email
+          ↓
+D1 users / user_roles
+          ↓
+Application permission
+```
+
+应用角色：
+
+- `OPERATOR`
+- `REVIEWER`
+- `TEMPLATE_DESIGNER`
+- `TEMPLATE_APPROVER`
+- `ADMIN`
+
+前端按钮隐藏/禁用只是 UX；Worker API 会再次执行相同权限检查。
+
+### 2. Four-eyes Approval
+
+Revision 记录真实提交人邮箱。
+
+同一个 Access 身份不能审批自己提交的 Revision：
+
+```text
+Operator A submits R04
+Reviewer B approves R04    ✅
+Operator A approves R04    ❌ FOUR_EYES_REQUIRED
+```
+
+即使拥有 ADMIN 角色也不能绕过。
+
+### 3. Review Comment 真持久化
+
+评论按 `Artwork + Revision` 保存到 D1：
+
+- 普通评论；
+- Blocking comment；
+- Reviewer resolve；
+- Approval gate；
+- Production export gate。
+
+Approval 后如果当前 Revision 又出现未解决 Blocking comment，R2 Production Export 仍会再次被后端阻断。
+
+### 4. Production Export 双重验证
+
+浏览器生成 Production Bundle 前会重新读取服务器 Artwork 状态。
+
+Worker 上传 R2 时再次验证：
+
+- Artwork = APPROVED；
+- Revision = current Revision；
+- Revision = APPROVED；
+- 无 unresolved blocking comments；
+- 当前身份拥有 Production Export 权限。
+
+因此仅修改浏览器 LocalStorage 无法获得有效生产导出。
+
+### 5. RBAC Admin
+
+系统管理页开始接入真实 D1 用户与角色：
+
+- Create User；
+- Assign / replace roles；
+- Access identity 展示；
+- Security event log schema。
+
+首次部署可以用 `BOOTSTRAP_ADMIN_EMAIL` 完成安全引导，之后移除该变量。
+
+### 6. Staging 部署骨架
+
+新增：
+
+- `.dev.vars.example`
+- `docs/ACCESS_RBAC.md`
+- `docs/CLOUDFLARE_DEPLOYMENT.md`
+- `scripts/render-wrangler.mjs`
+- `.github/workflows/deploy-staging.yml`
+
+Staging workflow 仅支持手动触发，并在部署前先运行完整 CI 与 D1 migrations。
 
 ## v0.6.0 关键工程进展
 
@@ -261,7 +350,7 @@ assets/
   xlsx-lite.js           # zero-dependency XLSX/CSV import engine
   batch.js               # row → artwork / validation / review
   zip.js                 # store-only ZIP writer
-  api.js                 # Cloudflare Worker/D1/R2 client adapter
+  api.js                 # Cloudflare Worker/D1/R2/Access client adapter
   vendor/
     qrcode-generator.js  # MIT QR encoder
 
@@ -273,9 +362,12 @@ docs/
 migrations/
   0001_init.sql
   0002_batch_and_artifacts.sql
+  0003_auth_rbac.sql
 worker/
+  auth.js                 # Access identity + RBAC policy
   index.js
 tests/
+  auth.test.mjs
   domain.test.cjs
   codes.test.cjs
   xlsx.test.cjs
@@ -330,10 +422,9 @@ npm run check
 - PDF/X profile
 - Excel style/number-format 级 leading-zero 恢复
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
-- Auth / RBAC
-- Reviewer 身份目前仍是开发态占位，尚未接 Cloudflare Access
-- D1/R2 API 与前端 Persistence Bridge 已实现，但仍需在 Cloudflare 账户创建并绑定正式资源
-- immutable approval workflow
+- Cloudflare Access / RBAC 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application 与 D1/R2 资源
+- D1/R2 API 与前端 Persistence Bridge 已实现，但仍需绑定正式 staging / production resources
+- immutable approval workflow 已进入后端；仍需 staging 双身份验收
 - Template visual regression
 - external print preflight adapter
 - 实物 Barcode Verifier 数据接入

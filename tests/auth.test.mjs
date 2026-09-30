@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import { can, permissionForRequest, resolveIdentity } from "../worker/auth.js";
+
+function mockDb(user, roles=[]){
+  return {
+    prepare(sql){
+      return {
+        args:[],
+        bind(...args){this.args=args;return this;},
+        async first(){
+          if(sql.includes("FROM users")) return user;
+          return null;
+        },
+        async all(){
+          if(sql.includes("FROM user_roles")) return {results:roles.map(role=>({role}))};
+          return {results:[]};
+        }
+      };
+    }
+  };
+}
+
+const req=new Request("https://app.example.com/api/artworks",{
+  headers:{"cf-access-authenticated-user-email":"operator@example.com"}
+});
+const identity=await resolveIdentity(req,{DB:mockDb({id:"u1",email:"operator@example.com",displayName:"Operator",status:"ACTIVE"},["OPERATOR"])});
+assert.equal(identity.email,"operator@example.com");
+assert.deepEqual(identity.roles,["OPERATOR"]);
+assert.equal(identity.source,"cloudflare-access");
+assert.equal(can(identity,"ARTWORK_WRITE"),true);
+assert.equal(can(identity,"REVIEW"),false);
+
+assert.equal(permissionForRequest("POST","/api/artworks"),"ARTWORK_WRITE");
+assert.equal(permissionForRequest("POST","/api/artworks/a1/approval"),"REVIEW");
+assert.equal(permissionForRequest("POST","/api/artworks/a1/exports"),"EXPORT_PRODUCTION");
+assert.equal(permissionForRequest("PUT","/api/admin/users/u1/roles"),"ADMIN");
+assert.equal(permissionForRequest("GET","/api/artworks"),"READ");
+
+const bypassReq=new Request("https://localhost/api/me",{
+  headers:{"x-cas-dev-user":"dev@example.com","x-cas-dev-roles":"ADMIN,REVIEWER"}
+});
+const bypass=await resolveIdentity(bypassReq,{AUTH_BYPASS:"1",DB:mockDb(null,[])});
+assert.equal(bypass.source,"development-bypass");
+assert.equal(can(bypass,"ADMIN"),true);
+assert.equal(can(bypass,"REVIEW"),true);
+
+const noBypass=await resolveIdentity(bypassReq,{AUTH_BYPASS:"0",DB:mockDb(null,[])});
+assert.equal(noBypass,null);
+
+const bootstrapReq=new Request("https://app.example.com/api/me",{headers:{"cf-access-authenticated-user-email":"owner@example.com"}});
+const bootstrap=await resolveIdentity(bootstrapReq,{BOOTSTRAP_ADMIN_EMAIL:"owner@example.com",DB:mockDb(null,[])});
+assert.equal(can(bootstrap,"ADMIN"),true);
+
+console.log("Auth/RBAC tests passed.");
