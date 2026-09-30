@@ -8,26 +8,26 @@ assert.equal(validateValidatorConfig({PDFX_VALIDATOR_URL:"https://validator.exam
 const good=validateValidatorResponse({
   status:"PASS",
   profile:"PDF/X-4",
-  artifactSha256:"abc123",
+  artifactSha256:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   validator:"Example Validator",
   version:"1.2.3",
   checks:[{name:"profile",ok:true}]
-},{profile:"PDF/X-4",artifactSha256:"abc123"});
+},{profile:"PDF/X-4",artifactSha256:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"});
 assert.equal(good.ok,true);
 assert.equal(good.data.status,"PASS");
 
 assert.equal(validateValidatorResponse({
-  status:"PASS",profile:"PDF/X-4",artifactSha256:"wrong",validator:"V",version:"1"
-},{profile:"PDF/X-4",artifactSha256:"expected"}).ok,false);
+  status:"PASS",profile:"PDF/X-4",artifactSha256:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",validator:"V",version:"1"
+},{profile:"PDF/X-4",artifactSha256:"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}).ok,false);
 
 assert.equal(validateValidatorResponse({
-  status:"PASS",profile:"PDF/X-4",artifactSha256:"abc",validator:"V",version:"1",
+  status:"PASS",profile:"PDF/X-4",artifactSha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",validator:"V",version:"1",
   checks:[{name:"font",ok:false}]
-},{profile:"PDF/X-4",artifactSha256:"abc"}).ok,false);
+},{profile:"PDF/X-4",artifactSha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}).ok,false);
 
 assert.equal(validateValidatorResponse({
-  status:"FAIL",profile:"PDF/X-4",artifactSha256:"abc",validator:"V",version:"1",
+  status:"FAIL",profile:"PDF/X-4",artifactSha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",validator:"V",version:"1",
   checks:[{name:"font",ok:false}]
-},{profile:"PDF/X-4",artifactSha256:"abc"}).ok,true);
+},{profile:"PDF/X-4",artifactSha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}).ok,true);
 
 console.log("PDF/X validator bridge tests passed.");
