@@ -809,19 +809,34 @@
       const health=await api.health();
       state.apiBindings=health.bindings||state.apiBindings;
       state.apiOnline=Boolean(health.ok&&health.bindings?.d1);
-      if(state.apiOnline&&state.remoteArtworkId){
+      if(state.apiOnline){
+        try{
+          const me=await api.me();
+          state.identity=me.data||null;
+          state.authError=null;
+        }catch(e){
+          state.identity=null;
+          state.authError=e;
+        }
+      }
+      if(state.apiOnline&&state.identity?.roles?.length&&state.remoteArtworkId){
         try{
           const remote=await api.artwork(state.remoteArtworkId);
           const row=remote.data.artwork;
           state.artwork.status=A.statusFromApi(row.status);
           state.artwork.revision=row.current_revision||state.artwork.revision;
           state.remoteRevision=state.artwork.revision;
+          await loadComments();
         }catch(e){
           if(e.status===404){state.remoteArtworkId=null;localStorage.removeItem("cas:remoteArtworkId");}
+          else if(e.status===401||e.status===403){state.authError=e;}
         }
       }
-    }catch{
+      if(state.page==="admin"&&permitted("admin")) await loadAdminUsers();
+    }catch(e){
       state.apiOnline=false;
+      state.identity=null;
+      state.authError=e;
     }finally{
       state.apiChecked=true;render();
     }
