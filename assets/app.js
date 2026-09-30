@@ -160,6 +160,7 @@
         <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
         <button class="btn primary" data-action="submit" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy?"disabled":""}>提交审核</button>
         ${state.artwork.status==="in_review"?`<button class="btn success" data-action="approve" ${!state.resolvedBlockingComment||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
+        ${state.artwork.status==="approved"?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
         <button class="btn" data-action="proof">导出审核稿</button>
         <button class="btn success" data-action="production" ${prod?"":"disabled"}>下载生产稿</button>
       </div>
@@ -171,6 +172,7 @@
   }
 
   function sel(v){ return state.artwork.status===v?"selected":""; }
+  function isArtworkLocked(){return ["in_review","approved"].includes(state.artwork.status);}
 
   function renderForm() {
     const a = state.artwork, f = factory(), c = computed();
@@ -184,14 +186,14 @@
         <div class="notice"><strong>Package Meas</strong><br><span class="mono">${esc(c.packageMeas)}</span></div>
       `)}
       ${formSection("Production 生产", `
-        ${field("Factory","Master Data",`<select class="select" data-art="factoryId">${D.factories.map(x=>`<option value="${x.id}" ${a.factoryId===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select>`)}
+        ${field("Factory","Master Data",`<select class="select" data-art="factoryId" ${isArtworkLocked()?"disabled":""}>${D.factories.map(x=>`<option value="${x.id}" ${a.factoryId===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select>`)}
         ${field("CRN","factory.crn",`<input class="input mono" readonly value="${esc(f?.crn||"")}" />`)}
         ${field("Country of Origin","derived",`<input class="input" readonly value="${esc(f?.country||"")}" />`)}
       `)}
       ${formSection("Codes 代码", `
         ${field("Barcode","Code 128-B PoC",input("barcode",a.barcode))}
         ${field("QR payload","Encoder gate pending",input("qr",a.qr))}
-        ${field("CodeBlock Profile","locked component",`<select class="select" data-art="codeBlockProfile"><option value="250x80" ${a.codeBlockProfile==="250x80"?"selected":""}>250 × 80 mm</option><option value="200x64" ${a.codeBlockProfile==="200x64"?"selected":""}>200 × 64 mm</option></select>`)}
+        ${field("CodeBlock Profile","locked component",`<select class="select" data-art="codeBlockProfile" ${isArtworkLocked()?"disabled":""}><option value="250x80" ${a.codeBlockProfile==="250x80"?"selected":""}>250 × 80 mm</option><option value="200x64" ${a.codeBlockProfile==="200x64"?"selected":""}>200 × 64 mm</option></select>`)}
         <div class="notice">🔒 Barcode + QR 为锁定组合组件。Business Mode 禁止拆分和单独移动。</div>
       `)}
     `;
@@ -199,9 +201,9 @@
 
   function formSection(t,b){return `<section class="section"><div class="section-title">${t}</div><div class="section-body">${b}</div></section>`;}
   function field(a,b,c){return `<div class="field"><label><span>${a}</span><span class="hint">${b}</span></label>${c}</div>`;}
-  function input(k,v){return `<input class="input" data-art="${k}" value="${esc(v)}"/>`;}
-  function num(k,v){return `<input class="input mono" type="number" step="0.01" data-art="${k}" value="${esc(v)}"/>`;}
-  function suffix(k,v,s){return `<div class="suffix"><input class="input mono" type="number" step="0.01" data-art="${k}" value="${esc(v)}"/><span>${s}</span></div>`; }
+  function input(k,v){return `<input class="input" data-art="${k}" value="${esc(v)}" ${isArtworkLocked()?"disabled":""}/>`;}
+  function num(k,v){return `<input class="input mono" type="number" step="0.01" data-art="${k}" value="${esc(v)}" ${isArtworkLocked()?"disabled":""}/>`;}
+  function suffix(k,v,s){return `<div class="suffix"><input class="input mono" type="number" step="0.01" data-art="${k}" value="${esc(v)}" ${isArtworkLocked()?"disabled":""}/><span>${s}</span></div>`; }
 
   function renderTabs(){
     return `<div class="tabs">${[["artwork","Artwork"],["snapshot","Data Snapshot"],["compare","Revision Compare"],["comments","Comments"]].map(([id,n])=>`<button class="tab ${state.tab===id?"active":""}" data-tab="${id}">${n}</button>`).join("")}</div>`;
@@ -382,6 +384,7 @@
     if(action==="submit") return submitForReview();
     if(action==="approve") return reviewDecision("APPROVE");
     if(action==="reject") return reviewDecision("REJECT");
+    if(action==="new-revision") return createNewRevision();
     if(action==="resolve-comment"){state.resolvedBlockingComment=true;render();toast("Blocking comment 已解决","success");}
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
@@ -500,6 +503,24 @@
       state.artwork.status=response.data.status.toLowerCase();
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
       toast(decision==="APPROVE"?"Revision 已批准":"Revision 已退回","success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.apiBusy=false;render();}
+  }
+
+  async function createNewRevision(){
+    if(!state.apiOnline||!state.remoteArtworkId){toast("创建新 Revision 需要 Cloudflare API。","error");return;}
+    state.apiBusy=true;render();
+    try{
+      const response=await api.createRevision(state.remoteArtworkId,{
+        dataSnapshot:D.canonicalData(state.artwork),
+        preflightProfileVersion:"US_SIDE_SEAL_K_ONLY_V1@1",
+        actor:"web"
+      });
+      state.artwork.revision=response.data.revision;
+      state.artwork.status="draft";
+      state.resolvedBlockingComment=false;
+      localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      toast(`${response.data.revision} Draft 已创建`,"success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
   }
