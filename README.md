@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：0.7.0
+## 当前版本：0.8.0
 
 ### 已实现
 
@@ -45,12 +45,65 @@
 - Templates / Variables / Rules / Layers / Tests / Versions
 - Content Master / CRN Impact Analysis
 - Quality / Versioned Preflight Profile / Audit Log
-- Cloudflare Worker API + Access/RBAC gateway
+- Cloudflare Worker API + Access/RBAC gateway + live master-data/audit APIs
 - D1 baseline migration + Batch / Mapping Profile + Users/Roles/Security migration
 - Mapping Profile / Import Job D1 APIs
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v0.8.0 关键工程进展
+
+### 1. 工作台改为 D1 实时数据
+
+Dashboard 不再使用固定数量或示例 Artwork。状态统计、Recent Artwork、打开现有稿件均来自 `/api/artworks`。
+
+全局搜索支持 SKU / Contract / Artwork No.，搜索结果可以直接打开对应 D1 Artwork。
+
+### 2. 远程 Artwork 可完整回填编辑器
+
+新增 Canonical Snapshot → Artwork hydration：
+
+```text
+D1 canonical_data_json
+        ↓
+artworkFromCanonical()
+        ↓
+Artwork Workspace
+```
+
+打开远程 Artwork 时恢复 SKU、合同、包数、重量、尺寸、Factory、Barcode、QR、Revision 和状态，而不是只恢复状态字段。
+
+### 3. Factory Master 与 Impact Analysis 真实化
+
+Content > Factories 改为读取 D1 Factory Master。
+
+Admin 可执行真实 Impact Analysis：
+
+- 当前 Artwork 总数；
+- Draft / In Review / Approved / Rejected；
+- Approved but unproduced；
+- 历史 Revision 数量。
+
+更新 Factory / CRN / Country / Effective 后只更新 Master Data，不重写历史 Revision Snapshot。
+
+### 4. Audit / Quality 去除伪数据
+
+Admin Audit Log 改为真实 `/api/audit`。
+
+Quality > Reports 使用当前 Preflight 和持久化 Preflight Audit；无数据时明确显示“暂无记录”，不再展示虚构 Artwork / Hash / 时间。
+
+### 5. Live reference data
+
+应用启动后，在 Access + D1 可用时并行加载：
+
+- Factories；
+- Templates；
+- Artworks；
+- Audit（有权限时）；
+- 当前 Artwork + Comments。
+
+断开云端时 Dashboard / Content Master 不再把本地 seed 当成实时业务数据。
 
 ## v0.7.0 关键工程进展
 

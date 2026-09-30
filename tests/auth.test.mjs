@@ -29,12 +29,15 @@ assert.deepEqual(identity.roles,["OPERATOR"]);
 assert.equal(identity.source,"cloudflare-access");
 assert.equal(can(identity,"ARTWORK_WRITE"),true);
 assert.equal(can(identity,"REVIEW"),false);
+assert.equal(can(identity,"AUDIT_READ"),false);
 
 assert.equal(permissionForRequest("POST","/api/artworks"),"ARTWORK_WRITE");
 assert.equal(permissionForRequest("POST","/api/artworks/a1/approval"),"REVIEW");
 assert.equal(permissionForRequest("POST","/api/artworks/a1/exports"),"EXPORT_PRODUCTION");
 assert.equal(permissionForRequest("PUT","/api/admin/users/u1/roles"),"ADMIN");
 assert.equal(permissionForRequest("GET","/api/artworks"),"READ");
+assert.equal(permissionForRequest("GET","/api/audit"),"AUDIT_READ");
+assert.equal(permissionForRequest("PATCH","/api/factories/ningbo-a"),"ADMIN");
 
 const bypassReq=new Request("https://localhost/api/me",{
   headers:{"x-cas-dev-user":"dev@example.com","x-cas-dev-roles":"ADMIN,REVIEWER"}
@@ -43,6 +46,7 @@ const bypass=await resolveIdentity(bypassReq,{AUTH_BYPASS:"1",DB:mockDb(null,[])
 assert.equal(bypass.source,"development-bypass");
 assert.equal(can(bypass,"ADMIN"),true);
 assert.equal(can(bypass,"REVIEW"),true);
+assert.equal(can(bypass,"AUDIT_READ"),true);
 
 const noBypass=await resolveIdentity(bypassReq,{AUTH_BYPASS:"0",DB:mockDb(null,[])});
 assert.equal(noBypass,null);

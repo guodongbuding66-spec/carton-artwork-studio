@@ -64,6 +64,7 @@ function publicIdentity(identity) {
     permissions: {
       artworkWrite: can(identity, "ARTWORK_WRITE"),
       review: can(identity, "REVIEW"),
+      auditRead: can(identity, "AUDIT_READ"),
       commentWrite: can(identity, "COMMENT_WRITE"),
       batchWrite: can(identity, "BATCH_WRITE"),
       templateWrite: can(identity, "TEMPLATE_WRITE"),
@@ -83,7 +84,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "0.7.0",
+        version: "0.8.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -135,6 +136,82 @@ export default {
           FROM factories ORDER BY name
         `).all();
         return json({ data: results });
+      }
+
+      const factoryImpactMatch=/^\/api\/factories\/([^/]+)\/impact$/.exec(url.pathname);
+      if(request.method==="GET"&&factoryImpactMatch){
+        const id=factoryImpactMatch[1];
+        const factory=await env.DB.prepare(
+          "SELECT id,name,crn,country,effective_at AS effectiveAt,status FROM factories WHERE id=?"
+        ).bind(id).first();
+        if(!factory)return err(404,"NOT_FOUND","Factory not found.");
+
+        const current=await env.DB.prepare(`
+          SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status='DRAFT' THEN 1 ELSE 0 END) AS draft,
+            SUM(CASE WHEN status='IN_REVIEW' THEN 1 ELSE 0 END) AS inReview,
+            SUM(CASE WHEN status='APPROVED' THEN 1 ELSE 0 END) AS approved,
+            SUM(CASE WHEN status='REJECTED' THEN 1 ELSE 0 END) AS rejected
+          FROM artworks WHERE factory_id=?
+        `).bind(id).first();
+
+        const unproduced=await env.DB.prepare(`
+          SELECT COUNT(*) AS count
+          FROM artworks a
+          WHERE a.factory_id=? AND a.status='APPROVED'
+            AND NOT EXISTS (
+              SELECT 1 FROM exports e
+              WHERE e.artwork_id=a.id AND e.revision=a.current_revision AND e.kind='PRODUCTION_BUNDLE'
+            )
+        `).bind(id).first();
+
+        const revisions=await env.DB.prepare(`
+          SELECT COUNT(*) AS count
+          FROM artwork_revisions ar
+          JOIN artworks a ON a.id=ar.artwork_id
+          WHERE a.factory_id=?
+        `).bind(id).first();
+
+        return json({data:{
+          factory,
+          currentArtworks:{
+            total:Number(current?.total||0),
+            draft:Number(current?.draft||0),
+            inReview:Number(current?.inReview||0),
+            approved:Number(current?.approved||0),
+            rejected:Number(current?.rejected||0),
+            approvedUnproduced:Number(unproduced?.count||0)
+          },
+          revisionCount:Number(revisions?.count||0),
+          note:"Historical Revision snapshots remain frozen; changing Factory Master does not rewrite them."
+        }});
+      }
+
+      const factoryMatch=/^\/api\/factories\/([^/]+)$/.exec(url.pathname);
+      if(request.method==="PATCH"&&factoryMatch){
+        const id=factoryMatch[1],b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM factories WHERE id=?").bind(id).first();
+        if(!current)return err(404,"NOT_FOUND","Factory not found.");
+        const next={
+          name:String(b.name??current.name).trim(),
+          crn:String(b.crn??current.crn).trim(),
+          country:String(b.country??current.country).trim(),
+          effectiveAt:b.effectiveAt??current.effective_at,
+          status:String(b.status??current.status).toUpperCase()
+        };
+        if(!next.name||!next.crn||!next.country)return err(400,"INVALID_FACTORY","name, crn and country are required.");
+        await env.DB.prepare(`
+          UPDATE factories
+          SET name=?,crn=?,country=?,effective_at=?,status=?,updated_at=CURRENT_TIMESTAMP
+          WHERE id=?
+        `).bind(next.name,next.crn,next.country,next.effectiveAt,next.status,id).run();
+        await audit(env,identity,"FACTORY",id,"UPDATE_MASTER",{
+          oldValue:{name:current.name,crn:current.crn,country:current.country,effectiveAt:current.effective_at,status:current.status},
+          newValue:next,
+          reason:b.reason||"Factory master data update"
+        });
+        return json({data:{id,...next}});
       }
 
       if (request.method === "GET" && url.pathname === "/api/templates") {
@@ -601,6 +678,23 @@ export default {
         headers.set("etag",object.httpEtag);
         headers.set("content-disposition",`attachment; filename="${String(rec.kind||"artifact").toLowerCase()}-${rec.revision||"R01"}"`);
         return new Response(object.body,{headers});
+      }
+
+      if(request.method==="GET"&&url.pathname==="/api/audit"){
+        const limit=Math.max(1,Math.min(200,Number(url.searchParams.get("limit")||100)));
+        const objectType=url.searchParams.get("objectType");
+        let sql=`
+          SELECT id,actor,object_type AS objectType,object_id AS objectId,action,
+                 old_value_json AS oldValueJson,new_value_json AS newValueJson,reason,
+                 created_at AS createdAt
+          FROM audit_logs
+        `;
+        const binds=[];
+        if(objectType){sql+=" WHERE object_type=?";binds.push(objectType);}
+        sql+=" ORDER BY created_at DESC LIMIT ?";
+        binds.push(limit);
+        const {results}=await env.DB.prepare(sql).bind(...binds).all();
+        return json({data:results});
       }
 
       if(request.method==="GET"&&url.pathname==="/api/admin/users"){

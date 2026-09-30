@@ -14,6 +14,7 @@ function loadBrowserModules(paths) {
     ArrayBuffer,
     DataView,
     URL,
+    URLSearchParams,
     setTimeout,
     clearTimeout
   };
