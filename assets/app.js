@@ -48,6 +48,9 @@
     auditLogs: [],
     factories: [...D.factories],
     templates: [],
+    templateVersions: [],
+    templateVersionsMeta: null,
+    templateEditor: null,
     remoteArtworks: [],
     impact: null
   };
@@ -333,8 +336,14 @@
 
   function renderTemplates(){
     const tabs=["overview","variables","rules","layers","tests","versions"];
+    const latest=state.templateVersions[0]||state.templates[0]||null;
+    const status=latest?.status||"NO DATA";
+    const badge=status==="APPROVED"?"green":status==="SUBMITTED"?"blue":status==="REJECTED"?"red":"amber";
+    const title=state.templateVersionsMeta?.displayName||state.artwork.templateName||"美线侧封箱";
+    const code=state.templateVersionsMeta?.code||state.artwork.templateCode||"US_SIDE_SEAL";
     return `<div class="split"><div class="subnav">${tabs.map(t=>`<button class="${state.templateTab===t?"active":""}" data-template-tab="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div><div>
-      <section class="card"><div class="card-head"><h3>美线侧封箱</h3><span class="badge green">Approved</span><span class="spacer"></span><span class="mono subtle">US_SIDE_SEAL · 2026.05.20</span></div><div class="card-body">${templateBody()}</div></section>
+      <section class="card"><div class="card-head"><h3>${esc(title)}</h3><span class="badge ${badge}">${esc(status)}</span><span class="spacer"></span><span class="mono subtle">${esc(code)}${latest?.version?" · "+esc(latest.version):""}</span></div><div class="card-body">${templateBody()}</div></section>
+      ${state.templateEditor?renderTemplateEditor():""}
     </div></div>`;
   }
 
@@ -351,10 +360,42 @@
     if(state.templateTab==="tests") return table(["Test","Scenario","Expected"],[
       ["US-001","single package","notice hidden"],["US-002","multi package","notice visible"],["US-008","factory changed","CRN x2 synchronized"],["US-011","GW < NW","blocking error"],["US-012","package index > total","blocking error"],["US-016","K-only profile","pass"]
     ]);
-    if(state.templateTab==="versions") return table(["Version","Status","Effective","Note"],[
-      ["2026.05.20","Approved","2026-05-20","Add factory customs registration code"],["2025.09.23","Deprecated","2025-09-23","Remove metric and lower content"],["2025.06.21","Deprecated","2025-06-21","Move barcode/QR"]
-    ]);
-    return `<div class="row2"><div><strong>Template Code</strong><p class="mono">US_SIDE_SEAL</p><strong>Preflight Profile</strong><p class="mono">US_SIDE_SEAL_K_ONLY_V1</p><strong>Print</strong><p>Single black / K-only</p></div><div><strong>Geometry</strong><p>Parametric mm model</p><strong>Source Calibration</strong><p>200 mm vector reference ≈ 199.46 mm</p><strong>CodeBlock</strong><p>250×80 / 200×64 mm</p></div></div>`;
+    if(state.templateTab==="versions"){
+      const rows=state.templateVersions.map(v=>[
+        v.version,
+        `<span class="badge ${v.status==="APPROVED"?"green":v.status==="SUBMITTED"?"blue":v.status==="REJECTED"?"red":"amber"}">${esc(v.status)}</span>`,
+        v.effectiveAt||"—",
+        v.createdBy||"—",
+        v.submittedBy||"—",
+        v.approvedBy||"—",
+        `<button class="btn small" data-edit-template-version="${esc(v.id)}">Open</button>`
+      ]);
+      return `${permitted("templateWrite")?`<div class="toolbar" style="margin-bottom:10px"><input id="new-template-version" class="input mono" style="max-width:180px" placeholder="e.g. 2026.10.01"/><input id="new-template-effective" class="input" style="max-width:170px" placeholder="YYYY-MM-DD"/><button class="btn primary" data-action="create-template-version">Create Draft from Approved</button></div>`:""}${rows.length?table(["Version","Status","Effective","Created By","Submitted By","Approved By",""],rows,true):'<div class="notice warn">尚未从 D1 读取 Template Versions。</div>'}`;
+    }
+    const latest=state.templateVersions.find(v=>v.status==="APPROVED")||state.templateVersions[0]||state.templates[0];
+    return `<div class="row2"><div><strong>Template Code</strong><p class="mono">${esc(state.templateVersionsMeta?.code||state.artwork.templateCode)}</p><strong>Preflight Profile</strong><p class="mono">${esc(latest?.preflightProfile||"US_SIDE_SEAL_K_ONLY_V1")}</p><strong>Print</strong><p>Single black / K-only</p></div><div><strong>Geometry</strong><p>Parametric mm model</p><strong>Source Calibration</strong><p>200 mm vector reference ≈ 199.46 mm</p><strong>CodeBlock</strong><p>250×80 / 200×64 mm</p></div></div>`;
+  }
+
+  function renderTemplateEditor(){
+    const v=state.templateEditor;
+    const editable=["DRAFT","REJECTED"].includes(v.status)&&permitted("templateWrite");
+    const submitted=v.status==="SUBMITTED";
+    return `<section class="card" style="margin-top:12px"><div class="card-head"><h3>Template Version ${esc(v.version)}</h3><span class="badge ${v.status==="APPROVED"?"green":v.status==="SUBMITTED"?"blue":v.status==="REJECTED"?"red":"amber"}">${esc(v.status)}</span><span class="spacer"></span><button class="btn small" data-action="close-template-editor">Close</button></div><div class="card-body">
+      <div class="row2"><div class="field"><label>Effective</label><input id="template-effective" class="input" value="${esc(v.effectiveAt||"")}" ${editable?"":"disabled"}/></div><div class="field"><label>Preflight Profile</label><input id="template-preflight-profile" class="input mono" value="${esc(v.preflightProfile||"")}" ${editable?"":"disabled"}/></div></div>
+      <div class="field"><label>Notes</label><input id="template-notes" class="input" value="${esc(v.notes||"")}" ${editable?"":"disabled"}/></div>
+      <div class="field"><label>Template JSON</label><textarea id="template-json-editor" class="input mono" rows="18" ${editable?"":"disabled"}>${esc(prettyTemplateJson(v.templateJson))}</textarea></div>
+      <div class="notice">Schema gate: mm geometry · K print profile · locked 250×80 / 200×64 CodeBlock · CRN placement rule.</div>
+      <div class="toolbar" style="justify-content:flex-end;margin-top:10px">${editable?'<button class="btn" data-action="save-template-draft">Save Draft</button><button class="btn primary" data-action="submit-template-version">Submit for Approval</button>':""}${submitted&&permitted("templateApprove")?'<button class="btn" data-action="reject-template-version">Reject</button><button class="btn success" data-action="approve-template-version">Approve</button>':""}</div>
+      <div class="subtle" style="margin-top:8px">Created: ${esc(v.createdBy||"—")} · Submitted: ${esc(v.submittedBy||"—")} · Approved: ${esc(v.approvedBy||"—")}</div>
+      ${v.lastComment?`<div class="notice warn" style="margin-top:8px">Last review: ${esc(v.lastDecision||"")} · ${esc(v.lastComment)}</div>`:""}
+    </div></section>`;
+  }
+
+  function prettyTemplateJson(value){
+    try{
+      const data=typeof value==="string"?JSON.parse(value):value;
+      return JSON.stringify(data||{},null,2);
+    }catch{return String(value||"{}");}
   }
 
   function renderContent(){
