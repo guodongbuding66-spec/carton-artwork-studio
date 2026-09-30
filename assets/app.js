@@ -38,7 +38,9 @@
     apiChecked: false,
     apiBusy: false,
     remoteArtworkId: localStorage.getItem("cas:remoteArtworkId") || null,
-    remoteRevision: null
+    remoteRevision: null,
+    remoteImportJobId: null,
+    apiBindings: { d1:false, r2:false, assets:false }
   };
 
   const navItems = [
@@ -375,9 +377,11 @@
   }
 
   async function handleAction(action){
-    if(action==="save"){localStorage.setItem("cas:draft",JSON.stringify(state.artwork));toast("草稿已保存到本地","success");}
-    if(action==="preflight"){state.pfBusy=true;render();setTimeout(()=>{state.pfBusy=false;render();toast("Preflight 已重新计算","success");},650);}
-    if(action==="submit"){state.artwork.status="in_review";render();toast("已进入 In Review","success");}
+    if(action==="save") return saveDraft();
+    if(action==="preflight") return runPreflightAction();
+    if(action==="submit") return submitForReview();
+    if(action==="approve") return reviewDecision("APPROVE");
+    if(action==="reject") return reviewDecision("REJECT");
     if(action==="resolve-comment"){state.resolvedBlockingComment=true;render();toast("Blocking comment 已解决","success");}
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
@@ -388,8 +392,116 @@
     }
     if(action==="download-errors"){downloadText("failed_rows.csv",B.failedRowsCsv(state.batchReview),"text/csv;charset=utf-8");}
     if(action==="batch-generate") return exportBatchProofs();
+    if(action==="save-mapping") return saveMappingProfile();
     if(action==="close-dialog"){state.dialog=null;render();}
     if(action==="impact-revision"){state.dialog=null;render();toast("已生成受影响 Artwork 的新 Revision 任务","success");}
+  }
+
+  async function ensureRemoteArtwork(){
+    localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+    if(!state.apiOnline)return null;
+    const canonicalData=D.canonicalData(state.artwork);
+    try{
+      let response;
+      if(state.remoteArtworkId){
+        try{response=await api.updateArtwork(state.remoteArtworkId,state.artwork,canonicalData,"web");}
+        catch(e){
+          if(e.status!==404)throw e;
+          state.remoteArtworkId=null;
+          localStorage.removeItem("cas:remoteArtworkId");
+        }
+      }
+      if(!state.remoteArtworkId){
+        response=await api.createArtwork(state.artwork,canonicalData,"web");
+        state.remoteArtworkId=response.data.id;
+        localStorage.setItem("cas:remoteArtworkId",state.remoteArtworkId);
+      }
+      return response;
+    }catch(e){
+      throw new Error(`Cloud save failed: ${e.message||e}`);
+    }
+  }
+
+  async function saveDraft(){
+    if(["in_review","approved"].includes(state.artwork.status)){
+      toast("已提交或已批准的 Revision 不允许原地修改；需要创建新 Revision。","error");return;
+    }
+    state.apiBusy=true;render();
+    try{
+      const remote=await ensureRemoteArtwork();
+      toast(remote?"草稿已同步到 D1":"Cloud API 未连接，草稿仅保存到本地","success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.apiBusy=false;render();}
+  }
+
+  async function persistPreflight(){
+    const groups=checks(),s=D.preflightSummary(groups);
+    if(!state.apiOnline||!state.remoteArtworkId)return null;
+    const status=s.error>0?"ERROR":s.warning>0?"WARNING":"PASS";
+    return api.preflight(state.remoteArtworkId,{
+      revision:state.artwork.revision,
+      profileCode:"US_SIDE_SEAL_K_ONLY_V1",
+      profileVersion:"1",
+      status,
+      report:{summary:s,groups}
+    });
+  }
+
+  async function runPreflightAction(){
+    state.pfBusy=true;state.apiBusy=true;render();
+    try{
+      if(!state.remoteArtworkId&&state.apiOnline)await ensureRemoteArtwork();
+      await new Promise(r=>setTimeout(r,280));
+      await persistPreflight();
+      const s=summary();
+      toast(`Preflight: ${s.pass} pass / ${s.warning} warning / ${s.error} error`,s.error?"error":"success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.pfBusy=false;state.apiBusy=false;render();}
+  }
+
+  async function submitForReview(){
+    const s=summary();
+    if(s.blocking>0){toast("存在 blocking errors，无法提交审核","error");return;}
+    state.apiBusy=true;render();
+    try{
+      if(!state.apiOnline){
+        toast("提交审核需要 Cloudflare D1 API；当前处于 Local Mode。","error");return;
+      }
+      await ensureRemoteArtwork();
+      await persistPreflight();
+      const pfStatus=s.error>0?"ERROR":s.warning>0?"WARNING":"PASS";
+      const response=await api.submitArtwork(state.remoteArtworkId,{
+        dataSnapshot:D.canonicalData(state.artwork),
+        preflightStatus:pfStatus,
+        blockingErrors:s.blocking,
+        preflightProfileVersion:"US_SIDE_SEAL_K_ONLY_V1@1",
+        actor:"web",
+        reason:"Submitted from Artwork workspace"
+      });
+      state.artwork.status="in_review";
+      state.artwork.revision=response.data.revision;
+      state.remoteRevision=response.data.revision;
+      localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      toast(`${response.data.revision} 已提交审核`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.apiBusy=false;render();}
+  }
+
+  async function reviewDecision(decision){
+    if(!state.apiOnline||!state.remoteArtworkId){toast("Reviewer decision 需要 Cloudflare API。","error");return;}
+    if(decision==="APPROVE"&&!state.resolvedBlockingComment){toast("请先解决 Blocking comment。","error");return;}
+    state.apiBusy=true;render();
+    try{
+      const response=await api.decision(state.remoteArtworkId,decision,{
+        revision:state.artwork.revision,
+        reviewer:"demo-reviewer",
+        comment:decision==="APPROVE"?"Preflight and artwork reviewed.":"Revision required."
+      });
+      state.artwork.status=response.data.status.toLowerCase();
+      localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      toast(decision==="APPROVE"?"Revision 已批准":"Revision 已退回","success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.apiBusy=false;render();}
   }
 
   function exportProof(){
