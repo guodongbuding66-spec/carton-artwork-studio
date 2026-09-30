@@ -268,7 +268,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.7.0",
+        version: "1.8.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -879,6 +879,111 @@ export default {
             "x-cas-renderer":"embedded-truetype-1.7.0",
             "x-cas-pdf-sha256":pdfSha,
             "x-cas-font-sha256":asset.sha256
+          }
+        });
+      }
+
+      const outputIntentValidationMatch=/^\/api\/artworks\/([^/]+)\/output-intent-validation$/.exec(url.pathname);
+      if(request.method==="POST"&&outputIntentValidationMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const artworkId=outputIntentValidationMatch[1];
+        const iccAssetId=String(url.searchParams.get("iccAssetId")||"").trim();
+        if(!iccAssetId)return err(400,"ICC_ASSET_ID_REQUIRED","iccAssetId is required.");
+
+        const iccAsset=await env.DB.prepare(`
+          SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+                 metadata_json AS metadataJson,status,approved_by AS approvedBy,approved_at AS approvedAt
+          FROM production_assets WHERE id=? AND asset_type='ICC_PROFILE' AND status='APPROVED'
+        `).bind(iccAssetId).first();
+        if(!iccAsset)return err(404,"APPROVED_ICC_NOT_FOUND","Approved ICC_PROFILE asset not found.");
+        let iccMeta={};
+        try{iccMeta=JSON.parse(iccAsset.metadataJson||"{}");}catch{}
+        if(String(iccMeta.colorSpace||"").toUpperCase()!=="CMYK"){
+          return err(409,"ICC_COLORSPACE_UNSUPPORTED","OutputIntent validation currently requires an approved CMYK ICC profile.");
+        }
+
+        const fontPolicyRow=await env.DB.prepare(`
+          SELECT status,config_json AS configJson FROM production_policies WHERE code='FONT_POLICY'
+        `).first();
+        if(String(fontPolicyRow?.status||"").toUpperCase()!=="APPROVED"){
+          return err(409,"FONT_POLICY_NOT_APPROVED","Approved FONT_POLICY is required for OutputIntent validation.");
+        }
+        const fontPolicy=parseJsonObject(fontPolicyRow?.configJson);
+        const approvedAssets=await loadApprovedProductionAssets(env);
+        const fontAsset=approvedAssets.find((a)=>
+          a.assetType==="FONT" &&
+          String(a.code).toUpperCase()===String(fontPolicy.assetCode||"").toUpperCase() &&
+          String(a.version)===String(fontPolicy.assetVersion||"")
+        );
+        if(!fontAsset)return err(409,"PINNED_FONT_NOT_FOUND","Pinned approved FONT asset was not found.");
+
+        const artwork=await env.DB.prepare(`
+          SELECT id,sku,contract_no AS contractNo,factory_id AS factoryId,status,current_revision AS currentRevision,
+                 canonical_data_json AS canonicalDataJson
+          FROM artworks WHERE id=?
+        `).bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+
+        let verifiedFont,verifiedIcc;
+        try{
+          verifiedFont=await readVerifiedProductionAsset(env,fontAsset);
+          verifiedIcc=await readVerifiedProductionAsset(env,{...iccAsset,metadata:iccMeta});
+        }catch(e){
+          return err(409,e.message||"ASSET_READ_FAILED","Approved production asset cannot be used for OutputIntent validation.",e.detail);
+        }
+
+        const qrPolicy=await env.DB.prepare("SELECT config_json AS configJson FROM production_policies WHERE code='QR_POLICY'").first();
+        const qrConfig=parseJsonObject(qrPolicy?.configJson);
+        const qrEcc=["L","M","Q","H"].includes(String(qrConfig.ecc||"").toUpperCase())?String(qrConfig.ecc).toUpperCase():"M";
+        const snapshot=parseJsonObject(artwork.canonicalDataJson);
+
+        let rendered;
+        try{
+          rendered=renderEmbeddedArtworkPdf({
+            snapshot,
+            metadata:{
+              sku:artwork.sku,contractNo:artwork.contractNo,factoryId:artwork.factoryId,
+              revision:artwork.currentRevision,status:artwork.status
+            },
+            fontBytes:verifiedFont.bytes,
+            iccBytes:verifiedIcc.bytes,
+            outputIntent:{
+              identifier:iccAsset.code+"@"+iccAsset.version,
+              info:iccAsset.filename,
+              registryName:"https://www.color.org",
+              components:4,
+              pdfxVersion:"PDF/X-4",
+              title:"Carton Artwork PDF/X-4 Candidate"
+            },
+            qrEcc,
+            mode:"proof"
+          });
+        }catch(e){
+          return err(409,"OUTPUT_INTENT_RENDER_FAILED","ICC OutputIntent validation render failed.",e.message||String(e));
+        }
+
+        const digest=await crypto.subtle.digest("SHA-256",rendered.bytes);
+        const pdfSha=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        await audit(env,identity,"PRODUCTION_ASSET",iccAsset.id,"OUTPUT_INTENT_VALIDATION",{
+          newValue:{
+            artworkId,revision:artwork.currentRevision,pdfSha256:pdfSha,
+            fontAssetId:fontAsset.id,fontSha256:fontAsset.sha256,
+            iccAssetId:iccAsset.id,iccSha256:iccAsset.sha256,pdfxCandidate:"PDF/X-4"
+          },
+          reason:"Server-side ICC OutputIntent + XMP candidate validation proof"
+        });
+        const filename=(`OutputIntentValidation_${artwork.sku||artworkId}_${iccAsset.code}_${iccAsset.version}.pdf`).replace(/[^a-zA-Z0-9._-]+/g,"_");
+        return new Response(rendered.bytes,{
+          status:200,
+          headers:{
+            "content-type":"application/pdf",
+            "content-disposition":`attachment; filename="${filename}"`,
+            "cache-control":"no-store",
+            "x-cas-renderer":"output-intent-candidate-1.8.0",
+            "x-cas-pdf-sha256":pdfSha,
+            "x-cas-font-sha256":fontAsset.sha256,
+            "x-cas-icc-sha256":iccAsset.sha256,
+            "x-cas-pdfx-candidate":"PDF/X-4"
           }
         });
       }
