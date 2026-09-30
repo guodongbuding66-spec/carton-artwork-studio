@@ -1367,7 +1367,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.0.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.2.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
