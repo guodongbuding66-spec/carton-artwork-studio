@@ -70,8 +70,9 @@ export function permissionForRequest(method, pathname) {
 export async function resolveIdentity(request, env) {
   const accessEmail = normalizeEmail(request.headers.get("cf-access-authenticated-user-email"));
   const bypass = String(env.AUTH_BYPASS || "") === "1";
-  const devEmail = bypass ? normalizeEmail(request.headers.get("x-cas-dev-user")) : "";
-  const email = accessEmail || devEmail;
+  const devHeaderEmail = bypass ? normalizeEmail(request.headers.get("x-cas-dev-user")) : "";
+  const devEnvEmail = bypass ? normalizeEmail(env.DEV_USER_EMAIL) : "";
+  const email = accessEmail || devHeaderEmail || devEnvEmail;
   if (!email) return null;
 
   const source = accessEmail ? "cloudflare-access" : "development-bypass";
@@ -95,7 +96,8 @@ export async function resolveIdentity(request, env) {
   if (bootstrapEmail && bootstrapEmail === email && !roles.includes("ADMIN")) roles.push("ADMIN");
 
   if (bypass && !accessEmail) {
-    for (const role of parseDevRoles(request.headers.get("x-cas-dev-roles"))) {
+    const devRoles = request.headers.get("x-cas-dev-roles") || env.DEV_USER_ROLES || "";
+    for (const role of parseDevRoles(devRoles)) {
       if (!roles.includes(role)) roles.push(role);
     }
   }
