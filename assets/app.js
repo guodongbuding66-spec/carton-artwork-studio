@@ -65,7 +65,8 @@
     systemReadiness: null,
     readinessProbeBusy: false,
     productionAssets: [],
-    productionAssetBusy: false
+    productionAssetBusy: false,
+    pdfxValidationRuns: []
   };
 
   const navItems = [
@@ -632,10 +633,21 @@
           <div class="field"><label>Output Condition Identifier</label><input id="pdfx-output-condition" class="input mono" placeholder="Printer / FOGRA / GRACoL condition identifier"/></div>
           <div class="field"><label>Artwork</label><input class="input mono" disabled value="${esc(state.remoteArtworkId||"Open a D1 Artwork first")}"/></div>
         </div>
-        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="pdfx4-candidate" ${!state.remoteArtworkId||!approvedFonts.length||!approvedIcc.length?"disabled":""}>Render PDF/X-4 Candidate</button></div>
+        <div class="toolbar" style="justify-content:flex-end">
+          <button class="btn" data-action="pdfx4-external-validate" ${!state.remoteArtworkId||!approvedFonts.length||!approvedIcc.length?"disabled":""}>Run External Validator</button>
+          <button class="btn primary" data-action="pdfx4-candidate" ${!state.remoteArtworkId||!approvedFonts.length||!approvedIcc.length?"disabled":""}>Render PDF/X-4 Candidate</button>
+        </div>
       </div>`:"";
 
-    return `${uploader}${candidateTool}${rows.length?table(["Type","Code","Version","File","Status","SHA-256","Metadata","Actions"],rows,true):'<div class="card-body"><div class="notice">尚无 Production Asset。正式 Font / ICC Profile 必须通过受控上传与四眼审批后才能进入后续 renderer 集成。</div></div>'}`;
+    const validationRows=(state.pdfxValidationRuns||[]).map(v=>[
+      v.createdAt||"—",
+      v.revision||"—",
+      `<span class="badge ${v.status==="PASS"?"green":v.status==="FAIL"?"red":"amber"}">${esc(v.status)}</span>`,
+      `${esc(v.validator||"—")} ${esc(v.validatorVersion||"")}`,
+      `<span class="mono subtle">${esc(String(v.artifactSha256||"").slice(0,16))}…</span>`
+    ]);
+    const validationTable=validationRows.length?`<div class="card-head"><h3>External PDF/X Validation Evidence</h3></div>${table(["Time","Revision","Status","Validator","PDF SHA-256"],validationRows,true)}`:"";
+    return `${uploader}${candidateTool}${validationTable}${rows.length?table(["Type","Code","Version","File","Status","SHA-256","Metadata","Actions"],rows,true):'<div class="card-body"><div class="notice">尚无 Production Asset。正式 Font / ICC Profile 必须通过受控上传与四眼审批后才能进入后续 renderer 集成。</div></div>'}`;
   }
 
   function renderQuality(){
@@ -804,6 +816,7 @@
     if(action==="run-readiness-probe") return runSystemReadinessProbe();
     if(action==="upload-production-asset") return uploadProductionAsset();
     if(action==="pdfx4-candidate") return renderPdfX4Candidate();
+    if(action==="pdfx4-external-validate") return runExternalPdfXValidation();
     if(action==="run-compare") return loadRevisionCompare();
     if(action==="save-factory") return saveFactoryMaster();
     if(action==="proof") return exportProof();
@@ -1013,6 +1026,29 @@
     }
   }
 
+  async function runExternalPdfXValidation(){
+    if(!state.apiOnline||!permitted("productionAssetApprove")){toast("需要 Production Asset Approve 权限。","error");return;}
+    if(!state.remoteArtworkId){toast("请先从 Dashboard 打开一个 D1 Artwork。","error");return;}
+    const fontAssetId=document.getElementById("pdfx-candidate-font")?.value||"";
+    const iccAssetId=document.getElementById("pdfx-candidate-icc")?.value||"";
+    const outputConditionIdentifier=document.getElementById("pdfx-output-condition")?.value?.trim()||"";
+    if(!fontAssetId||!iccAssetId||!outputConditionIdentifier){
+      toast("请选择 Approved Font、Approved CMYK ICC，并填写 Output Condition Identifier。","error");return;
+    }
+    try{
+      const response=await api.validatePdfX4External(state.remoteArtworkId,{fontAssetId,iccAssetId,outputConditionIdentifier});
+      const result=response.data||{};
+      toast(`External PDF/X Validator · ${result.status||"UNKNOWN"} · ${result.validator||"validator"} ${result.validatorVersion||""}`,result.status==="PASS"?"success":"error");
+      const runs=await api.pdfxValidations(state.remoteArtworkId);
+      state.pdfxValidationRuns=runs.data||[];
+      if(permitted("auditRead")) await loadAudit(false);
+      render();
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.map(x=>typeof x==="object"?JSON.stringify(x):String(x)).join(" · ")}`:"";
+      toast("External PDF/X validation failed: "+(e.message||e)+detail,"error");
+    }
+  }
+
   async function loadProductionAssets(renderAfter=true){
     if(!state.apiOnline||!state.identity){
       state.productionAssets=[];
@@ -1022,6 +1058,9 @@
     try{
       const response=await api.productionAssets();
       state.productionAssets=response.data||[];
+      if(state.remoteArtworkId){
+        try{state.pdfxValidationRuns=(await api.pdfxValidations(state.remoteArtworkId)).data||[];}catch{state.pdfxValidationRuns=[];}
+      }else state.pdfxValidationRuns=[];
     }catch(e){
       state.productionAssets=[];
       toast("Production Assets load failed: "+(e.message||e),"error");
