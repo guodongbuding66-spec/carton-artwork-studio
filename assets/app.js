@@ -639,6 +639,10 @@
     try{
       const response=await api.adminUsers();
       state.adminUsers=response.data||[];
+      if(permitted("auditRead")) {
+        const audit=await api.audit({limit:100});
+        state.auditLogs=audit.data||[];
+      }
     }catch(e){toast(e.message||String(e),"error");}
     render();
   }
@@ -863,7 +867,7 @@
         const g=D.sideSealGeometry(art),comp=D.computed(art),code=C.code128Bars(art.barcode,{moduleMm:.42,heightMm:25}),qr=C.qrMatrix(art.qr,"M").matrix;
         const pdf=P.createPdfBytes({artwork:art,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof"});
         const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg("proof",art)}`;
-        const snap=JSON.stringify(D.canonicalData(art),null,2);
+        const snap=JSON.stringify(D.canonicalData(art,state.factories),null,2);
         const prefix=`row-${String(row.row).padStart(4,"0")}_${B.safeBase(art)}/`;
         files.push({name:prefix+"Proof.pdf",data:pdf},{name:prefix+"Proof.svg",data:svg},{name:prefix+"DataSnapshot.json",data:snap});
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
