@@ -48,6 +48,9 @@
     auditLogs: [],
     factories: [...D.factories],
     templates: [],
+    templateVersions: [],
+    templateVersionsMeta: null,
+    templateEditor: null,
     remoteArtworks: [],
     impact: null
   };
@@ -333,8 +336,14 @@
 
   function renderTemplates(){
     const tabs=["overview","variables","rules","layers","tests","versions"];
+    const latest=state.templateVersions[0]||state.templates[0]||null;
+    const status=latest?.status||"NO DATA";
+    const badge=status==="APPROVED"?"green":status==="SUBMITTED"?"blue":status==="REJECTED"?"red":"amber";
+    const title=state.templateVersionsMeta?.displayName||state.artwork.templateName||"美线侧封箱";
+    const code=state.templateVersionsMeta?.code||state.artwork.templateCode||"US_SIDE_SEAL";
     return `<div class="split"><div class="subnav">${tabs.map(t=>`<button class="${state.templateTab===t?"active":""}" data-template-tab="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div><div>
-      <section class="card"><div class="card-head"><h3>美线侧封箱</h3><span class="badge green">Approved</span><span class="spacer"></span><span class="mono subtle">US_SIDE_SEAL · 2026.05.20</span></div><div class="card-body">${templateBody()}</div></section>
+      <section class="card"><div class="card-head"><h3>${esc(title)}</h3><span class="badge ${badge}">${esc(status)}</span><span class="spacer"></span><span class="mono subtle">${esc(code)}${latest?.version?" · "+esc(latest.version):""}</span></div><div class="card-body">${templateBody()}</div></section>
+      ${state.templateEditor?renderTemplateEditor():""}
     </div></div>`;
   }
 
@@ -351,10 +360,42 @@
     if(state.templateTab==="tests") return table(["Test","Scenario","Expected"],[
       ["US-001","single package","notice hidden"],["US-002","multi package","notice visible"],["US-008","factory changed","CRN x2 synchronized"],["US-011","GW < NW","blocking error"],["US-012","package index > total","blocking error"],["US-016","K-only profile","pass"]
     ]);
-    if(state.templateTab==="versions") return table(["Version","Status","Effective","Note"],[
-      ["2026.05.20","Approved","2026-05-20","Add factory customs registration code"],["2025.09.23","Deprecated","2025-09-23","Remove metric and lower content"],["2025.06.21","Deprecated","2025-06-21","Move barcode/QR"]
-    ]);
-    return `<div class="row2"><div><strong>Template Code</strong><p class="mono">US_SIDE_SEAL</p><strong>Preflight Profile</strong><p class="mono">US_SIDE_SEAL_K_ONLY_V1</p><strong>Print</strong><p>Single black / K-only</p></div><div><strong>Geometry</strong><p>Parametric mm model</p><strong>Source Calibration</strong><p>200 mm vector reference ≈ 199.46 mm</p><strong>CodeBlock</strong><p>250×80 / 200×64 mm</p></div></div>`;
+    if(state.templateTab==="versions"){
+      const rows=state.templateVersions.map(v=>[
+        v.version,
+        `<span class="badge ${v.status==="APPROVED"?"green":v.status==="SUBMITTED"?"blue":v.status==="REJECTED"?"red":"amber"}">${esc(v.status)}</span>`,
+        v.effectiveAt||"—",
+        v.createdBy||"—",
+        v.submittedBy||"—",
+        v.approvedBy||"—",
+        `<button class="btn small" data-edit-template-version="${esc(v.id)}">Open</button>`
+      ]);
+      return `${permitted("templateWrite")?`<div class="toolbar" style="margin-bottom:10px"><input id="new-template-version" class="input mono" style="max-width:180px" placeholder="e.g. 2026.10.01"/><input id="new-template-effective" class="input" style="max-width:170px" placeholder="YYYY-MM-DD"/><button class="btn primary" data-action="create-template-version">Create Draft from Approved</button></div>`:""}${rows.length?table(["Version","Status","Effective","Created By","Submitted By","Approved By",""],rows,true):'<div class="notice warn">尚未从 D1 读取 Template Versions。</div>'}`;
+    }
+    const latest=state.templateVersions.find(v=>v.status==="APPROVED")||state.templateVersions[0]||state.templates[0];
+    return `<div class="row2"><div><strong>Template Code</strong><p class="mono">${esc(state.templateVersionsMeta?.code||state.artwork.templateCode)}</p><strong>Preflight Profile</strong><p class="mono">${esc(latest?.preflightProfile||"US_SIDE_SEAL_K_ONLY_V1")}</p><strong>Print</strong><p>Single black / K-only</p></div><div><strong>Geometry</strong><p>Parametric mm model</p><strong>Source Calibration</strong><p>200 mm vector reference ≈ 199.46 mm</p><strong>CodeBlock</strong><p>250×80 / 200×64 mm</p></div></div>`;
+  }
+
+  function renderTemplateEditor(){
+    const v=state.templateEditor;
+    const editable=["DRAFT","REJECTED"].includes(v.status)&&permitted("templateWrite");
+    const submitted=v.status==="SUBMITTED";
+    return `<section class="card" style="margin-top:12px"><div class="card-head"><h3>Template Version ${esc(v.version)}</h3><span class="badge ${v.status==="APPROVED"?"green":v.status==="SUBMITTED"?"blue":v.status==="REJECTED"?"red":"amber"}">${esc(v.status)}</span><span class="spacer"></span><button class="btn small" data-action="close-template-editor">Close</button></div><div class="card-body">
+      <div class="row2"><div class="field"><label>Effective</label><input id="template-effective" class="input" value="${esc(v.effectiveAt||"")}" ${editable?"":"disabled"}/></div><div class="field"><label>Preflight Profile</label><input id="template-preflight-profile" class="input mono" value="${esc(v.preflightProfile||"")}" ${editable?"":"disabled"}/></div></div>
+      <div class="field"><label>Notes</label><input id="template-notes" class="input" value="${esc(v.notes||"")}" ${editable?"":"disabled"}/></div>
+      <div class="field"><label>Template JSON</label><textarea id="template-json-editor" class="input mono" rows="18" ${editable?"":"disabled"}>${esc(prettyTemplateJson(v.templateJson))}</textarea></div>
+      <div class="notice">Schema gate: mm geometry · K print profile · locked 250×80 / 200×64 CodeBlock · CRN placement rule.</div>
+      <div class="toolbar" style="justify-content:flex-end;margin-top:10px">${editable?'<button class="btn" data-action="save-template-draft">Save Draft</button><button class="btn primary" data-action="submit-template-version">Submit for Approval</button>':""}${submitted&&permitted("templateApprove")?'<button class="btn" data-action="reject-template-version">Reject</button><button class="btn success" data-action="approve-template-version">Approve</button>':""}</div>
+      <div class="subtle" style="margin-top:8px">Created: ${esc(v.createdBy||"—")} · Submitted: ${esc(v.submittedBy||"—")} · Approved: ${esc(v.approvedBy||"—")}</div>
+      ${v.lastComment?`<div class="notice warn" style="margin-top:8px">Last review: ${esc(v.lastDecision||"")} · ${esc(v.lastComment)}</div>`:""}
+    </div></section>`;
+  }
+
+  function prettyTemplateJson(value){
+    try{
+      const data=typeof value==="string"?JSON.parse(value):value;
+      return JSON.stringify(data||{},null,2);
+    }catch{return String(value||"{}");}
   }
 
   function renderContent(){
@@ -428,9 +469,9 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();}});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();}});
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
-    document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=()=>{state.templateTab=b.dataset.templateTab;render();});
+    document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=()=>{state.contentTab=b.dataset.contentTab;render();});
     document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();});
     document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
@@ -456,6 +497,7 @@
     document.querySelectorAll("[data-resolve-comment]").forEach(b=>b.onclick=()=>resolveComment(b.dataset.resolveComment));
     document.querySelectorAll("[data-save-user-roles]").forEach(b=>b.onclick=()=>saveUserRoles(b.dataset.saveUserRoles));
     document.querySelectorAll("[data-open-artwork]").forEach(b=>b.onclick=()=>openRemoteArtwork(b.dataset.openArtwork));
+    document.querySelectorAll("[data-edit-template-version]").forEach(b=>b.onclick=()=>openTemplateVersion(b.dataset.editTemplateVersion));
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
     const file=document.getElementById("batch-file");
@@ -471,6 +513,12 @@
     if(action==="new-revision") return createNewRevision();
     if(action==="add-comment") return addComment();
     if(action==="create-user") return createAdminUser();
+    if(action==="create-template-version") return createTemplateVersion();
+    if(action==="save-template-draft") return saveTemplateDraft();
+    if(action==="submit-template-version") return submitTemplateVersion();
+    if(action==="approve-template-version") return decideTemplateVersion("APPROVE");
+    if(action==="reject-template-version") return decideTemplateVersion("REJECT");
+    if(action==="close-template-editor"){state.templateEditor=null;render();return;}
     if(action==="refresh-dashboard") return loadRemoteArtworks();
     if(action==="refresh-audit") return loadAudit();
     if(action==="save-factory") return saveFactoryMaster();
@@ -485,6 +533,129 @@
     if(action==="batch-generate") return exportBatchProofs();
     if(action==="save-mapping") return saveMappingProfile();
     if(action==="close-dialog"){state.dialog=null;state.impact=null;render();}
+  }
+
+  function activeTemplateId(){
+    return state.templateVersionsMeta?.id || state.templates.find(t=>t.code===state.artwork.templateCode)?.id || state.templates[0]?.id || null;
+  }
+
+  async function loadTemplateVersions(renderAfter=true){
+    if(!state.apiOnline||!state.identity){
+      state.templateVersions=[];
+      state.templateVersionsMeta=null;
+      state.templateEditor=null;
+      if(renderAfter) render();
+      return;
+    }
+    const templateId=activeTemplateId();
+    if(!templateId){
+      state.templateVersions=[];
+      state.templateVersionsMeta=null;
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const response=await api.templateVersions(templateId);
+      state.templateVersionsMeta=response.data?.template||null;
+      state.templateVersions=response.data?.versions||[];
+      if(state.templateEditor){
+        state.templateEditor=state.templateVersions.find(v=>v.id===state.templateEditor.id)||null;
+      }
+    }catch(e){
+      state.templateVersions=[];
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  function openTemplateVersion(id){
+    const version=state.templateVersions.find(v=>v.id===id);
+    if(!version){toast("Template Version not found.","error");return;}
+    state.templateEditor={...version};
+    render();
+  }
+
+  async function createTemplateVersion(){
+    if(!permitted("templateWrite")){toast("需要 Template Designer / Admin 权限。","error");return;}
+    const templateId=activeTemplateId();
+    const version=document.getElementById("new-template-version")?.value?.trim()||"";
+    const effectiveAt=document.getElementById("new-template-effective")?.value?.trim()||null;
+    if(!templateId||!version){toast("请输入新 Template Version。","error");return;}
+    const base=state.templateVersions.find(v=>v.status==="APPROVED")||state.templateVersions[0]||null;
+    try{
+      const response=await api.createTemplateVersion(templateId,{
+        version,
+        effectiveAt,
+        baseVersionId:base?.id||null,
+        preflightProfile:base?.preflightProfile||"US_SIDE_SEAL_K_ONLY_V1",
+        notes:"Draft cloned from "+(base?.version||"template baseline")
+      });
+      await loadTemplateVersions(false);
+      state.templateTab="versions";
+      state.templateEditor=state.templateVersions.find(v=>v.id===response.data.id)||null;
+      render();
+      toast(`${version} Draft 已创建`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  function templateEditorPayload(){
+    let templateJson;
+    try{
+      templateJson=JSON.parse(document.getElementById("template-json-editor")?.value||"{}");
+    }catch{
+      throw new Error("Template JSON 格式无效。");
+    }
+    return {
+      effectiveAt:document.getElementById("template-effective")?.value?.trim()||null,
+      preflightProfile:document.getElementById("template-preflight-profile")?.value?.trim()||"",
+      notes:document.getElementById("template-notes")?.value?.trim()||"",
+      templateJson
+    };
+  }
+
+  async function saveTemplateDraft(renderAfter=true){
+    if(!state.templateEditor||!permitted("templateWrite")){toast("没有 Template Draft 编辑权限。","error");return false;}
+    try{
+      const payload=templateEditorPayload();
+      await api.updateTemplateVersion(state.templateEditor.id,payload);
+      await loadTemplateVersions(false);
+      state.templateEditor=state.templateVersions.find(v=>v.id===state.templateEditor.id)||null;
+      if(renderAfter) render();
+      toast("Template Draft 已保存","success");
+      return true;
+    }catch(e){toast(e.message||String(e),"error");return false;}
+  }
+
+  async function submitTemplateVersion(){
+    if(!state.templateEditor||!permitted("templateWrite")){toast("没有 Template 提交权限。","error");return;}
+    if(["DRAFT","REJECTED"].includes(state.templateEditor.status)){
+      const saved=await saveTemplateDraft(false);
+      if(!saved)return;
+    }
+    try{
+      await api.submitTemplateVersion(state.templateEditor.id,{reason:"Submitted from Template Center"});
+      await loadTemplateVersions(false);
+      state.templateEditor=state.templateVersions.find(v=>v.id===state.templateEditor.id)||null;
+      render();
+      toast("Template Version 已提交审批","success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }
+  }
+
+  async function decideTemplateVersion(decision){
+    if(!state.templateEditor||!permitted("templateApprove")){toast("需要 Template Approver / Admin 权限。","error");return;}
+    try{
+      await api.decideTemplateVersion(state.templateEditor.id,decision,{
+        comment:decision==="APPROVE"?"Template schema and production rules reviewed.":"Template revision required."
+      });
+      await loadTemplateVersions(false);
+      state.templateEditor=state.templateVersions.find(v=>v.id===state.templateEditor.id)||null;
+      await loadReferenceData(false);
+      render();
+      toast(decision==="APPROVE"?"Template Version 已批准":"Template Version 已退回","success");
+    }catch(e){toast(e.message||String(e),"error");}
   }
 
   async function loadReferenceData(renderAfter=true){

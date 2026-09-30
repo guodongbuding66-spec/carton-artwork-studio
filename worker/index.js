@@ -1,4 +1,5 @@
 import { ROLES, can, permissionForRequest, resolveIdentity } from "./auth.js";
+import { parseTemplateJson, validateTemplateJson } from "./template.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -84,7 +85,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "0.8.0",
+        version: "0.9.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -225,6 +226,192 @@ export default {
           ORDER BY t.code,tv.created_at DESC
         `).all();
         return json({ data: results });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/templates") {
+        const b=await bodyJson(request);
+        const code=String(b.code||"").trim().toUpperCase().replace(/[^A-Z0-9_\-]+/g,"_");
+        const displayName=String(b.displayName||"").trim();
+        if(!code||!displayName)return err(400,"INVALID_TEMPLATE","code and displayName are required.");
+        const id=crypto.randomUUID();
+        await env.DB.prepare(
+          "INSERT INTO templates(id,code,display_name,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)"
+        ).bind(id,code,displayName).run();
+        await audit(env,identity,"TEMPLATE",id,"CREATE",{newValue:{code,displayName}});
+        return json({data:{id,code,displayName}},{status:201});
+      }
+
+      const templateVersionsMatch=/^\/api\/templates\/([^/]+)\/versions$/.exec(url.pathname);
+      if(request.method==="GET"&&templateVersionsMatch){
+        const templateId=templateVersionsMatch[1];
+        const template=await env.DB.prepare(
+          "SELECT id,code,display_name AS displayName,created_at AS createdAt FROM templates WHERE id=?"
+        ).bind(templateId).first();
+        if(!template)return err(404,"NOT_FOUND","Template not found.");
+        const {results}=await env.DB.prepare(`
+          SELECT tv.id,tv.template_id AS templateId,tv.version,tv.status,
+                 tv.effective_at AS effectiveAt,tv.preflight_profile_code AS preflightProfile,
+                 tv.template_json AS templateJson,tv.notes,tv.created_by AS createdBy,
+                 tv.submitted_by AS submittedBy,tv.submitted_at AS submittedAt,
+                 tv.approved_by AS approvedBy,tv.approved_at AS approvedAt,
+                 tv.created_at AS createdAt,tv.updated_at AS updatedAt,
+                 (SELECT ta.decision FROM template_approvals ta WHERE ta.template_version_id=tv.id ORDER BY ta.created_at DESC LIMIT 1) AS lastDecision,
+                 (SELECT ta.comment FROM template_approvals ta WHERE ta.template_version_id=tv.id ORDER BY ta.created_at DESC LIMIT 1) AS lastComment
+          FROM template_versions tv
+          WHERE tv.template_id=?
+          ORDER BY tv.created_at DESC
+        `).bind(templateId).all();
+        return json({data:{template,versions:results}});
+      }
+
+      if(request.method==="POST"&&templateVersionsMatch){
+        const templateId=templateVersionsMatch[1],b=await bodyJson(request);
+        const template=await env.DB.prepare("SELECT id,code FROM templates WHERE id=?").bind(templateId).first();
+        if(!template)return err(404,"NOT_FOUND","Template not found.");
+        const version=String(b.version||"").trim();
+        if(!version)return err(400,"VERSION_REQUIRED","version is required.");
+
+        let base=null;
+        if(b.baseVersionId){
+          base=await env.DB.prepare("SELECT * FROM template_versions WHERE id=? AND template_id=?")
+            .bind(b.baseVersionId,templateId).first();
+          if(!base)return err(404,"BASE_VERSION_NOT_FOUND","Base template version not found.");
+        }else{
+          base=await env.DB.prepare(`
+            SELECT * FROM template_versions
+            WHERE template_id=? AND status='APPROVED'
+            ORDER BY approved_at DESC,created_at DESC LIMIT 1
+          `).bind(templateId).first();
+        }
+
+        const id=crypto.randomUUID();
+        const templateJson=base?.template_json||JSON.stringify({
+          schemaVersion:1,
+          templateCode:template.code,
+          geometry:{type:"side-seal-parametric",units:"mm"},
+          print:{colors:["K"],fontPolicy:"Arial-or-similar"},
+          codeBlock:{profiles:["250x80","200x64"],locked:true},
+          rules:{multiPackageNotice:true,crnPlacements:2,originFromFactory:true}
+        });
+        await env.DB.prepare(`
+          INSERT INTO template_versions(
+            id,template_id,version,status,effective_at,preflight_profile_code,template_json,
+            notes,created_by,created_at,updated_at
+          ) VALUES(?,?,?,'DRAFT',?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        `).bind(
+          id,templateId,version,b.effectiveAt||null,
+          b.preflightProfile||base?.preflight_profile_code||"US_SIDE_SEAL_K_ONLY_V1",
+          templateJson,b.notes||"",identity.email
+        ).run();
+        await audit(env,identity,"TEMPLATE_VERSION",id,"CREATE_DRAFT",{
+          newValue:{templateId,version,baseVersionId:base?.id||null}
+        });
+        return json({data:{id,templateId,version,status:"DRAFT"}},{status:201});
+      }
+
+      const templateVersionMatch=/^\/api\/template-versions\/([^/]+)$/.exec(url.pathname);
+      if(request.method==="PATCH"&&templateVersionMatch){
+        const id=templateVersionMatch[1],b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM template_versions WHERE id=?").bind(id).first();
+        if(!current)return err(404,"NOT_FOUND","Template version not found.");
+        if(!["DRAFT","REJECTED"].includes(String(current.status).toUpperCase())){
+          return err(409,"TEMPLATE_VERSION_IMMUTABLE","Only DRAFT or REJECTED template versions can be edited.");
+        }
+
+        let templateJson=current.template_json||"{}";
+        if(b.templateJson!==undefined){
+          try{templateJson=JSON.stringify(parseTemplateJson(b.templateJson));}
+          catch{return err(400,"TEMPLATE_JSON_INVALID","Template JSON must be valid JSON.");}
+        }
+
+        const preflightProfile=String(b.preflightProfile??current.preflight_profile_code??"").trim();
+        const effectiveAt=b.effectiveAt===undefined?current.effective_at:(b.effectiveAt||null);
+        const notes=b.notes===undefined?current.notes:String(b.notes||"");
+        await env.DB.prepare(`
+          UPDATE template_versions
+          SET status='DRAFT',effective_at=?,preflight_profile_code=?,template_json=?,notes=?,
+              submitted_by=NULL,submitted_at=NULL,updated_at=CURRENT_TIMESTAMP
+          WHERE id=?
+        `).bind(effectiveAt,preflightProfile,templateJson,notes,id).run();
+        await audit(env,identity,"TEMPLATE_VERSION",id,"UPDATE_DRAFT",{
+          oldValue:{status:current.status,effectiveAt:current.effective_at,preflightProfile:current.preflight_profile_code},
+          newValue:{status:"DRAFT",effectiveAt,preflightProfile}
+        });
+        return json({data:{id,status:"DRAFT"}});
+      }
+
+      const templateSubmitMatch=/^\/api\/template-versions\/([^/]+)\/submit$/.exec(url.pathname);
+      if(request.method==="POST"&&templateSubmitMatch){
+        const id=templateSubmitMatch[1],b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM template_versions WHERE id=?").bind(id).first();
+        if(!current)return err(404,"NOT_FOUND","Template version not found.");
+        if(!["DRAFT","REJECTED"].includes(String(current.status).toUpperCase())){
+          return err(409,"TEMPLATE_SUBMIT_STATE","Only DRAFT or REJECTED template versions can be submitted.");
+        }
+        const validation=validateTemplateJson(current.template_json);
+        if(!validation.ok)return err(409,"TEMPLATE_VALIDATION_FAILED","Template schema validation failed.",validation.errors);
+        await env.DB.prepare(`
+          UPDATE template_versions
+          SET status='SUBMITTED',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+          WHERE id=?
+        `).bind(identity.email,id).run();
+        await audit(env,identity,"TEMPLATE_VERSION",id,"SUBMIT_REVIEW",{
+          newValue:{status:"SUBMITTED",validationErrors:[]},
+          reason:b.reason||"Template version submitted for approval"
+        });
+        return json({data:{id,status:"SUBMITTED",submittedBy:identity.email}},{status:201});
+      }
+
+      const templateApprovalMatch=/^\/api\/template-versions\/([^/]+)\/approval$/.exec(url.pathname);
+      if(request.method==="POST"&&templateApprovalMatch){
+        const id=templateApprovalMatch[1],b=await bodyJson(request);
+        const current=await env.DB.prepare("SELECT * FROM template_versions WHERE id=?").bind(id).first();
+        if(!current)return err(404,"NOT_FOUND","Template version not found.");
+        if(String(current.status).toUpperCase()!=="SUBMITTED"){
+          return err(409,"TEMPLATE_NOT_SUBMITTED","Only SUBMITTED template versions can be approved or rejected.");
+        }
+        if(String(current.submitted_by||"").toLowerCase()===identity.email.toLowerCase()){
+          await securityEvent(env,identity,"TEMPLATE_SELF_APPROVAL_BLOCKED",request,{templateVersionId:id});
+          return err(409,"FOUR_EYES_REQUIRED","The template submitter cannot approve or reject the same version.");
+        }
+        const decision=String(b.decision||"").toUpperCase();
+        if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
+
+        if(decision==="APPROVE"){
+          const validation=validateTemplateJson(current.template_json);
+          if(!validation.ok)return err(409,"TEMPLATE_VALIDATION_FAILED","Template schema validation failed.",validation.errors);
+        }
+
+        const approvalId=crypto.randomUUID();
+        const next=decision==="APPROVE"?"APPROVED":"REJECTED";
+        const statements=[
+          env.DB.prepare(`
+            INSERT INTO template_approvals(id,template_version_id,reviewer,decision,comment,created_at)
+            VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
+          `).bind(approvalId,id,identity.email,decision,b.comment||"")
+        ];
+        if(decision==="APPROVE"){
+          statements.push(env.DB.prepare(`
+            UPDATE template_versions
+            SET status='DEPRECATED',updated_at=CURRENT_TIMESTAMP
+            WHERE template_id=? AND status='APPROVED' AND id<>?
+          `).bind(current.template_id,id));
+          statements.push(env.DB.prepare(`
+            UPDATE template_versions
+            SET status='APPROVED',approved_by=?,approved_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+          `).bind(identity.email,id));
+        }else{
+          statements.push(env.DB.prepare(`
+            UPDATE template_versions SET status='REJECTED',updated_at=CURRENT_TIMESTAMP WHERE id=?
+          `).bind(id));
+        }
+        await env.DB.batch(statements);
+        await audit(env,identity,"TEMPLATE_VERSION",id,decision,{
+          newValue:{status:next,reviewer:identity.email},
+          reason:b.comment||"Template review decision"
+        });
+        return json({data:{id,status:next,reviewer:identity.email}},{status:201});
       }
 
       if (request.method === "GET" && url.pathname === "/api/artworks") {

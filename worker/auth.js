@@ -50,6 +50,12 @@ export function permissionForRequest(method, pathname) {
   if (p.startsWith("/api/admin/")) return "ADMIN";
   if (p === "/api/audit") return "AUDIT_READ";
 
+  if (/^\/api\/template-versions\/[^/]+\/approval$/.test(p)) return "TEMPLATE_APPROVE";
+  if (/^\/api\/template-versions\/[^/]+\/submit$/.test(p)) return "TEMPLATE_WRITE";
+  if (/^\/api\/template-versions\/[^/]+$/.test(p) && m === "PATCH") return "TEMPLATE_WRITE";
+  if (/^\/api\/templates\/[^/]+\/versions$/.test(p) && m === "POST") return "TEMPLATE_WRITE";
+  if (p === "/api/templates" && m === "POST") return "TEMPLATE_WRITE";
+
   if (m === "GET") return "READ";
 
   if (/^\/api\/artworks\/[^/]+\/approval$/.test(p)) return "REVIEW";
