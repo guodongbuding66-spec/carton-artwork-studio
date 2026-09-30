@@ -58,7 +58,7 @@ const missing=required.filter((name)=>!names.has(name));
 if(missing.length) throw new Error("Missing D1 tables after migrations: "+missing.join(", "));
 
 const migrations=rows(query("SELECT name FROM d1_migrations ORDER BY id;"));
-if(migrations.at(-1)?.name!=="0008_pdfx_validation_runs.sql") throw new Error(`Latest migration must be 0006_system_readiness.sql, got ${migrations.at(-1)?.name||"none"}.`);
+if(migrations.at(-1)?.name!=="0008_pdfx_validation_runs.sql") throw new Error(`Latest migration must be 0008_pdfx_validation_runs.sql, got ${migrations.at(-1)?.name||"none"}.`);
 
 const policies=rows(query("SELECT code,status FROM production_policies ORDER BY code;"));
 if(policies.length!==4) throw new Error(`Expected 4 production policy seeds, got ${policies.length}.`);
