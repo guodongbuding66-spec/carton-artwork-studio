@@ -14,6 +14,12 @@
       .replace(/\)/g, "\\)");
   }
 
+  function escXml(v) {
+    return String(v ?? "").replace(/[&<>"']/g, (ch) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"
+    })[ch]);
+  }
+
   function mm(v) {
     return Number(v) * PT_PER_MM;
   }
@@ -331,7 +337,7 @@
     return { stream:true, dict:String(dict || "").trim(), bytes:toBytes(bytes) };
   }
 
-  function buildBinaryPdf(objects, version = "1.4") {
+  function buildBinaryPdf(objects, version = "1.4", trailerExtras = "") {
     const chunks = [];
     let length = 0;
     const offsets = [0];
@@ -362,7 +368,7 @@
     for (let i = 1; i < objects.length; i += 1) {
       push(String(offsets[i]).padStart(10, "0") + " 00000 n \n");
     }
-    push(`trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+    push(`trailer\n<< /Size ${objects.length} /Root 1 0 R ${trailerExtras ? trailerExtras + " " : ""}>>\nstartxref\n${xref}\n%%EOF\n`);
     return joinBytes(chunks);
   }
 
@@ -401,7 +407,61 @@
     return lines.join("\n");
   }
 
-  function createEmbeddedPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode = "production", fontBytes }) {
+  function iccColorSpace(bytesLike) {
+    const bytes=bytesLike instanceof Uint8Array?bytesLike:new Uint8Array(bytesLike||[]);
+    if(bytes.length<20) return "";
+    return String.fromCharCode(bytes[16],bytes[17],bytes[18],bytes[19]).trim();
+  }
+
+  function makePdfX4Xmp({ title="", outputConditionIdentifier="" } = {}) {
+    const t=escXml(title||"Carton Artwork");
+    const out=escXml(outputConditionIdentifier||"Custom");
+    return [
+      '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>',
+      '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+      '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+      '<rdf:Description rdf:about=""',
+      ' xmlns:pdf="http://ns.adobe.com/pdf/1.3/"',
+      ' xmlns:xmp="http://ns.adobe.com/xap/1.0/"',
+      ' xmlns:dc="http://purl.org/dc/elements/1.1/"',
+      ' xmlns:pdfxid="http://www.npes.org/pdfx/ns/id/"',
+      ' pdf:Producer="Carton Artwork Studio"',
+      ' xmp:CreatorTool="Carton Artwork Studio"',
+      ' pdfxid:GTS_PDFXVersion="PDF/X-4">',
+      '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">'+t+'</rdf:li></rdf:Alt></dc:title>',
+      '<pdf:Keywords>PDF/X-4 candidate; '+out+'</pdf:Keywords>',
+      '</rdf:Description>',
+      '</rdf:RDF>',
+      '</x:xmpmeta>',
+      '<?xpacket end="w"?>'
+    ].join("\n");
+  }
+
+  function inspectPdfX4Candidate(bytesLike) {
+    const bytes=bytesLike instanceof Uint8Array?bytesLike:new Uint8Array(bytesLike||[]);
+    const text=new TextDecoder("latin1").decode(bytes);
+    const requirements=[
+      ["PDF 1.6 header",text.startsWith("%PDF-1.6")],
+      ["OutputIntents",text.includes("/OutputIntents")],
+      ["GTS_PDFX output intent",text.includes("/S /GTS_PDFX")],
+      ["ICC DestOutputProfile",text.includes("/DestOutputProfile")],
+      ["XMP Metadata",text.includes("/Type /Metadata")&&text.includes("pdfxid:GTS_PDFXVersion=\"PDF/X-4\"")],
+      ["TrimBox",text.includes("/TrimBox")],
+      ["BleedBox",text.includes("/BleedBox")],
+      ["Embedded font",text.includes("/FontFile2")&&text.includes("/CIDFontType2")],
+      ["PDF/X Info",text.includes("/GTS_PDFXVersion (PDF/X-4)")],
+      ["No core Helvetica fallback",!text.includes("/BaseFont /Helvetica")]
+    ];
+    return {
+      ok:requirements.every(([,ok])=>ok),
+      checks:requirements.map(([name,ok])=>({name,ok}))
+    };
+  }
+
+  function createEmbeddedPdfBytes({
+    artwork, geometry, computed, codeModel, qrMatrix, mode = "production", fontBytes,
+    iccBytes = null, pdfxProfile = "", outputConditionIdentifier = "", documentTitle = ""
+  }) {
     const fontModel = parseTrueTypeFont(fontBytes);
     const widthPt = mm(geometry.totalWidth);
     const heightPt = mm(geometry.totalHeight);
@@ -411,21 +471,42 @@
     const fontFile = fontModel.bytes;
     const widths = makeWidths(fontModel);
     const bbox = fontModel.bbox.join(" ");
-    const objects = new Array(10);
-    objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+    const wantsPdfX4=String(pdfxProfile||"").toUpperCase()==="PDF/X-4";
+    const pdfx=wantsPdfX4&&iccBytes;
+    if(wantsPdfX4&&!iccBytes) throw new Error("PDFX4_ICC_PROFILE_REQUIRED");
+    if(pdfx&&iccColorSpace(iccBytes)!=="CMYK") throw new Error("PDFX4_CMYK_OUTPUT_PROFILE_REQUIRED");
+    if(pdfx&&!String(outputConditionIdentifier||"").trim()) throw new Error("PDFX4_OUTPUT_CONDITION_IDENTIFIER_REQUIRED");
+
+    const objects = new Array(pdfx?14:10);
+    objects[1] = pdfx
+      ? "<< /Type /Catalog /Pages 2 0 R /Metadata 10 0 R /OutputIntents [11 0 R] >>"
+      : "<< /Type /Catalog /Pages 2 0 R >>";
     objects[2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
-    objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`;
+    const boxes=pdfx
+      ? ` /TrimBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}] /BleedBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}]`
+      : "";
+    objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}]${boxes} /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`;
     objects[4] = makeStream("", stream);
     objects[5] = "<< /Type /Font /Subtype /Type0 /BaseFont /CASEmbeddedFont /Encoding /Identity-H /DescendantFonts [6 0 R] /ToUnicode 9 0 R >>";
     objects[6] = `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /CASEmbeddedFont /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /CIDToGIDMap /Identity /DW 1000 /W [${widths}] >>`;
     objects[7] = `<< /Type /FontDescriptor /FontName /CASEmbeddedFont /Flags 32 /FontBBox [${bbox}] /ItalicAngle 0 /Ascent ${fontModel.ascent} /Descent ${fontModel.descent} /CapHeight ${fontModel.ascent} /StemV 80 /FontFile2 8 0 R >>`;
     objects[8] = makeStream(`/Length1 ${fontFile.length}`, fontFile);
     objects[9] = makeStream("", toUnicode);
+
+    if(pdfx){
+      const title=documentTitle||artwork?.sku||"Carton Artwork";
+      const xmp=makePdfX4Xmp({title,outputConditionIdentifier});
+      objects[10]=makeStream("/Type /Metadata /Subtype /XML",new TextEncoder().encode(xmp));
+      objects[11]=`<< /Type /OutputIntent /S /GTS_PDFX /OutputConditionIdentifier (${escPdfText(outputConditionIdentifier)}) /Info (${escPdfText(outputConditionIdentifier)}) /RegistryName (http://www.color.org) /DestOutputProfile 12 0 R >>`;
+      objects[12]=makeStream("/N 4",iccBytes);
+      objects[13]=`<< /Title (${escPdfText(title)}) /Producer (Carton Artwork Studio) /GTS_PDFXVersion (PDF/X-4) /Trapped /False >>`;
+      return buildBinaryPdf(objects,"1.6","/Info 13 0 R");
+    }
     return buildBinaryPdf(objects, "1.4");
   }
 
-  function createPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode = "production", fontBytes = null }) {
-    if (fontBytes) return createEmbeddedPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode, fontBytes });
+  function createPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode = "production", fontBytes = null, iccBytes = null, pdfxProfile = "", outputConditionIdentifier = "", documentTitle = "" }) {
+    if (fontBytes) return createEmbeddedPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode, fontBytes, iccBytes, pdfxProfile, outputConditionIdentifier, documentTitle });
     const widthPt = mm(geometry.totalWidth);
     const heightPt = mm(geometry.totalHeight);
     const stream = buildArtworkOps(artwork, geometry, computed, codeModel, { mode, qrMatrix });
@@ -466,6 +547,7 @@
     rectOp,
     lineOp,
     parseTrueTypeFont,
+    inspectPdfX4Candidate,
     createEmbeddedPdfBytes,
     createPdfBytes,
     createPdfBlob
