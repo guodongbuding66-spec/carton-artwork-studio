@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.4.0
+## 当前版本：1.5.0
 
 ### 已实现
 
@@ -46,11 +46,80 @@
 - Content Master / CRN Impact Analysis
 - Quality / Versioned Preflight Profile / Audit Log
 - Cloudflare Worker API + Access/RBAC gateway + live master-data/audit APIs
-- D1 baseline migration + Batch / Mapping Profile + Users/Roles/Security + Template Lifecycle + Production Readiness migration
+- Staging Readiness Center + R2 deep probe + release gate
+- D1 baseline migration + Batch / Mapping Profile + Users/Roles/Security + Template Lifecycle + Production Readiness + System Readiness migration
 - Mapping Profile / Import Job D1 APIs
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.5.0 关键工程进展
+
+### 1. Staging Readiness Center
+
+系统管理页新增真实上线检查中心，由 Worker 读取当前 Cloudflare / D1 / R2 / Access / RBAC / Master Data 状态，不使用前端模拟结果。
+
+Staging gate 包括：
+
+- Cloudflare Access identity；
+- `AUTH_BYPASS=0`；
+- D1 binding；
+- 最新 D1 migration = `0006_system_readiness.sql`；
+- R2 binding；
+- 24 小时内 R2 write/read/delete deep probe；
+- Assets binding；
+- Bootstrap Admin 已移除；
+- Approved Template；
+- Active Factory；
+- OPERATOR / REVIEWER；
+- 可执行 four-eyes 的至少两个独立身份；
+- 4 个 Production Policy 记录完整。
+
+### 2. Staging / Production 双层状态
+
+系统明确区分：
+
+```text
+STAGING_READY
+PRODUCTION_BLOCKED / PRODUCTION_READY
+```
+
+Staging 可以进入真实集成与双身份验收，但 Production 仍必须额外通过 Barcode / QR / Font / PDF-X renderer capability + policy gate。
+
+### 3. R2 Deep Probe + Audit
+
+Admin 可执行 R2 深度探测：
+
+```text
+PUT random object
+↓
+GET + payload verify
+↓
+DELETE
+↓
+D1 readiness run
+↓
+Audit Log
+```
+
+探测结果与完整 Readiness Report 写入 D1，避免“R2 binding 显示存在，但实际读写不可用”的假阳性。
+
+### 4. 正式 Factory Master 创建
+
+Content > Factories 新增 Admin 创建入口。
+
+原 scaffold 的 3 个 Factory 继续保持 `SAMPLE`，不会被 Staging Gate 当作生产主数据。必须创建至少一个真实 `ACTIVE` Factory 才能通过对应门禁。
+
+### 5. Post-deploy Staging Smoke
+
+手动 staging workflow 部署完成后会继续运行 Access Service Token smoke test，检查：
+
+- Worker service identity；
+- D1 / R2 / Assets bindings；
+- AUTH_BYPASS；
+- 未认证请求不能通过 `/api/me`。
+
+详见 `docs/STAGING_READINESS.md`。
 
 ## v1.4.0 关键工程进展
 
@@ -668,10 +737,14 @@ docs/
   TEMPLATE_CALIBRATION_US_SIDE_SEAL.md
   CODE_PDF_XLSX_V0.3.md
   CLOUDFLARE_DEPLOYMENT.md
+  STAGING_READINESS.md
 migrations/
   0001_init.sql
   0002_batch_and_artifacts.sql
   0003_auth_rbac.sql
+  0004_template_lifecycle.sql
+  0005_reference_and_readiness.sql
+  0006_system_readiness.sql
 worker/
   auth.js                 # Access identity + RBAC policy
   index.js
@@ -712,6 +785,11 @@ npm run check
 - TOTAL stop
 - Cell-level error
 - Scientific notation normalization
+- Production renderer SHA-256 snapshot regression
+- Production policy renderer capability gate
+- Canonical Revision diff
+- Staging readiness gate logic
+- D1 full migration chain smoke test
 
 ## Cloudflare 目标架构
 
@@ -731,8 +809,8 @@ npm run check
 - PDF/X profile 已进入 Production Policy gate，仍需确认目标 profile 与转换/验证实现
 - Excel style/number-format leading-zero 恢复已实现；仍需更多真实 Packing List 样本做兼容性回归
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
-- Cloudflare Access / RBAC 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application 与 D1/R2 资源
-- D1/R2 API 与前端 Persistence Bridge 已实现；D1 migrations 已纳入本地 CI smoke test，仍需绑定正式 staging / production resources
+- Cloudflare Access / RBAC / Staging Readiness 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application、D1/R2 与 Access Service Token
+- D1/R2 API、Persistence Bridge、R2 deep probe 已实现；D1 migrations 已纳入 CI smoke test，仍需绑定真实 staging / production resources 并完成首次 Readiness 验收
 - immutable approval workflow 与 four-eyes 已进入后端；仍需 staging 双身份验收
 - Production renderer snapshot regression、Canonical Revision Compare、Side-by-side / Overlay 已实现；像素级 Difference / Flicker 仍待扩展
 - external print preflight adapter
