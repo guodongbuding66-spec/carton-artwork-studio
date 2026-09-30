@@ -193,9 +193,9 @@
   function dielineSvg(mode="editor", artwork=state.artwork) {
     const a=artwork,g=D.sideSealGeometry(a),c=D.computed(a), safe=22;
     const proof=mode==="proof", production=mode==="production";
-    const showD=production?false:state.showDieline;
-    const showS=production?false:state.showSafe;
-    const showP=production?false:state.showPanels;
+    const showD=production?false:(proof?true:state.showDieline);
+    const showS=production?false:(proof?true:state.showSafe);
+    const showP=production?false:(proof?true:state.showPanels);
     const vb=`-50 -50 ${g.totalWidth+100} ${g.totalHeight+100}`;
     const cut=showD?`<g fill="none" stroke="#202a34" stroke-width="1.2"><rect x="${g.H}" y="0" width="${g.L}" height="${g.totalHeight}"/><rect x="0" y="${g.H}" width="${g.totalWidth}" height="${g.W}"/><rect x="0" y="${g.H+g.W+g.H}" width="${g.totalWidth}" height="${g.W}"/></g>`:"";
     const crease=showD?`<g stroke="#3978b8" stroke-width=".8" stroke-dasharray="8 5"><line x1="${g.H}" y1="0" x2="${g.H}" y2="${g.totalHeight}"/><line x1="${g.H+g.L}" y1="0" x2="${g.H+g.L}" y2="${g.totalHeight}"/>${[g.H,g.H+g.W,g.H+g.W+g.H,g.H+g.W+g.H+g.W].map(y=>`<line x1="0" y1="${y}" x2="${g.totalWidth}" y2="${y}"/>`).join("")}</g>`:"";
@@ -350,7 +350,7 @@
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
     if(action==="dry-run"){
-      state.batchReview=B.buildReview(state.batchRecords,state.batchIssues,D,{defaults:D.defaultArtwork,factories:D.factories});
+      state.batchReview=B.buildReview(state.batchRecords,state.batchIssues,D,{defaults:D.defaultArtwork,factories:D.factories,codes:C});
       state.batchStep=Math.max(state.batchStep,3);render();
       const s=B.summarize(state.batchReview);toast(`Dry Run: ${s.passed} passed / ${s.failed} failed`,s.failed?"error":"success");
     }
@@ -443,7 +443,7 @@
     try{
       const parsed=await X.parseFile(file);
       const result=X.rowsToRecords(parsed.rows,{fillDown:true});
-      const review=B.buildReview(result.records,result.issues,D,{defaults:D.defaultArtwork,factories:D.factories});
+      const review=B.buildReview(result.records,result.issues,D,{defaults:D.defaultArtwork,factories:D.factories,codes:C});
       state.batchSource=`${file.name} · ${parsed.source}`;
       state.batchRecords=result.records;
       state.batchIssues=result.issues;
