@@ -58,4 +58,24 @@ test("default sample has no blocking preflight errors", () => {
   assert.equal(s.blocking, 0);
 });
 
+test("canonical snapshot hydrates back to editable artwork", () => {
+  const source = { ...D.defaultArtwork, sku: "LIVE-001", packageCount: 2, currentPackage: 2, factoryId: "vietnam-c", revision: "R07" };
+  const snapshot = D.canonicalData(source);
+  const restored = D.artworkFromCanonical(snapshot, { status: "APPROVED", revision: "R07" });
+  assert.equal(restored.sku, "LIVE-001");
+  assert.equal(restored.packageCount, 2);
+  assert.equal(restored.currentPackage, 2);
+  assert.equal(restored.factoryId, "vietnam-c");
+  assert.equal(restored.status, "approved");
+  assert.equal(restored.revision, "R07");
+});
+
+test("computed and preflight can use remote factory master", () => {
+  const remoteFactories = [{ id: "remote-a", name: "Remote A", crn: "CRN-NEW", country: "Mexico" }];
+  const a = { ...D.defaultArtwork, factoryId: "remote-a" };
+  assert.equal(D.computed(a, remoteFactories).crn, "CRN-NEW");
+  assert.equal(D.computed(a, remoteFactories).originText, "Made in Mexico");
+  assert.equal(D.runPreflight(a, remoteFactories).Data.find(x => x.id === "factory").status, "pass");
+});
+
 console.log("Domain tests passed.");
