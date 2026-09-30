@@ -10,6 +10,7 @@ export const PERMISSIONS = Object.freeze({
   READ: ["OPERATOR","REVIEWER","TEMPLATE_DESIGNER","TEMPLATE_APPROVER","ADMIN"],
   ARTWORK_WRITE: ["OPERATOR","ADMIN"],
   REVIEW: ["REVIEWER","ADMIN"],
+  AUDIT_READ: ["REVIEWER","ADMIN"],
   COMMENT_WRITE: ["OPERATOR","REVIEWER","ADMIN"],
   BATCH_WRITE: ["OPERATOR","ADMIN"],
   TEMPLATE_WRITE: ["TEMPLATE_DESIGNER","ADMIN"],
@@ -47,6 +48,7 @@ export function permissionForRequest(method, pathname) {
   if (p === "/api/me") return "READ";
 
   if (p.startsWith("/api/admin/")) return "ADMIN";
+  if (p === "/api/audit") return "AUDIT_READ";
 
   if (m === "GET") return "READ";
 
