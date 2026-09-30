@@ -81,10 +81,10 @@ export default {
             id,artwork_no,sku,contract_no,template_id,factory_id,status,
             package_count,current_package,current_revision,canonical_data_json,
             created_at,updated_at
-          ) VALUES(?,?,?,?,?,?,'DRAFT',?,?,'R01',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+          ) VALUES(?,?,?,?,?,?,'DRAFT',?,?,?, ?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
         `).bind(
           id,artworkNo,b.sku||"",b.contractNo||"",b.templateId||null,b.factoryId||null,
-          Number(b.packageCount||1),Number(b.currentPackage||1),JSON.stringify(b.canonicalData||b)
+          Number(b.packageCount||1),Number(b.currentPackage||1),b.revision||"R01",JSON.stringify(b.canonicalData||b)
         ).run();
 
         await env.DB.prepare(`
