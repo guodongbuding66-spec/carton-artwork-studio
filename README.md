@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.3.0
+## 当前版本：1.4.0
 
 ### 已实现
 
@@ -51,6 +51,37 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.4.0 关键工程进展
+
+### 1. D1 Migration Smoke Test 进入 CI
+
+每次 PR / main push 不再只检查 JavaScript 单元测试。
+
+CI 现在会创建隔离的本地 D1，按顺序真实执行全部 migration，并验证关键表与 seed 状态：
+
+- Template / Template Version / Approval
+- Artwork / Revision / Comments / Approval
+- Preflight / Export / Audit
+- Batch / Mapping
+- Users / RBAC / Security
+- Reference Master
+- Production Policy / Approval
+
+### 2. 关键迁移结果自动验收
+
+Migration smoke test 还会验证：
+
+- 4 个 Production Policy 必须存在且初始为 DRAFT；
+- scaffold 的 3 个示例 Factory 必须已经被隔离为 SAMPLE；
+- `tplv-us-side-seal-20260520` 必须存在；
+- 该 Template JSON 必须已经迁移到 schemaVersion 1 且 geometry.units = mm。
+
+这可以提前发现“代码测试全绿，但 Cloudflare D1 migration 实际跑不起来”的问题。
+
+### 3. CI Runtime 更新
+
+GitHub Actions 从 checkout/setup-node v4 更新到 v6，避免旧 Node runtime 的弃用警告。
 
 ## v1.3.0 关键工程进展
 
@@ -701,7 +732,7 @@ npm run check
 - Excel style/number-format leading-zero 恢复已实现；仍需更多真实 Packing List 样本做兼容性回归
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Cloudflare Access / RBAC 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application 与 D1/R2 资源
-- D1/R2 API 与前端 Persistence Bridge 已实现，但仍需绑定正式 staging / production resources
+- D1/R2 API 与前端 Persistence Bridge 已实现；D1 migrations 已纳入本地 CI smoke test，仍需绑定正式 staging / production resources
 - immutable approval workflow 与 four-eyes 已进入后端；仍需 staging 双身份验收
 - Production renderer snapshot regression、Canonical Revision Compare、Side-by-side / Overlay 已实现；像素级 Difference / Flicker 仍待扩展
 - external print preflight adapter
