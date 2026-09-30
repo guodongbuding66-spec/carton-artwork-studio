@@ -8,6 +8,7 @@ function loadBrowserModules(paths) {
     TextDecoder,
     Blob,
     Response,
+    Headers,
     DecompressionStream,
     Uint8Array,
     ArrayBuffer,

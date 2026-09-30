@@ -7,8 +7,10 @@
   const X = window.CartonImport;
   const B = window.CartonBatch;
   const Z = window.CartonZip;
+  const A = window.CartonApi;
+  const api = A?.createClient ? A.createClient() : null;
   const app = document.getElementById("app");
-  if (!D || !C || !P || !X || !B || !Z) throw new Error("Carton Artwork Studio modules failed to load.");
+  if (!D || !C || !P || !X || !B || !Z || !A || !api) throw new Error("Carton Artwork Studio modules failed to load.");
 
   const state = {
     page: "artwork",
@@ -31,7 +33,14 @@
     batchSource: null,
     batchGenerating: false,
     dialog: null,
-    resolvedBlockingComment: false
+    resolvedBlockingComment: false,
+    apiOnline: false,
+    apiChecked: false,
+    apiBusy: false,
+    remoteArtworkId: localStorage.getItem("cas:remoteArtworkId") || null,
+    remoteRevision: null,
+    remoteImportJobId: null,
+    apiBindings: { d1:false, r2:false, assets:false }
   };
 
   const navItems = [
@@ -87,7 +96,7 @@
           <nav class="nav">
             ${navItems.map(([id,ic,zh,en]) => `<button class="nav-btn ${state.page===id?"active":""}" data-page="${id}"><span class="nav-icon">${ic}</span><span>${zh}</span><span>${en}</span></button>`).join("")}
           </nav>
-          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm</div>
+          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline?"API Connected":state.apiChecked?"Local Mode":"API Checking…"}</span></div>
         </aside>
         <section class="main">
           <header class="topbar">
@@ -146,10 +155,12 @@
       <div class="artwork-header">
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
         <div class="spacer"></div>
-        <select class="select" style="width:128px" data-art="status"><option value="draft" ${sel("draft")}>Draft</option><option value="in_review" ${sel("in_review")}>In Review</option><option value="approved" ${sel("approved")}>Approved</option></select>
-        <button class="btn" data-action="save">保存草稿</button>
-        <button class="btn" data-action="preflight">运行检查</button>
-        <button class="btn primary" data-action="submit">提交审核</button>
+        <span class="badge ${state.artwork.status==="approved"?"green":state.artwork.status==="in_review"?"blue":state.artwork.status==="rejected"?"red":"amber"}">${esc(state.artwork.status.replace("_"," ").toUpperCase())}</span>
+        <button class="btn" data-action="save" ${state.apiBusy?"disabled":""}>保存草稿</button>
+        <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
+        <button class="btn primary" data-action="submit" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy?"disabled":""}>提交审核</button>
+        ${state.artwork.status==="in_review"?`<button class="btn success" data-action="approve" ${!state.resolvedBlockingComment||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
+        ${state.artwork.status==="approved"?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
         <button class="btn" data-action="proof">导出审核稿</button>
         <button class="btn success" data-action="production" ${prod?"":"disabled"}>下载生产稿</button>
       </div>
@@ -161,6 +172,7 @@
   }
 
   function sel(v){ return state.artwork.status===v?"selected":""; }
+  function isArtworkLocked(){return ["in_review","approved"].includes(state.artwork.status);}
 
   function renderForm() {
     const a = state.artwork, f = factory(), c = computed();
@@ -174,14 +186,14 @@
         <div class="notice"><strong>Package Meas</strong><br><span class="mono">${esc(c.packageMeas)}</span></div>
       `)}
       ${formSection("Production 生产", `
-        ${field("Factory","Master Data",`<select class="select" data-art="factoryId">${D.factories.map(x=>`<option value="${x.id}" ${a.factoryId===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select>`)}
+        ${field("Factory","Master Data",`<select class="select" data-art="factoryId" ${isArtworkLocked()?"disabled":""}>${D.factories.map(x=>`<option value="${x.id}" ${a.factoryId===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select>`)}
         ${field("CRN","factory.crn",`<input class="input mono" readonly value="${esc(f?.crn||"")}" />`)}
         ${field("Country of Origin","derived",`<input class="input" readonly value="${esc(f?.country||"")}" />`)}
       `)}
       ${formSection("Codes 代码", `
         ${field("Barcode","Code 128-B PoC",input("barcode",a.barcode))}
         ${field("QR payload","Encoder gate pending",input("qr",a.qr))}
-        ${field("CodeBlock Profile","locked component",`<select class="select" data-art="codeBlockProfile"><option value="250x80" ${a.codeBlockProfile==="250x80"?"selected":""}>250 × 80 mm</option><option value="200x64" ${a.codeBlockProfile==="200x64"?"selected":""}>200 × 64 mm</option></select>`)}
+        ${field("CodeBlock Profile","locked component",`<select class="select" data-art="codeBlockProfile" ${isArtworkLocked()?"disabled":""}><option value="250x80" ${a.codeBlockProfile==="250x80"?"selected":""}>250 × 80 mm</option><option value="200x64" ${a.codeBlockProfile==="200x64"?"selected":""}>200 × 64 mm</option></select>`)}
         <div class="notice">🔒 Barcode + QR 为锁定组合组件。Business Mode 禁止拆分和单独移动。</div>
       `)}
     `;
@@ -189,9 +201,9 @@
 
   function formSection(t,b){return `<section class="section"><div class="section-title">${t}</div><div class="section-body">${b}</div></section>`;}
   function field(a,b,c){return `<div class="field"><label><span>${a}</span><span class="hint">${b}</span></label>${c}</div>`;}
-  function input(k,v){return `<input class="input" data-art="${k}" value="${esc(v)}"/>`;}
-  function num(k,v){return `<input class="input mono" type="number" step="0.01" data-art="${k}" value="${esc(v)}"/>`;}
-  function suffix(k,v,s){return `<div class="suffix"><input class="input mono" type="number" step="0.01" data-art="${k}" value="${esc(v)}"/><span>${s}</span></div>`; }
+  function input(k,v){return `<input class="input" data-art="${k}" value="${esc(v)}" ${isArtworkLocked()?"disabled":""}/>`;}
+  function num(k,v){return `<input class="input mono" type="number" step="0.01" data-art="${k}" value="${esc(v)}" ${isArtworkLocked()?"disabled":""}/>`;}
+  function suffix(k,v,s){return `<div class="suffix"><input class="input mono" type="number" step="0.01" data-art="${k}" value="${esc(v)}" ${isArtworkLocked()?"disabled":""}/><span>${s}</span></div>`; }
 
   function renderTabs(){
     return `<div class="tabs">${[["artwork","Artwork"],["snapshot","Data Snapshot"],["compare","Revision Compare"],["comments","Comments"]].map(([id,n])=>`<button class="tab ${state.tab===id?"active":""}" data-tab="${id}">${n}</button>`).join("")}</div>`;
@@ -270,7 +282,7 @@
       <div class="stepper">${steps.map((x,i)=>`<div class="step ${i<state.batchStep?"done":i===state.batchStep?"active":""}">${i+1}. ${x}</div>`).join("")}</div>
       <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><span class="badge blue">US Packing List Default</span></div><div class="card-body">
         <label class="dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
-        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
+        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&state.apiOnline?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
       </div></section>
       ${state.batchSource?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL</div><div class="kpi-value">${stats.total}</div></div><div class="kpi"><div class="kpi-label">PASSED</div><div class="kpi-value" style="color:#16835d">${stats.passed}</div></div><div class="kpi"><div class="kpi-label">FAILED</div><div class="kpi-value" style="color:#bc2f3b">${stats.failed}</div></div><div class="kpi"><div class="kpi-label">MAPPING</div><div class="kpi-value">${mapping.length}</div><div class="kpi-foot">fields detected</div></div></div>`:""}
       ${mapping.length?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Detected Mapping</h3><span class="subtle">自动表头映射，可保存为 Mapping Profile（D1 schema 已预留）</span></div>${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}</section>`:""}
@@ -367,9 +379,12 @@
   }
 
   async function handleAction(action){
-    if(action==="save"){localStorage.setItem("cas:draft",JSON.stringify(state.artwork));toast("草稿已保存到本地","success");}
-    if(action==="preflight"){state.pfBusy=true;render();setTimeout(()=>{state.pfBusy=false;render();toast("Preflight 已重新计算","success");},650);}
-    if(action==="submit"){state.artwork.status="in_review";render();toast("已进入 In Review","success");}
+    if(action==="save") return saveDraft();
+    if(action==="preflight") return runPreflightAction();
+    if(action==="submit") return submitForReview();
+    if(action==="approve") return reviewDecision("APPROVE");
+    if(action==="reject") return reviewDecision("REJECT");
+    if(action==="new-revision") return createNewRevision();
     if(action==="resolve-comment"){state.resolvedBlockingComment=true;render();toast("Blocking comment 已解决","success");}
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
@@ -380,8 +395,134 @@
     }
     if(action==="download-errors"){downloadText("failed_rows.csv",B.failedRowsCsv(state.batchReview),"text/csv;charset=utf-8");}
     if(action==="batch-generate") return exportBatchProofs();
+    if(action==="save-mapping") return saveMappingProfile();
     if(action==="close-dialog"){state.dialog=null;render();}
     if(action==="impact-revision"){state.dialog=null;render();toast("已生成受影响 Artwork 的新 Revision 任务","success");}
+  }
+
+  async function ensureRemoteArtwork(){
+    localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+    if(!state.apiOnline)return null;
+    const canonicalData=D.canonicalData(state.artwork);
+    try{
+      let response;
+      if(state.remoteArtworkId){
+        try{response=await api.updateArtwork(state.remoteArtworkId,state.artwork,canonicalData,"web");}
+        catch(e){
+          if(e.status!==404)throw e;
+          state.remoteArtworkId=null;
+          localStorage.removeItem("cas:remoteArtworkId");
+        }
+      }
+      if(!state.remoteArtworkId){
+        response=await api.createArtwork(state.artwork,canonicalData,"web");
+        state.remoteArtworkId=response.data.id;
+        localStorage.setItem("cas:remoteArtworkId",state.remoteArtworkId);
+      }
+      return response;
+    }catch(e){
+      throw new Error(`Cloud save failed: ${e.message||e}`);
+    }
+  }
+
+  async function saveDraft(){
+    if(["in_review","approved"].includes(state.artwork.status)){
+      toast("已提交或已批准的 Revision 不允许原地修改；需要创建新 Revision。","error");return;
+    }
+    state.apiBusy=true;render();
+    try{
+      const remote=await ensureRemoteArtwork();
+      toast(remote?"草稿已同步到 D1":"Cloud API 未连接，草稿仅保存到本地","success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.apiBusy=false;render();}
+  }
+
+  async function persistPreflight(){
+    const groups=checks(),s=D.preflightSummary(groups);
+    if(!state.apiOnline||!state.remoteArtworkId)return null;
+    const status=s.error>0?"ERROR":s.warning>0?"WARNING":"PASS";
+    return api.preflight(state.remoteArtworkId,{
+      revision:state.artwork.revision,
+      profileCode:"US_SIDE_SEAL_K_ONLY_V1",
+      profileVersion:"1",
+      status,
+      report:{summary:s,groups}
+    });
+  }
+
+  async function runPreflightAction(){
+    state.pfBusy=true;state.apiBusy=true;render();
+    try{
+      if(!state.remoteArtworkId&&state.apiOnline)await ensureRemoteArtwork();
+      await new Promise(r=>setTimeout(r,280));
+      await persistPreflight();
+      const s=summary();
+      toast(`Preflight: ${s.pass} pass / ${s.warning} warning / ${s.error} error`,s.error?"error":"success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.pfBusy=false;state.apiBusy=false;render();}
+  }
+
+  async function submitForReview(){
+    const s=summary();
+    if(s.blocking>0){toast("存在 blocking errors，无法提交审核","error");return;}
+    state.apiBusy=true;render();
+    try{
+      if(!state.apiOnline){
+        toast("提交审核需要 Cloudflare D1 API；当前处于 Local Mode。","error");return;
+      }
+      await ensureRemoteArtwork();
+      await persistPreflight();
+      const pfStatus=s.error>0?"ERROR":s.warning>0?"WARNING":"PASS";
+      const response=await api.submitArtwork(state.remoteArtworkId,{
+        dataSnapshot:D.canonicalData(state.artwork),
+        preflightStatus:pfStatus,
+        blockingErrors:s.blocking,
+        preflightProfileVersion:"US_SIDE_SEAL_K_ONLY_V1@1",
+        actor:"web",
+        reason:"Submitted from Artwork workspace"
+      });
+      state.artwork.status="in_review";
+      state.artwork.revision=response.data.revision;
+      state.remoteRevision=response.data.revision;
+      localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      toast(`${response.data.revision} 已提交审核`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.apiBusy=false;render();}
+  }
+
+  async function reviewDecision(decision){
+    if(!state.apiOnline||!state.remoteArtworkId){toast("Reviewer decision 需要 Cloudflare API。","error");return;}
+    if(decision==="APPROVE"&&!state.resolvedBlockingComment){toast("请先解决 Blocking comment。","error");return;}
+    state.apiBusy=true;render();
+    try{
+      const response=await api.decision(state.remoteArtworkId,decision,{
+        revision:state.artwork.revision,
+        reviewer:"demo-reviewer",
+        comment:decision==="APPROVE"?"Preflight and artwork reviewed.":"Revision required."
+      });
+      state.artwork.status=response.data.status.toLowerCase();
+      localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      toast(decision==="APPROVE"?"Revision 已批准":"Revision 已退回","success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.apiBusy=false;render();}
+  }
+
+  async function createNewRevision(){
+    if(!state.apiOnline||!state.remoteArtworkId){toast("创建新 Revision 需要 Cloudflare API。","error");return;}
+    state.apiBusy=true;render();
+    try{
+      const response=await api.createRevision(state.remoteArtworkId,{
+        dataSnapshot:D.canonicalData(state.artwork),
+        preflightProfileVersion:"US_SIDE_SEAL_K_ONLY_V1@1",
+        actor:"web"
+      });
+      state.artwork.revision=response.data.revision;
+      state.artwork.status="draft";
+      state.resolvedBlockingComment=false;
+      localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      toast(`${response.data.revision} Draft 已创建`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+    finally{state.apiBusy=false;render();}
   }
 
   function exportProof(){
@@ -409,7 +550,7 @@
       preflight:await sha256(preflight)
     };
     const base=B.safeBase(artwork);
-    return {base,files:[
+    return {base,manifest,files:[
       {name:"Production.pdf",data:pdfBytes},
       {name:"Production.svg",data:svg},
       {name:"DataSnapshot.json",data:snapshot},
@@ -423,8 +564,15 @@
     if(state.artwork.status!=="approved"||s.blocking>0||!state.resolvedBlockingComment){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
     const built=await productionArtifactSet(state.artwork,"production");
     built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nQR ECC: M\nFont embedding / PDF-X remain separate production gates.\n"});
-    downloadBlob(built.base+"_ProductionBundle.zip",Z.createZipBlob(built.files));
-    toast("Production Bundle ZIP 已生成：PDF / SVG / Snapshot / Preflight / SHA-256 Manifest","success");
+    const bundle=Z.createZipBlob(built.files);
+    const filename=built.base+"_ProductionBundle.zip";
+    downloadBlob(filename,bundle);
+    if(state.apiOnline&&state.apiBindings.r2&&state.remoteArtworkId){
+      try{
+        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.6.0",actor:"web",manifest:built.manifest});
+        toast("Production Bundle 已下载并同步到 R2","success");
+      }catch(e){toast("本地 Bundle 已生成，但 R2 同步失败："+(e.message||e),"error");}
+    }else toast("Production Bundle ZIP 已生成；R2 尚未连接","success");
   }
 
   async function exportBatchProofs(){
@@ -478,6 +626,54 @@
       render();
       const s=B.summarize(review);
       toast(`读取 ${s.total} 行：${s.passed} passed / ${s.failed} failed`,s.failed?"error":"success");
+      if(state.apiOnline){
+        try{await persistBatchJob(file,parsed.source);toast(`Import Job 已同步 D1：${state.remoteImportJobId}`,"success");}
+        catch(e){toast("Batch 已在本地解析，但 D1 同步失败："+(e.message||e),"error");}
+      }
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function persistBatchJob(file, sourceType){
+    if(!state.apiOnline)return null;
+    const stats=B.summarize(state.batchReview);
+    const created=await api.createImportJob({
+      sourceName:file.name,
+      sourceType,
+      mappingProfileId:"map-us-packing-list-default",
+      status:"REVIEWED",
+      totalRows:stats.total,
+      passedRows:stats.passed,
+      failedRows:stats.failed,
+      summary:stats,
+      actor:"web"
+    });
+    const jobId=created.data.id;
+    state.remoteImportJobId=jobId;
+    const rows=state.batchReview.map(r=>({
+      rowNo:r.row,
+      sku:r.sku,
+      status:r.status,
+      canonicalData:D.canonicalData(r.artwork),
+      issues:r.issues
+    }));
+    for(let i=0;i<rows.length;i+=500) await api.saveImportRows(jobId,rows.slice(i,i+500));
+    return jobId;
+  }
+
+  async function saveMappingProfile(){
+    if(!state.apiOnline||!state.batchMapping){toast("Mapping Profile 需要 Cloudflare D1 API。","error");return;}
+    try{
+      const mapping={};
+      for(const [field,col] of Object.entries(state.batchMapping)) mapping[field]=X.columnLabel(col);
+      await api.saveMappingProfile({
+        id:"map-us-packing-list-default",
+        name:"US Packing List Default",
+        templateCode:"US_SIDE_SEAL",
+        mapping,
+        aliases:X.DEFAULT_ALIASES,
+        actor:"web"
+      });
+      toast("Mapping Profile 已保存到 D1","success");
     }catch(e){toast(e.message||String(e),"error");}
   }
 
@@ -486,7 +682,31 @@
   function downloadBlob(name,blob){const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500);}
   function toast(msg,type=""){const t=document.createElement("div");t.className="toast "+type;t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2600);}
 
+  async function bootCloud(){
+    try{
+      const health=await api.health();
+      state.apiBindings=health.bindings||state.apiBindings;
+      state.apiOnline=Boolean(health.ok&&health.bindings?.d1);
+      if(state.apiOnline&&state.remoteArtworkId){
+        try{
+          const remote=await api.artwork(state.remoteArtworkId);
+          const row=remote.data.artwork;
+          state.artwork.status=A.statusFromApi(row.status);
+          state.artwork.revision=row.current_revision||state.artwork.revision;
+          state.remoteRevision=state.artwork.revision;
+        }catch(e){
+          if(e.status===404){state.remoteArtworkId=null;localStorage.removeItem("cas:remoteArtworkId");}
+        }
+      }
+    }catch{
+      state.apiOnline=false;
+    }finally{
+      state.apiChecked=true;render();
+    }
+  }
+
   const saved=localStorage.getItem("cas:draft");
   if(saved){try{state.artwork={...state.artwork,...JSON.parse(saved)};}catch{}}
   render();
+  bootCloud();
 })();
