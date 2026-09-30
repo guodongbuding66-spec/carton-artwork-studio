@@ -49,6 +49,41 @@
       async factories() {
         return request("/api/factories");
       },
+      async referenceRecords(params = {}) {
+        const q = new URLSearchParams();
+        if (params.namespace) q.set("namespace", params.namespace);
+        if (params.q) q.set("q", params.q);
+        return request("/api/reference-records" + (q.size ? "?" + q : ""));
+      },
+      async createReferenceRecord(payload) {
+        return request("/api/reference-records", { method:"POST", body:JSON.stringify(payload) });
+      },
+      async updateReferenceRecord(id, payload) {
+        return request(`/api/reference-records/${encodeURIComponent(id)}`, {
+          method:"PATCH", body:JSON.stringify(payload)
+        });
+      },
+      async productionPolicies() {
+        return request("/api/production-policies");
+      },
+      async productionReadiness() {
+        return request("/api/production-readiness");
+      },
+      async updateProductionPolicy(code, payload) {
+        return request(`/api/production-policies/${encodeURIComponent(code)}`, {
+          method:"PATCH", body:JSON.stringify(payload)
+        });
+      },
+      async submitProductionPolicy(code, payload = {}) {
+        return request(`/api/production-policies/${encodeURIComponent(code)}/submit`, {
+          method:"POST", body:JSON.stringify(payload)
+        });
+      },
+      async decideProductionPolicy(code, decision, payload = {}) {
+        return request(`/api/production-policies/${encodeURIComponent(code)}/approval`, {
+          method:"POST", body:JSON.stringify({...payload,decision})
+        });
+      },
       async factoryImpact(id) {
         return request(`/api/factories/${encodeURIComponent(id)}/impact`);
       },

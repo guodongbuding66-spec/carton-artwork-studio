@@ -15,6 +15,9 @@ export const PERMISSIONS = Object.freeze({
   BATCH_WRITE: ["OPERATOR","ADMIN"],
   TEMPLATE_WRITE: ["TEMPLATE_DESIGNER","ADMIN"],
   TEMPLATE_APPROVE: ["TEMPLATE_APPROVER","ADMIN"],
+  REFERENCE_WRITE: ["ADMIN"],
+  PRODUCTION_POLICY_WRITE: ["ADMIN"],
+  PRODUCTION_POLICY_APPROVE: ["TEMPLATE_APPROVER","ADMIN"],
   EXPORT_PRODUCTION: ["OPERATOR","ADMIN"],
   ADMIN: ["ADMIN"]
 });
@@ -49,6 +52,13 @@ export function permissionForRequest(method, pathname) {
 
   if (p.startsWith("/api/admin/")) return "ADMIN";
   if (p === "/api/audit") return "AUDIT_READ";
+
+  if (p === "/api/reference-records" && m === "POST") return "REFERENCE_WRITE";
+  if (/^\/api\/reference-records\/[^/]+$/.test(p) && m === "PATCH") return "REFERENCE_WRITE";
+
+  if (/^\/api\/production-policies\/[^/]+\/approval$/.test(p)) return "PRODUCTION_POLICY_APPROVE";
+  if (/^\/api\/production-policies\/[^/]+\/submit$/.test(p)) return "PRODUCTION_POLICY_WRITE";
+  if (/^\/api\/production-policies\/[^/]+$/.test(p) && m === "PATCH") return "PRODUCTION_POLICY_WRITE";
 
   if (/^\/api\/template-versions\/[^/]+\/approval$/.test(p)) return "TEMPLATE_APPROVE";
   if (/^\/api\/template-versions\/[^/]+\/submit$/.test(p)) return "TEMPLATE_WRITE";

@@ -52,7 +52,10 @@
     templateVersionsMeta: null,
     templateEditor: null,
     remoteArtworks: [],
-    impact: null
+    impact: null,
+    referenceRecords: [],
+    productionPolicies: [],
+    productionReadiness: { ready:false, gates:[] }
   };
 
   const navItems = [
@@ -182,7 +185,7 @@
 
   function renderArtwork() {
     const s = summary();
-    const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && Boolean(state.remoteArtworkId);
+    const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && Boolean(state.remoteArtworkId) && Boolean(state.productionReadiness?.ready);
     return `
       <div class="artwork-header">
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
@@ -398,33 +401,93 @@
     }catch{return String(value||"{}");}
   }
 
+  function contentNamespace(){
+    return ({customers:"CUSTOMER",products:"PRODUCT",countries:"COUNTRY",shared:"SHARED"})[state.contentTab]||null;
+  }
+
   function renderContent(){
     const tabs=["factories","customers","products","countries","shared"];
-    const factories=(state.apiOnline&&state.identity?state.factories:[]).map(f=>[
-      f.name,
-      `<span class="mono">${esc(f.crn)}</span>`,
-      f.country,
-      f.effectiveAt||f.effective||"—",
-      permitted("admin")?`<button class="btn small" data-impact="${esc(f.id)}">Impact / Edit</button>`:"—"
+    let body="";
+    if(state.contentTab==="factories"){
+      const factories=(state.apiOnline&&state.identity?state.factories:[]).map(f=>[
+        f.name,
+        `<span class="mono">${esc(f.crn)}</span>`,
+        f.country,
+        f.effectiveAt||f.effective||"—",
+        permitted("admin")?`<button class="btn small" data-impact="${esc(f.id)}">Impact / Edit</button>`:"—"
+      ]);
+      body=factories.length
+        ? table(["Factory","CRN","Country","Effective",""],factories,true)
+        : '<div class="card-body"><div class="notice warn">Cloudflare Access / D1 未连接或当前没有 Factory Master 数据。这里不显示演示数据。</div></div>';
+    }else{
+      const ns=contentNamespace();
+      const rows=(state.referenceRecords||[]).filter(x=>x.namespace===ns).map(x=>[
+        x.code,
+        x.displayName,
+        x.effectiveAt||"—",
+        `<span class="badge ${x.status==="ACTIVE"?"green":"amber"}">${esc(x.status)}</span>`,
+        `<span class="mono subtle">${esc(JSON.stringify(x.data||{}))}</span>`
+      ]);
+      const creator=permitted("referenceWrite")?`
+        <div class="card-body" style="border-bottom:1px solid #e5e9ee">
+          <div class="row2">
+            <div class="field"><label>Code</label><input id="master-code" class="input mono" placeholder="${ns}_CODE"/></div>
+            <div class="field"><label>Display Name</label><input id="master-name" class="input" placeholder="Name"/></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>Effective</label><input id="master-effective" class="input" placeholder="YYYY-MM-DD"/></div>
+            <div class="field"><label>Data JSON</label><textarea id="master-json" class="input mono" rows="3">{}</textarea></div>
+          </div>
+          <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-reference">Create ${ns}</button></div>
+        </div>`:"";
+      body=`${creator}${rows.length?table(["Code","Name","Effective","Status","Data"],rows,true):'<div class="card-body"><div class="notice">当前命名空间暂无记录。</div></div>'}`;
+    }
+    return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.contentTab===t?"active":""}" data-content-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
+  }
+
+  function renderPolicyReadiness(){
+    const readiness=state.productionReadiness||{ready:false,gates:[]};
+    const cards=(state.productionPolicies||[]).map(p=>{
+      const badge=p.status==="APPROVED"?"green":p.status==="SUBMITTED"?"blue":p.status==="REJECTED"?"red":"amber";
+      const editable=["DRAFT","REJECTED"].includes(p.status)&&permitted("productionPolicyWrite");
+      const reviewable=p.status==="SUBMITTED"&&permitted("productionPolicyApprove");
+      return `<section class="card" style="margin-top:10px">
+        <div class="card-head"><h3>${esc(p.displayName)}</h3><span class="badge ${badge}">${esc(p.status)}</span><span class="spacer"></span><span class="mono subtle">${esc(p.code)}</span></div>
+        <div class="card-body">
+          <div class="field"><label>Config JSON</label><textarea class="input mono" rows="5" id="policy-config-${esc(p.code)}" ${editable?"":"disabled"}>${esc(JSON.stringify(p.config||{},null,2))}</textarea></div>
+          <div class="field"><label>Notes</label><input class="input" id="policy-notes-${esc(p.code)}" value="${esc(p.notes||"")}" ${editable?"":"disabled"}/></div>
+          <div class="subtle">Submitted: ${esc(p.submittedBy||"—")} · Approved: ${esc(p.approvedBy||"—")}</div>
+          <div class="toolbar" style="justify-content:flex-end;margin-top:10px">
+            ${editable?`<button class="btn" data-policy-action="save" data-policy-code="${esc(p.code)}">Save Draft</button><button class="btn primary" data-policy-action="submit" data-policy-code="${esc(p.code)}">Submit</button>`:""}
+            ${reviewable?`<button class="btn" data-policy-action="reject" data-policy-code="${esc(p.code)}">Reject</button><button class="btn success" data-policy-action="approve" data-policy-code="${esc(p.code)}">Approve</button>`:""}
+          </div>
+          ${p.lastComment?`<div class="notice warn" style="margin-top:8px">Last review: ${esc(p.lastDecision||"")} · ${esc(p.lastComment)}</div>`:""}
+        </div>
+      </section>`;
+    }).join("");
+    const gates=(readiness.gates||[]).map(g=>[
+      g.displayName||g.code,
+      `<span class="badge ${g.approved&&g.valid?"green":"red"}">${g.approved&&g.valid?"READY":"BLOCKED"}</span>`,
+      g.status,
+      (g.errors||[]).join(" · ")||"—"
     ]);
-    return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.contentTab===t?"active":""}" data-content-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${state.contentTab==="factories"?(factories.length?table(["Factory","CRN","Country","Effective",""],factories,true):`<div class="card-body"><div class="notice warn">Cloudflare Access / D1 未连接或当前没有 Factory Master 数据。这里不显示演示数据。</div></div>`):`<div class="card-body"><div class="notice">该 Master Data 模块已预留。所有正式 Artwork Revision 保存冻结 Snapshot，Master Data 后续变化不会污染历史稿。</div></div>`}</section>`;
+    return `<div class="card-body"><div class="notice ${readiness.ready?"":"warn"}"><strong>Production Readiness: ${readiness.ready?"READY":"BLOCKED"}</strong><br>Barcode / QR / Font / PDF/X 四个业务政策必须全部通过四眼审批且配置有效，Production Export 才会解锁。</div></div>
+      ${gates.length?table(["Gate","Result","Policy Status","Validation"],gates,true):""}
+      ${cards||'<div class="card-body"><div class="notice">D1 尚无 Production Policy 数据。</div></div>'}`;
   }
 
   function renderQuality(){
-    const tabs=["profiles","reports","compare"];
+    const tabs=["profiles","reports","readiness","compare"];
     let body="";
     if(state.qualityTab==="profiles") body=table(["Profile","Version","Status","Checks"],[["US_SIDE_SEAL_K_ONLY_V1","1","<span class='badge green'>Locked</span>","Data / Layout / Codes / Print"]],true);
     if(state.qualityTab==="reports"){
       const s=summary();
       const recent=(state.auditLogs||[]).filter(x=>x.objectType==="PREFLIGHT").slice(0,50).map(x=>[
-        x.actor||"—",
-        x.createdAt||"—",
-        x.action||"RUN",
-        x.objectId||"—",
-        x.reason||"—"
+        x.actor||"—",x.createdAt||"—",x.action||"RUN",x.objectId||"—",x.reason||"—"
       ]);
       body=`<div class="card-body"><div class="kpis" style="margin:0"><div class="kpi"><div class="kpi-label">Current Errors</div><div class="kpi-value" style="color:#bc2f3b">${s.error}</div></div><div class="kpi"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:#a86b00">${s.warning}</div></div><div class="kpi"><div class="kpi-label">Passed</div><div class="kpi-value" style="color:#16835d">${s.pass}</div></div></div></div>${recent.length?table(["Actor","Time","Action","Preflight","Reason"],recent):`<div class="card-body"><div class="notice">暂无可读取的持久化 Preflight Audit 记录。当前工作稿检查结果显示在上方。</div></div>`}`;
     }
+    if(state.qualityTab==="readiness") body=renderPolicyReadiness();
     if(state.qualityTab==="compare") body=`<div class="card-body"><div class="notice">Version Compare roadmap: Text / Graphics / Code / Dieline · Side-by-side / Overlay / Difference / Flicker。当前不显示虚构比对结果。</div></div>`;
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
   }
@@ -472,8 +535,8 @@
     document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();}});
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
-    document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=()=>{state.contentTab=b.dataset.contentTab;render();});
-    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();});
+    document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=async()=>{state.contentTab=b.dataset.contentTab;render();if(state.contentTab!=="factories")await loadReferenceMasters();});
+    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();});
     document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
     document.querySelectorAll("[data-art]").forEach(el=>{
       el.oninput=el.onchange=()=>{
@@ -498,6 +561,7 @@
     document.querySelectorAll("[data-save-user-roles]").forEach(b=>b.onclick=()=>saveUserRoles(b.dataset.saveUserRoles));
     document.querySelectorAll("[data-open-artwork]").forEach(b=>b.onclick=()=>openRemoteArtwork(b.dataset.openArtwork));
     document.querySelectorAll("[data-edit-template-version]").forEach(b=>b.onclick=()=>openTemplateVersion(b.dataset.editTemplateVersion));
+    document.querySelectorAll("[data-policy-action]").forEach(b=>b.onclick=()=>handlePolicyAction(b.dataset.policyAction,b.dataset.policyCode));
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
     const file=document.getElementById("batch-file");
@@ -513,6 +577,7 @@
     if(action==="new-revision") return createNewRevision();
     if(action==="add-comment") return addComment();
     if(action==="create-user") return createAdminUser();
+    if(action==="create-reference") return createReferenceRecord();
     if(action==="create-template-version") return createTemplateVersion();
     if(action==="save-template-draft") return saveTemplateDraft();
     if(action==="submit-template-version") return submitTemplateVersion();
@@ -658,6 +723,93 @@
     }catch(e){toast(e.message||String(e),"error");}
   }
 
+  async function loadReferenceMasters(renderAfter=true){
+    if(!state.apiOnline||!state.identity){
+      state.referenceRecords=[];
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const response=await api.referenceRecords();
+      state.referenceRecords=response.data||[];
+    }catch(e){
+      state.referenceRecords=[];
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function createReferenceRecord(){
+    if(!permitted("referenceWrite")){toast("需要 Admin Master Data 权限。","error");return;}
+    const namespace=contentNamespace();
+    if(!namespace){toast("请选择 Customer / Product / Country / Shared。","error");return;}
+    const code=document.getElementById("master-code")?.value?.trim()||"";
+    const displayName=document.getElementById("master-name")?.value?.trim()||"";
+    const effectiveAt=document.getElementById("master-effective")?.value?.trim()||null;
+    let data={};
+    try{data=JSON.parse(document.getElementById("master-json")?.value||"{}");}
+    catch{toast("Data JSON 格式无效。","error");return;}
+    if(!code||!displayName){toast("Code 和 Display Name 必填。","error");return;}
+    try{
+      await api.createReferenceRecord({namespace,code,displayName,effectiveAt,data,status:"ACTIVE"});
+      await loadReferenceMasters(false);
+      render();
+      toast(`${namespace} Master 已创建`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function loadProductionReadiness(renderAfter=true){
+    if(!state.apiOnline||!state.identity){
+      state.productionPolicies=[];
+      state.productionReadiness={ready:false,gates:[]};
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const [policies,readiness]=await Promise.all([
+        api.productionPolicies(),
+        api.productionReadiness()
+      ]);
+      state.productionPolicies=policies.data||[];
+      state.productionReadiness=readiness.data||{ready:false,gates:[]};
+    }catch(e){
+      state.productionPolicies=[];
+      state.productionReadiness={ready:false,gates:[]};
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function handlePolicyAction(action, code){
+    const policy=state.productionPolicies.find(x=>x.code===code);
+    if(!policy){toast("Production Policy not found.","error");return;}
+    try{
+      if(action==="save"||action==="submit"){
+        if(!permitted("productionPolicyWrite")){toast("需要 Production Policy Write 权限。","error");return;}
+        let config;
+        try{config=JSON.parse(document.getElementById(`policy-config-${code}`)?.value||"{}");}
+        catch{toast("Policy JSON 格式无效。","error");return;}
+        const notes=document.getElementById(`policy-notes-${code}`)?.value?.trim()||"";
+        await api.updateProductionPolicy(code,{config,notes,reason:"Updated from Quality / Readiness"});
+        if(action==="submit"){
+          await api.submitProductionPolicy(code,{reason:"Submitted from Quality / Readiness"});
+        }
+      }
+      if(action==="approve"||action==="reject"){
+        if(!permitted("productionPolicyApprove")){toast("需要 Template Approver / Admin 权限。","error");return;}
+        await api.decideProductionPolicy(code,action==="approve"?"APPROVE":"REJECT",{
+          comment:action==="approve"?"Production policy reviewed and approved.":"Production policy requires revision."
+        });
+      }
+      await loadProductionReadiness(false);
+      render();
+      toast(`${code} · ${action} completed`,"success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }
+  }
+
   async function loadReferenceData(renderAfter=true){
     if(!state.apiOnline||!state.identity?.roles?.length){
       state.remoteArtworks=[];
@@ -666,12 +818,15 @@
       return;
     }
     try{
-      const [factoryResponse,templateResponse,artworkResponse]=await Promise.all([
-        api.factories(),api.templates(),api.artworks()
+      const [factoryResponse,templateResponse,artworkResponse,referenceResponse,policyResponse,readinessResponse]=await Promise.all([
+        api.factories(),api.templates(),api.artworks(),api.referenceRecords(),api.productionPolicies(),api.productionReadiness()
       ]);
-      if(factoryResponse.data?.length) state.factories=factoryResponse.data;
+      state.factories=factoryResponse.data||[];
       state.templates=templateResponse.data||[];
       state.remoteArtworks=artworkResponse.data||[];
+      state.referenceRecords=referenceResponse.data||[];
+      state.productionPolicies=policyResponse.data||[];
+      state.productionReadiness=readinessResponse.data||{ready:false,gates:[]};
     }catch(e){
       toast("Reference data load failed: "+(e.message||e),"error");
     }
@@ -978,7 +1133,7 @@
   }
 
   async function productionArtifactSet(artwork, mode="production"){
-    const g=D.sideSealGeometry(artwork), comp=D.computed(artwork);
+    const g=D.sideSealGeometry(artwork), comp=D.computed(artwork,state.factories);
     const code=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
     const qr=C.qrMatrix(artwork.qr,"M").matrix;
     const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode});
@@ -986,7 +1141,7 @@
     const snapshot=JSON.stringify(D.canonicalData(artwork,state.factories),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
-    const manifest=D.manifest(artwork,"vector-svg-pdf-0.8.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-1.0.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
     manifest.barcode={symbology:"Code 128-B PoC",vector:true};
     manifest.sha256={
@@ -1010,17 +1165,27 @@
     if(!permitted("productionExport")||!state.apiOnline||!state.remoteArtworkId){toast("Production Export 需要 Cloudflare Access + Production Export 权限。","error");return;}
     if(state.artwork.status!=="approved"||s.blocking>0||!blockingCommentsResolved()){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
     try{
-      const remote=await api.artwork(state.remoteArtworkId);
+      const [remote,readiness]=await Promise.all([
+        api.artwork(state.remoteArtworkId),
+        api.productionReadiness()
+      ]);
+      state.productionReadiness=readiness.data||{ready:false,gates:[]};
+      if(!state.productionReadiness.ready){
+        const blocked=(state.productionReadiness.gates||[]).filter(x=>!(x.approved&&x.valid)).map(x=>x.displayName||x.code).join(" / ");
+        render();
+        toast("Production Readiness 未通过："+(blocked||"policy gate"),"error");
+        return;
+      }
       if(String(remote.data.artwork.status||"").toUpperCase()!=="APPROVED"||remote.data.artwork.current_revision!==state.artwork.revision){toast("服务器端当前 Revision 未批准或已过期，已阻止生产稿导出。","error");return;}
-    }catch(e){toast("无法验证服务器端批准状态："+(e.message||e),"error");return;}
+    }catch(e){toast("无法验证服务器端批准/生产就绪状态："+(e.message||e),"error");return;}
     const built=await productionArtifactSet(state.artwork,"production");
-    built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nQR ECC: M\nFont embedding / PDF-X remain separate production gates.\n"});
+    built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nProduction policies: server-approved at export time.\n"});
     const bundle=Z.createZipBlob(built.files);
     const filename=built.base+"_ProductionBundle.zip";
     downloadBlob(filename,bundle);
     if(state.apiOnline&&state.apiBindings.r2&&state.remoteArtworkId){
       try{
-        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.8.0",actor:"web",manifest:built.manifest});
+        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"1.0.0",actor:"web",manifest:built.manifest});
         toast("Production Bundle 已下载并同步到 R2","success");
       }catch(e){toast("本地 Bundle 已生成，但 R2 同步失败："+(e.message||e),"error");}
     }else toast("Production Bundle ZIP 已生成；R2 尚未连接","success");
@@ -1043,7 +1208,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.8.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.0.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
