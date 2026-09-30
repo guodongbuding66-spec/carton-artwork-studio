@@ -63,7 +63,9 @@
     compareMode: "side",
     compareOpacity: 0.5,
     systemReadiness: null,
-    readinessProbeBusy: false
+    readinessProbeBusy: false,
+    productionAssets: [],
+    productionAssetBusy: false
   };
 
   const navItems = [
@@ -576,8 +578,50 @@
     `;
   }
 
+  function renderProductionAssets(){
+    const rows=(state.productionAssets||[]).map(a=>{
+      const statusClass=a.status==="APPROVED"?"green":a.status==="SUBMITTED"?"blue":a.status==="REJECTED"?"red":a.status==="RETIRED"?"amber":"amber";
+      const canSubmit=["DRAFT","REJECTED"].includes(a.status)&&permitted("productionAssetWrite");
+      const canReview=a.status==="SUBMITTED"&&permitted("productionAssetApprove");
+      const actions=[
+        canSubmit?`<button class="btn small" data-production-asset-action="submit" data-production-asset-id="${esc(a.id)}">Submit</button>`:"",
+        canReview?`<button class="btn small" data-production-asset-action="reject" data-production-asset-id="${esc(a.id)}">Reject</button><button class="btn success small" data-production-asset-action="approve" data-production-asset-id="${esc(a.id)}">Approve</button>`:""
+      ].join(" ");
+      return [
+        `<span class="badge blue">${esc(a.assetType)}</span>`,
+        `<span class="mono">${esc(a.code)}</span>`,
+        esc(a.version),
+        esc(a.filename),
+        `<span class="badge ${statusClass}">${esc(a.status)}</span>`,
+        `<span class="mono subtle">${esc(String(a.sha256||"").slice(0,16))}…</span>`,
+        `<span class="mono subtle">${esc(JSON.stringify(a.metadata||{}))}</span>`,
+        actions||"—"
+      ];
+    });
+
+    const uploader=permitted("productionAssetWrite")?`
+      <div class="card-body" style="border-bottom:1px solid #e5e9ee">
+        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传只建立受控资产与审批链，不代表 renderer 已具备字体嵌入/转曲或 PDF/X 能力。原始文件保存在 R2，本页不提供下载入口。</div>
+        <div class="row2">
+          <div class="field"><label>Asset Type</label><select id="production-asset-type" class="input"><option value="FONT">FONT</option><option value="ICC_PROFILE">ICC_PROFILE</option></select></div>
+          <div class="field"><label>Code</label><input id="production-asset-code" class="input mono" placeholder="ISUNOR_SANS_REGULAR"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Version</label><input id="production-asset-version" class="input" placeholder="1.0"/></div>
+          <div class="field"><label>License / source note</label><input id="production-asset-license" class="input" placeholder="Licensed source / OFL / vendor profile"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>File</label><input id="production-asset-file" class="input" type="file" accept=".ttf,.otf,.icc,.icm,font/ttf,font/otf,application/vnd.iccprofile"/></div>
+          <div class="field"><label>Notes</label><input id="production-asset-notes" class="input" placeholder="Usage / printer / customer scope"/></div>
+        </div>
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="upload-production-asset" ${state.productionAssetBusy?"disabled":""}>${state.productionAssetBusy?"Uploading…":"Upload Draft Asset"}</button></div>
+      </div>`:"";
+
+    return `${uploader}${rows.length?table(["Type","Code","Version","File","Status","SHA-256","Metadata","Actions"],rows,true):'<div class="card-body"><div class="notice">尚无 Production Asset。正式 Font / ICC Profile 必须通过受控上传与四眼审批后才能进入后续 renderer 集成。</div></div>'}`;
+  }
+
   function renderQuality(){
-    const tabs=["profiles","reports","readiness","compare"];
+    const tabs=["profiles","reports","readiness","assets","compare"];
     let body="";
     if(state.qualityTab==="profiles") body=table(["Profile","Version","Status","Checks"],[["US_SIDE_SEAL_K_ONLY_V1","1","<span class='badge green'>Locked</span>","Data / Layout / Codes / Print"]],true);
     if(state.qualityTab==="reports"){
@@ -588,6 +632,7 @@
       body=`<div class="card-body"><div class="kpis" style="margin:0"><div class="kpi"><div class="kpi-label">Current Errors</div><div class="kpi-value" style="color:#bc2f3b">${s.error}</div></div><div class="kpi"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:#a86b00">${s.warning}</div></div><div class="kpi"><div class="kpi-label">Passed</div><div class="kpi-value" style="color:#16835d">${s.pass}</div></div></div></div>${recent.length?table(["Actor","Time","Action","Preflight","Reason"],recent):`<div class="card-body"><div class="notice">暂无可读取的持久化 Preflight Audit 记录。当前工作稿检查结果显示在上方。</div></div>`}`;
     }
     if(state.qualityTab==="readiness") body=renderPolicyReadiness();
+    if(state.qualityTab==="assets") body=renderProductionAssets();
     if(state.qualityTab==="compare") body=renderRevisionCompare();
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
   }
@@ -682,7 +727,7 @@
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=async()=>{state.contentTab=b.dataset.contentTab;render();if(state.contentTab!=="factories")await loadReferenceMasters();});
-    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();if(state.qualityTab==="compare"&&state.remoteArtworkId&&!state.remoteRevisions.length)await refreshRemoteRevisionMetadata();});
+    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();if(state.qualityTab==="assets")await loadProductionAssets();if(state.qualityTab==="compare"&&state.remoteArtworkId&&!state.remoteRevisions.length)await refreshRemoteRevisionMetadata();});
     document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
     document.querySelectorAll("[data-art]").forEach(el=>{
       el.oninput=el.onchange=()=>{
@@ -708,6 +753,7 @@
     document.querySelectorAll("[data-open-artwork]").forEach(b=>b.onclick=()=>openRemoteArtwork(b.dataset.openArtwork));
     document.querySelectorAll("[data-edit-template-version]").forEach(b=>b.onclick=()=>openTemplateVersion(b.dataset.editTemplateVersion));
     document.querySelectorAll("[data-policy-action]").forEach(b=>b.onclick=()=>handlePolicyAction(b.dataset.policyAction,b.dataset.policyCode));
+    document.querySelectorAll("[data-production-asset-action]").forEach(b=>b.onclick=()=>handleProductionAssetAction(b.dataset.productionAssetAction,b.dataset.productionAssetId));
     document.querySelectorAll("[data-compare-mode]").forEach(b=>b.onclick=()=>{state.compareMode=b.dataset.compareMode;render();});
     const compareOpacity=document.getElementById("compare-opacity");
     if(compareOpacity) compareOpacity.oninput=()=>{state.compareOpacity=Number(compareOpacity.value);const top=document.getElementById("compare-overlay-top");if(top)top.style.opacity=String(state.compareOpacity);};
@@ -738,6 +784,7 @@
     if(action==="refresh-audit") return loadAudit();
     if(action==="refresh-system-readiness") return loadSystemReadiness();
     if(action==="run-readiness-probe") return runSystemReadinessProbe();
+    if(action==="upload-production-asset") return uploadProductionAsset();
     if(action==="run-compare") return loadRevisionCompare();
     if(action==="save-factory") return saveFactoryMaster();
     if(action==="proof") return exportProof();
@@ -924,6 +971,66 @@
       await loadReferenceMasters(false);
       render();
       toast(`${namespace} Master 已创建`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function loadProductionAssets(renderAfter=true){
+    if(!state.apiOnline||!state.identity){
+      state.productionAssets=[];
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const response=await api.productionAssets();
+      state.productionAssets=response.data||[];
+    }catch(e){
+      state.productionAssets=[];
+      toast("Production Assets load failed: "+(e.message||e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function uploadProductionAsset(){
+    if(!state.apiOnline||!permitted("productionAssetWrite")){toast("需要 Production Asset Write 权限。","error");return;}
+    const type=document.getElementById("production-asset-type")?.value||"";
+    const code=document.getElementById("production-asset-code")?.value?.trim()||"";
+    const version=document.getElementById("production-asset-version")?.value?.trim()||"";
+    const license=document.getElementById("production-asset-license")?.value?.trim()||"";
+    const notes=document.getElementById("production-asset-notes")?.value?.trim()||"";
+    const file=document.getElementById("production-asset-file")?.files?.[0]||null;
+    if(!file||!code||!version){toast("Type、Code、Version、File 必填。","error");return;}
+    state.productionAssetBusy=true;render();
+    try{
+      await api.uploadProductionAsset(file,{type,code,version,filename:file.name,license,notes});
+      await loadProductionAssets(false);
+      render();
+      toast("Production Asset 已上传为 DRAFT","success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }finally{
+      state.productionAssetBusy=false;
+      render();
+    }
+  }
+
+  async function handleProductionAssetAction(action,id){
+    const asset=state.productionAssets.find(x=>x.id===id);
+    if(!asset){toast("Production Asset not found.","error");return;}
+    try{
+      if(action==="submit"){
+        if(!permitted("productionAssetWrite")){toast("需要 Production Asset Write 权限。","error");return;}
+        await api.submitProductionAsset(id,{reason:"Submitted from Quality / Production Assets"});
+      }else if(action==="approve"||action==="reject"){
+        if(!permitted("productionAssetApprove")){toast("需要 Template Approver / Admin 权限。","error");return;}
+        await api.decideProductionAsset(id,action==="approve"?"APPROVE":"REJECT",{
+          comment:action==="approve"?"Production asset file, identity and license/source metadata reviewed.":"Production asset requires revision or replacement."
+        });
+      }
+      await loadProductionAssets(false);
+      if(permitted("admin")) await loadSystemReadiness(false);
+      render();
+      toast(`${asset.code} ${asset.version} · ${action} completed`,"success");
     }catch(e){toast(e.message||String(e),"error");}
   }
 
