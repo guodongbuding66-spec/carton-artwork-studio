@@ -308,7 +308,7 @@
       <div class="stepper">${steps.map((x,i)=>`<div class="step ${i<state.batchStep?"done":i===state.batchStep?"active":""}">${i+1}. ${x}</div>`).join("")}</div>
       <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><span class="badge blue">US Packing List Default</span></div><div class="card-body">
         <label class="dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
-        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&state.apiOnline?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
+        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length&&permitted("batchWrite")?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&state.apiOnline&&permitted("batchWrite")?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating&&permitted("batchWrite")?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
       </div></section>
       ${state.batchSource?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL</div><div class="kpi-value">${stats.total}</div></div><div class="kpi"><div class="kpi-label">PASSED</div><div class="kpi-value" style="color:#16835d">${stats.passed}</div></div><div class="kpi"><div class="kpi-label">FAILED</div><div class="kpi-value" style="color:#bc2f3b">${stats.failed}</div></div><div class="kpi"><div class="kpi-label">MAPPING</div><div class="kpi-value">${mapping.length}</div><div class="kpi-foot">fields detected</div></div></div>`:""}
       ${mapping.length?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Detected Mapping</h3><span class="subtle">自动表头映射，可保存为 Mapping Profile（D1 schema 已预留）</span></div>${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}</section>`:""}
@@ -601,16 +601,16 @@
 
   async function reviewDecision(decision){
     if(!state.apiOnline||!state.remoteArtworkId){toast("Reviewer decision 需要 Cloudflare API。","error");return;}
-    if(decision==="APPROVE"&&!state.resolvedBlockingComment){toast("请先解决 Blocking comment。","error");return;}
+    if(decision==="APPROVE"&&!blockingCommentsResolved()){toast("请先解决所有 Blocking comment。","error");return;}
     state.apiBusy=true;render();
     try{
       const response=await api.decision(state.remoteArtworkId,decision,{
         revision:state.artwork.revision,
-        reviewer:"demo-reviewer",
         comment:decision==="APPROVE"?"Preflight and artwork reviewed.":"Revision required."
       });
       state.artwork.status=response.data.status.toLowerCase();
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      await loadComments();
       toast(decision==="APPROVE"?"Revision 已批准":"Revision 已退回","success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
@@ -627,7 +627,7 @@
       });
       state.artwork.revision=response.data.revision;
       state.artwork.status="draft";
-      state.resolvedBlockingComment=false;
+      state.comments=[];
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
       toast(`${response.data.revision} Draft 已创建`,"success");
     }catch(e){toast(e.message||String(e),"error");}
@@ -649,7 +649,7 @@
     const snapshot=JSON.stringify(D.canonicalData(artwork),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
-    const manifest=D.manifest(artwork,"vector-svg-pdf-0.5.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-0.7.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
     manifest.barcode={symbology:"Code 128-B PoC",vector:true};
     manifest.sha256={
@@ -670,7 +670,12 @@
 
   async function exportProduction(){
     const s=summary();
-    if(state.artwork.status!=="approved"||s.blocking>0||!state.resolvedBlockingComment){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
+    if(!permitted("productionExport")||!state.apiOnline||!state.remoteArtworkId){toast("Production Export 需要 Cloudflare Access + Production Export 权限。","error");return;}
+    if(state.artwork.status!=="approved"||s.blocking>0||!blockingCommentsResolved()){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
+    try{
+      const remote=await api.artwork(state.remoteArtworkId);
+      if(String(remote.data.artwork.status||"").toUpperCase()!=="APPROVED"||remote.data.artwork.current_revision!==state.artwork.revision){toast("服务器端当前 Revision 未批准或已过期，已阻止生产稿导出。","error");return;}
+    }catch(e){toast("无法验证服务器端批准状态："+(e.message||e),"error");return;}
     const built=await productionArtifactSet(state.artwork,"production");
     built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nQR ECC: M\nFont embedding / PDF-X remain separate production gates.\n"});
     const bundle=Z.createZipBlob(built.files);
@@ -678,7 +683,7 @@
     downloadBlob(filename,bundle);
     if(state.apiOnline&&state.apiBindings.r2&&state.remoteArtworkId){
       try{
-        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.6.0",actor:"web",manifest:built.manifest});
+        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.7.0",actor:"web",manifest:built.manifest});
         toast("Production Bundle 已下载并同步到 R2","success");
       }catch(e){toast("本地 Bundle 已生成，但 R2 同步失败："+(e.message||e),"error");}
     }else toast("Production Bundle ZIP 已生成；R2 尚未连接","success");
@@ -701,7 +706,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.5.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.7.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
@@ -721,6 +726,7 @@
   }
 
   async function importBatch(file){
+    if(!permitted("batchWrite")){toast("需要 Batch Write 权限。","error");return;}
     try{
       const parsed=await X.parseFile(file);
       const result=X.rowsToRecords(parsed.rows,{fillDown:true});
@@ -735,7 +741,7 @@
       render();
       const s=B.summarize(review);
       toast(`读取 ${s.total} 行：${s.passed} passed / ${s.failed} failed`,s.failed?"error":"success");
-      if(state.apiOnline){
+      if(state.apiOnline&&permitted("batchWrite")){
         try{await persistBatchJob(file,parsed.source);toast(`Import Job 已同步 D1：${state.remoteImportJobId}`,"success");}
         catch(e){toast("Batch 已在本地解析，但 D1 同步失败："+(e.message||e),"error");}
       }
@@ -743,7 +749,7 @@
   }
 
   async function persistBatchJob(file, sourceType){
-    if(!state.apiOnline)return null;
+    if(!state.apiOnline||!permitted("batchWrite"))return null;
     const stats=B.summarize(state.batchReview);
     const created=await api.createImportJob({
       sourceName:file.name,
@@ -770,7 +776,7 @@
   }
 
   async function saveMappingProfile(){
-    if(!state.apiOnline||!state.batchMapping){toast("Mapping Profile 需要 Cloudflare D1 API。","error");return;}
+    if(!state.apiOnline||!state.batchMapping||!permitted("batchWrite")){toast("Mapping Profile 需要 Cloudflare D1 API + Batch Write 权限。","error");return;}
     try{
       const mapping={};
       for(const [field,col] of Object.entries(state.batchMapping)) mapping[field]=X.columnLabel(col);
