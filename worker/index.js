@@ -1,6 +1,7 @@
 import { ROLES, can, permissionForRequest, resolveIdentity } from "./auth.js";
 import { parseTemplateJson, validateTemplateJson } from "./template.js";
 import { parsePolicyConfig, validateProductionPolicy, summarizeProductionReadiness } from "./readiness.js";
+import { diffJson } from "./diff.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -89,7 +90,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.0.0",
+        version: "1.2.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -626,6 +627,36 @@ export default {
         return json({ data: results });
       }
 
+      const artworkCompareMatch=/^\/api\/artworks\/([^/]+)\/compare$/.exec(url.pathname);
+      if(request.method==="GET"&&artworkCompareMatch){
+        const artworkId=artworkCompareMatch[1];
+        const from=String(url.searchParams.get("from")||"").trim();
+        const to=String(url.searchParams.get("to")||"").trim();
+        if(!from||!to)return err(400,"COMPARE_REVISIONS_REQUIRED","from and to revision are required.");
+        const artwork=await env.DB.prepare(
+          "SELECT id,artwork_no AS artworkNo,sku,current_revision AS currentRevision FROM artworks WHERE id=?"
+        ).bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        const rows=await env.DB.prepare(`
+          SELECT revision,status,data_snapshot_json AS dataSnapshotJson,created_by AS createdBy,created_at AS createdAt
+          FROM artwork_revisions
+          WHERE artwork_id=? AND revision IN (?,?)
+        `).bind(artworkId,from,to).all();
+        const byRevision=new Map((rows.results||[]).map((x)=>[x.revision,x]));
+        const left=byRevision.get(from),right=byRevision.get(to);
+        if(!left||!right)return err(404,"REVISION_NOT_FOUND","One or both requested revisions were not found.");
+        let leftData={},rightData={};
+        try{leftData=JSON.parse(left.dataSnapshotJson||"{}");}catch{}
+        try{rightData=JSON.parse(right.dataSnapshotJson||"{}");}catch{}
+        const diff=diffJson(leftData,rightData);
+        return json({data:{
+          artwork,
+          from:{revision:left.revision,status:left.status,createdBy:left.createdBy,createdAt:left.createdAt},
+          to:{revision:right.revision,status:right.status,createdBy:right.createdBy,createdAt:right.createdAt},
+          ...diff
+        }});
+      }
+
       if (request.method === "POST" && url.pathname === "/api/artworks") {
         const b=await bodyJson(request);
         const id=crypto.randomUUID();
@@ -1002,13 +1033,24 @@ export default {
         const kind=(url.searchParams.get("kind")||"artifact").toUpperCase();
         if(kind.includes("PRODUCTION")){
           const {results:policyRows}=await env.DB.prepare(`
-            SELECT code,display_name AS displayName,status,config_json AS configJson
+            SELECT code,display_name AS displayName,status,config_json AS configJson,
+                   submitted_by AS submittedBy,submitted_at AS submittedAt,
+                   approved_by AS approvedBy,approved_at AS approvedAt,updated_at AS updatedAt
             FROM production_policies ORDER BY code
           `).all();
           const readiness=summarizeProductionReadiness(policyRows);
           if(!readiness.ready){
             return err(409,"PRODUCTION_READINESS_BLOCKED","Production export is blocked until all production policies are approved and valid.",readiness.gates);
           }
+          request.__productionEvidence={
+            readiness,
+            policies:policyRows.map((p)=>({
+              code:p.code,displayName:p.displayName,status:p.status,
+              config:p.configJson?JSON.parse(p.configJson):{},
+              submittedBy:p.submittedBy,submittedAt:p.submittedAt,
+              approvedBy:p.approvedBy,approvedAt:p.approvedAt,updatedAt:p.updatedAt
+            }))
+          };
         }
         const revision=url.searchParams.get("revision")||artwork.current_revision||"R01";
         if(revision!==artwork.current_revision) {
@@ -1040,16 +1082,31 @@ export default {
         const objectKey=`artworks/${artworkId}/${revision}/${Date.now()}-${filename}`;
         await env.ARTWORK_FILES.put(objectKey,bytes,{httpMetadata:{contentType}});
 
+        let clientManifest={};
+        try{clientManifest=JSON.parse(request.headers.get("x-artwork-manifest")||"{}");}catch{}
+        const serverEvidence=request.__productionEvidence||null;
+        const storedManifest={
+          ...clientManifest,
+          serverEvidence,
+          persistedAt:new Date().toISOString(),
+          persistedBy:identity.email,
+          artifactSha256:sha256
+        };
+
         const id=crypto.randomUUID();
         await env.DB.prepare(`
           INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
           VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
-        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"1.0.0",request.headers.get("x-artwork-manifest")||null).run();
+        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"1.2.0",JSON.stringify(storedManifest)).run();
         await audit(env, identity, "EXPORT", id, "UPLOAD", {
-          newValue:{artworkId,revision,kind,objectKey,sha256},
-          reason:"Artifact persisted to R2"
+          newValue:{
+            artworkId,revision,kind,objectKey,sha256,
+            readiness:serverEvidence?.readiness?.ready===true,
+            policies:serverEvidence?.policies?.map((p)=>({code:p.code,status:p.status,approvedBy:p.approvedBy}))||[]
+          },
+          reason:"Artifact persisted to R2 with server-side production evidence"
         });
-        return json({data:{id,objectKey,sha256,size:bytes.length,contentType}},{status:201});
+        return json({data:{id,objectKey,sha256,size:bytes.length,contentType,serverEvidence}},{status:201});
       }
 
       const exportDownloadMatch=/^\/api\/exports\/([^/]+)$/.exec(url.pathname);
