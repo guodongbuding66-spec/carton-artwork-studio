@@ -2,6 +2,7 @@ import { ROLES, can, permissionForRequest, resolveIdentity } from "./auth.js";
 import { parseTemplateJson, validateTemplateJson } from "./template.js";
 import { parsePolicyConfig, validateProductionPolicy, summarizeProductionReadiness } from "./readiness.js";
 import { diffJson } from "./diff.js";
+import { EXPECTED_LATEST_MIGRATION, buildSystemReadiness } from "./system-readiness.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -56,6 +57,126 @@ async function securityEvent(env, identity, eventType, request, detail = {}) {
   }
 }
 
+const REQUIRED_SCHEMA_TABLES = Object.freeze([
+  "templates","template_versions","template_approvals",
+  "factories","artworks","artwork_revisions","comments","approvals",
+  "preflight_runs","exports","audit_logs",
+  "mapping_profiles","import_jobs","import_rows",
+  "users","user_roles","security_events",
+  "reference_records","production_policies","production_policy_approvals",
+  "system_readiness_runs"
+]);
+
+async function collectSystemReadiness(env, identity) {
+  const tableResult=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
+  const tableNames=new Set((tableResult.results||[]).map((x)=>x.name));
+  const missingTables=REQUIRED_SCHEMA_TABLES.filter((name)=>!tableNames.has(name));
+  let latestMigration=null;
+  try {
+    const row=await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first();
+    latestMigration=row?.name||null;
+  } catch {
+    latestMigration=null;
+  }
+
+  const [templateCount,factoryCount,policyCount,roleRows,lastProbe]=await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS count FROM template_versions WHERE status='APPROVED'").first(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM factories WHERE status='ACTIVE'").first(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM production_policies").first(),
+    env.DB.prepare(`
+      SELECT lower(u.email) AS email,ur.role
+      FROM users u
+      JOIN user_roles ur ON ur.user_id=u.id
+      WHERE u.status='ACTIVE' AND ur.role IN ('OPERATOR','REVIEWER')
+      ORDER BY lower(u.email),ur.role
+    `).all(),
+    env.DB.prepare(`
+      SELECT status,created_at AS createdAt,report_json AS reportJson
+      FROM system_readiness_runs
+      WHERE scope='R2' AND status='PASS'
+      ORDER BY created_at DESC LIMIT 1
+    `).first()
+  ]);
+
+  const roleUsers={OPERATOR:[],REVIEWER:[]};
+  for(const row of roleRows.results||[]) {
+    if(roleUsers[row.role]) roleUsers[row.role].push(row.email);
+  }
+
+  const {results:policyRows}=await env.DB.prepare(`
+    SELECT code,display_name AS displayName,status,config_json AS configJson
+    FROM production_policies ORDER BY code
+  `).all();
+  const productionReadiness=summarizeProductionReadiness(policyRows);
+
+  const report=buildSystemReadiness({
+    identitySource:identity?.source||null,
+    authBypassEnabled:String(env.AUTH_BYPASS||"")==="1",
+    bootstrapAdminConfigured:Boolean(String(env.BOOTSTRAP_ADMIN_EMAIL||"").trim()),
+    bindings:{
+      d1:Boolean(env.DB),
+      r2:Boolean(env.ARTWORK_FILES),
+      assets:Boolean(env.ASSETS)
+    },
+    latestMigration,
+    schemaOk:missingTables.length===0,
+    counts:{
+      approvedTemplates:Number(templateCount?.count||0),
+      activeFactories:Number(factoryCount?.count||0),
+      productionPolicies:Number(policyCount?.count||0)
+    },
+    roleUsers,
+    lastR2Probe:lastProbe?{status:lastProbe.status,createdAt:lastProbe.createdAt}:null,
+    productionReadiness
+  });
+
+  return {
+    ...report,
+    diagnostics:{
+      latestMigration,
+      expectedLatestMigration:EXPECTED_LATEST_MIGRATION,
+      missingTables,
+      counts:report.summary?{
+        approvedTemplates:Number(templateCount?.count||0),
+        activeFactories:Number(factoryCount?.count||0),
+        productionPolicies:Number(policyCount?.count||0)
+      }:{},
+      roleUsers,
+      lastR2Probe:lastProbe?{
+        status:lastProbe.status,
+        createdAt:lastProbe.createdAt,
+        report:lastProbe.reportJson?JSON.parse(lastProbe.reportJson):null
+      }:null,
+      bindings:{d1:Boolean(env.DB),r2:Boolean(env.ARTWORK_FILES),assets:Boolean(env.ASSETS)},
+      auth:{identitySource:identity?.source||null,bypassEnabled:String(env.AUTH_BYPASS||"")==="1",bootstrapAdminConfigured:Boolean(String(env.BOOTSTRAP_ADMIN_EMAIL||"").trim())}
+    }
+  };
+}
+
+async function runR2DeepProbe(env) {
+  if(!env.ARTWORK_FILES) return {status:"FAIL",ok:false,error:"ARTWORK_FILES binding is missing."};
+  const token=crypto.randomUUID();
+  const key=`_system-readiness/${token}.txt`;
+  const payload=`carton-artwork-studio:r2-probe:${token}`;
+  let deleted=false;
+  try {
+    await env.ARTWORK_FILES.put(key,payload,{httpMetadata:{contentType:"text/plain; charset=utf-8"}});
+    const object=await env.ARTWORK_FILES.get(key);
+    if(!object) throw new Error("R2 object could not be read back.");
+    const bytes=new Uint8Array(await object.arrayBuffer());
+    const actual=new TextDecoder().decode(bytes);
+    if(actual!==payload) throw new Error("R2 read-back payload mismatch.");
+    await env.ARTWORK_FILES.delete(key);
+    deleted=true;
+    return {status:"PASS",ok:true,key,bytes:bytes.length,write:true,read:true,delete:true};
+  } catch(e) {
+    if(!deleted) {
+      try { await env.ARTWORK_FILES.delete(key); deleted=true; } catch {}
+    }
+    return {status:"FAIL",ok:false,key,error:e?.message||String(e),write:true,read:false,delete:deleted};
+  }
+}
+
 function publicIdentity(identity) {
   return {
     id: identity.id,
@@ -90,7 +211,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.4.0",
+        version: "1.5.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -136,6 +257,26 @@ export default {
     }
 
     try {
+      if(request.method==="GET"&&url.pathname==="/api/system/readiness"){
+        const report=await collectSystemReadiness(env,identity);
+        return json({data:report});
+      }
+
+      if(request.method==="POST"&&url.pathname==="/api/system/readiness/probe"){
+        const probe=await runR2DeepProbe(env);
+        const id=crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO system_readiness_runs(id,scope,status,report_json,actor,created_at)
+          VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
+        `).bind(id,"R2",probe.status,JSON.stringify(probe),identity.email).run();
+        await audit(env,identity,"SYSTEM_READINESS_RUN",id,"R2_DEEP_PROBE",{
+          newValue:probe,
+          reason:"Admin-initiated staging readiness probe"
+        });
+        const readiness=await collectSystemReadiness(env,identity);
+        return json({data:{probe,readiness}},{status:201});
+      }
+
       if (request.method === "GET" && url.pathname === "/api/factories") {
         const includeAll=url.searchParams.get("include")==="all"&&can(identity,"ADMIN");
         const { results } = await env.DB.prepare(`
