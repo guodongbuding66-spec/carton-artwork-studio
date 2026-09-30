@@ -149,6 +149,19 @@
           method:"POST", body:"{}"
         });
       },
+      async validatePdfX4External(artworkId, options = {}) {
+        const q=new URLSearchParams({
+          fontAssetId:options.fontAssetId||"",
+          iccAssetId:options.iccAssetId||"",
+          outputConditionIdentifier:options.outputConditionIdentifier||""
+        });
+        return request(`/api/artworks/${encodeURIComponent(artworkId)}/pdfx4-external-validation?${q}`, {
+          method:"POST", body:"{}"
+        });
+      },
+      async pdfxValidations(artworkId) {
+        return request(`/api/artworks/${encodeURIComponent(artworkId)}/pdfx-validations`);
+      },
       async renderProductionPdf(artworkId) {
         return requestBlob(`/api/artworks/${encodeURIComponent(artworkId)}/render-production-pdf`, {
           method:"POST", body:"{}"
