@@ -5,6 +5,7 @@ import { diffJson } from "./diff.js";
 import { EXPECTED_LATEST_MIGRATION, buildSystemReadiness } from "./system-readiness.js";
 import { inspectProductionAsset, safeAssetCode } from "./production-assets.js";
 import { renderEmbeddedArtworkPdf } from "./production-renderer.js";
+import { runExternalPdfxValidation, validateValidatorConfig } from "./pdfx-validator.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -105,7 +106,7 @@ const REQUIRED_SCHEMA_TABLES = Object.freeze([
   "mapping_profiles","import_jobs","import_rows",
   "users","user_roles","security_events",
   "reference_records","production_policies","production_policy_approvals",
-  "system_readiness_runs","production_assets","production_asset_approvals"
+  "system_readiness_runs","production_assets","production_asset_approvals","pdfx_validation_runs"
 ]);
 
 async function collectSystemReadiness(env, identity) {
@@ -175,7 +176,8 @@ async function collectSystemReadiness(env, identity) {
     },
     roleUsers,
     lastR2Probe:lastProbe?{status:lastProbe.status,createdAt:lastProbe.createdAt}:null,
-    productionReadiness
+    productionReadiness,
+    pdfxValidatorConfigured:validateValidatorConfig(env).ok
   });
 
   return {
@@ -201,7 +203,8 @@ async function collectSystemReadiness(env, identity) {
         })()
       }:null,
       bindings:{d1:Boolean(env.DB),r2:Boolean(env.ARTWORK_FILES),assets:Boolean(env.ASSETS)},
-      auth:{identitySource:identity?.source||null,bypassEnabled:String(env.AUTH_BYPASS||"")==="1",bootstrapAdminConfigured:Boolean(String(env.BOOTSTRAP_ADMIN_EMAIL||"").trim())}
+      auth:{identitySource:identity?.source||null,bypassEnabled:String(env.AUTH_BYPASS||"")==="1",bootstrapAdminConfigured:Boolean(String(env.BOOTSTRAP_ADMIN_EMAIL||"").trim())},
+      pdfxValidator:{configured:validateValidatorConfig(env).ok}
     }
   };
 }
@@ -268,7 +271,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.8.0",
+        version: "1.9.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
