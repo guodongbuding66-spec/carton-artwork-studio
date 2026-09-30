@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.9.0
+## 当前版本：2.0.0
 
 ### 已实现
 
@@ -53,6 +53,59 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v2.0.0 关键工程进展
+
+### 1. Production Promotion Policy
+
+PDF/X-4 不再继续堆 Candidate 功能，而是进入正式晋升治理：
+
+- 主验证器固定：callas pdfToolbox CLI / Server `17.0.683`
+- 独立复核：Enfocus PitStop Pro `26.07`
+- 规则集固定：`CAS-PDFX4-PRODUCTION-1@1.0.0`
+- 规则集 SHA-256 固定
+- 至少 5 个不同 SHA 的回归 PDF
+- 主/副验证器必须针对完全相同的 PDF bytes PASS
+- 真实生产 RIP / DFE 必须通过 Ghent PDF Output Suite 5.0 Level 1+2
+- 实际印厂/RIP 证据必须绑定供应商、RIP 版本、输出设备和证据 SHA
+
+### 2. Trusted Validator Bridge
+
+外部 Validator PASS 现在不再默认可信。
+
+Worker 会校验：
+
+- Validator 产品名
+- Validator 精确版本
+- Ruleset ID
+- Ruleset Version
+- Ruleset SHA-256
+- Artifact SHA-256
+
+不符合 v2.0 固定信任策略的 PASS 会被拒绝。
+
+### 3. Cloudflare staging final acceptance
+
+staging workflow 现在：
+
+- 禁止两个 staging deploy 并发竞争；
+- v2 final acceptance 强制要求 Validator URL；
+- Worker 同时要求 Validator bearer secret；
+- smoke 验证部署版本和 Promotion Policy；
+- 生成并上传 `staging-acceptance.json` 作为部署验收证据。
+
+### 4. 仍然保持 fail-closed
+
+当前仍然：
+
+```text
+pdfxCandidateProfiles = ["PDF/X-4"]
+pdfxProfiles = []
+```
+
+在完整 Validator regression + 独立 Validator + 真实印厂/RIP 证据通过之前，不允许把 PDF/X-4 宣称为 Production Capability。
+
+详见 `docs/PRODUCTION_PROMOTION_POLICY.md`。
 
 ## v1.9.0 关键工程进展
 
