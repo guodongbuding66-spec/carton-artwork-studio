@@ -1,4 +1,4 @@
-export const EXPECTED_LATEST_MIGRATION = "0006_system_readiness.sql";
+export const EXPECTED_LATEST_MIGRATION = "0007_production_assets.sql";
 export const R2_PROBE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function gate(id, label, ok, detail, category="STAGING", blocking=true) {
@@ -61,6 +61,10 @@ export function buildSystemReadiness(input = {}) {
   const productionChecks=[
     gate("STAGING_READY","Staging release gate",stagingReady,
       stagingReady?"All staging gates pass.":"One or more staging gates are blocked.","PRODUCTION"),
+    gate("APPROVED_FONT_ASSET","Approved font asset",Number(counts.approvedFonts||0)>0,
+      `${Number(counts.approvedFonts||0)} approved FONT asset(s).`,"PRODUCTION"),
+    gate("APPROVED_ICC_ASSET","Approved ICC output profile",Number(counts.approvedIccProfiles||0)>0,
+      `${Number(counts.approvedIccProfiles||0)} approved ICC_PROFILE asset(s).`,"PRODUCTION"),
     ...((prod.gates||[]).map((x)=>gate(
       x.code,
       x.displayName||x.code,
