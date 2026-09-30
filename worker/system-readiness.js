@@ -1,4 +1,4 @@
-export const EXPECTED_LATEST_MIGRATION = "0007_production_assets.sql";
+export const EXPECTED_LATEST_MIGRATION = "0008_pdfx_validation_runs.sql";
 export const R2_PROBE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function gate(id, label, ok, detail, category="STAGING", blocking=true) {
@@ -65,6 +65,8 @@ export function buildSystemReadiness(input = {}) {
       `${Number(counts.approvedFonts||0)} approved FONT asset(s).`,"PRODUCTION"),
     gate("APPROVED_ICC_ASSET","Approved ICC output profile",Number(counts.approvedIccProfiles||0)>0,
       `${Number(counts.approvedIccProfiles||0)} approved ICC_PROFILE asset(s).`,"PRODUCTION"),
+    gate("PDFX_VALIDATOR_CONFIGURED","External PDF/X validator configured",input.pdfxValidatorConfigured===true,
+      input.pdfxValidatorConfigured?"Trusted external validator endpoint is configured.":"PDFX_VALIDATOR_URL is not configured.","PRODUCTION"),
     ...((prod.gates||[]).map((x)=>gate(
       x.code,
       x.displayName||x.code,
