@@ -314,7 +314,7 @@
       check("dieline", "Dieline export layer", "pass",
         "Proof can include technical layers; Production excludes review-only overlays.", "Print"),
       check("font", "Font registry", "warning",
-        "Prototype uses system sans / PDF core font. Approved font embedding or outlining remains a production gate.", "Print")
+        "Local preview uses system sans / PDF core font. Authoritative Production PDF uses the server-side pinned approved TrueType asset when FONT_POLICY is ready; outlining remains unsupported.", "Print")
     ];
 
     return { Data: data, Layout: layout, Codes: codes, Print: print };
