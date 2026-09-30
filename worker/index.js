@@ -557,6 +557,13 @@ export default {
         if(!rev||String(rev.status).toUpperCase()!=="APPROVED") {
           return err(409,"REVISION_NOT_APPROVED","The requested revision is not approved.");
         }
+        const unresolved=await env.DB.prepare(`
+          SELECT COUNT(*) AS count FROM comments
+          WHERE artwork_id=? AND revision=? AND blocking=1 AND resolved=0
+        `).bind(artworkId,revision).first();
+        if(Number(unresolved?.count||0)>0) {
+          return err(409,"BLOCKING_COMMENTS","Production export is blocked by unresolved review comments.");
+        }
 
         const filename=(url.searchParams.get("filename")||"artifact.bin").replace(/[^a-zA-Z0-9._-]+/g,"_");
         const contentType=request.headers.get("content-type")||"application/octet-stream";
