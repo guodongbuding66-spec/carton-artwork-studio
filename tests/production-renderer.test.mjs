@@ -78,6 +78,18 @@ const snapshot={
   artwork:{revision:"R03",status:"approved"}
 };
 
+function makeSyntheticCmykIcc(){
+  const icc=new Uint8Array(132);
+  putU32(icc,0,132);
+  icc[8]=4;icc[9]=0x30;
+  icc.set(new TextEncoder().encode("prtr"),12);
+  icc.set(new TextEncoder().encode("CMYK"),16);
+  icc.set(new TextEncoder().encode("XYZ "),20);
+  icc.set(new TextEncoder().encode("acsp"),36);
+  putU32(icc,128,0);
+  return icc;
+}
+
 const font=makeSyntheticTrueType();
 const rendered=renderEmbeddedArtworkPdf({snapshot,fontBytes:font,qrEcc:"M",mode:"production"});
 const latin1=Buffer.from(rendered.bytes).toString("latin1");
@@ -93,4 +105,26 @@ assert.ok(rendered.bytes.length>font.length);
 assert.equal(rendered.qr.ecc,"M");
 assert.equal(rendered.barcode.symbology,"CODE128-B");
 
-console.log("Embedded TrueType production renderer tests passed.");
+const icc=makeSyntheticCmykIcc();
+const candidate=renderEmbeddedArtworkPdf({
+  snapshot,
+  fontBytes:font,
+  iccBytes:icc,
+  pdfxProfile:"PDF/X-4",
+  outputConditionIdentifier:"TEST-CMYK",
+  qrEcc:"M",
+  mode:"proof"
+});
+const candidateText=Buffer.from(candidate.bytes).toString("latin1");
+assert.ok(candidateText.startsWith("%PDF-1.6"));
+assert.ok(candidateText.includes("/OutputIntents"));
+assert.ok(candidateText.includes("/S /GTS_PDFX"));
+assert.ok(candidateText.includes("/DestOutputProfile"));
+assert.ok(candidateText.includes("/Type /Metadata"));
+assert.ok(candidateText.includes("/TrimBox"));
+assert.ok(candidateText.includes("/BleedBox"));
+assert.ok(candidateText.includes("/GTS_PDFXVersion (PDF/X-4)"));
+assert.equal(candidate.pdfxCandidate.profile,"PDF/X-4");
+assert.equal(candidate.pdfxCandidate.structural.ok,true);
+
+console.log("Embedded TrueType and PDF/X-4 candidate renderer tests passed.");
