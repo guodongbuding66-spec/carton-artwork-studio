@@ -42,6 +42,11 @@ assert.equal(permissionForRequest("POST","/api/templates/t1/versions"),"TEMPLATE
 assert.equal(permissionForRequest("PATCH","/api/template-versions/v1"),"TEMPLATE_WRITE");
 assert.equal(permissionForRequest("POST","/api/template-versions/v1/submit"),"TEMPLATE_WRITE");
 assert.equal(permissionForRequest("POST","/api/template-versions/v1/approval"),"TEMPLATE_APPROVE");
+assert.equal(permissionForRequest("POST","/api/reference-records"),"REFERENCE_WRITE");
+assert.equal(permissionForRequest("PATCH","/api/reference-records/r1"),"REFERENCE_WRITE");
+assert.equal(permissionForRequest("PATCH","/api/production-policies/BARCODE_POLICY"),"PRODUCTION_POLICY_WRITE");
+assert.equal(permissionForRequest("POST","/api/production-policies/BARCODE_POLICY/submit"),"PRODUCTION_POLICY_WRITE");
+assert.equal(permissionForRequest("POST","/api/production-policies/BARCODE_POLICY/approval"),"PRODUCTION_POLICY_APPROVE");
 
 const bypassReq=new Request("https://localhost/api/me",{
   headers:{"x-cas-dev-user":"dev@example.com","x-cas-dev-roles":"ADMIN,REVIEWER"}
