@@ -33,7 +33,6 @@
     batchSource: null,
     batchGenerating: false,
     dialog: null,
-    resolvedBlockingComment: false,
     apiOnline: false,
     apiChecked: false,
     apiBusy: false,
@@ -816,7 +815,7 @@
     const snapshot=JSON.stringify(D.canonicalData(artwork,state.factories),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
-    const manifest=D.manifest(artwork,"vector-svg-pdf-0.7.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-0.8.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
     manifest.barcode={symbology:"Code 128-B PoC",vector:true};
     manifest.sha256={
@@ -850,7 +849,7 @@
     downloadBlob(filename,bundle);
     if(state.apiOnline&&state.apiBindings.r2&&state.remoteArtworkId){
       try{
-        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.7.0",actor:"web",manifest:built.manifest});
+        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.8.0",actor:"web",manifest:built.manifest});
         toast("Production Bundle 已下载并同步到 R2","success");
       }catch(e){toast("本地 Bundle 已生成，但 R2 同步失败："+(e.message||e),"error");}
     }else toast("Production Bundle ZIP 已生成；R2 尚未连接","success");
@@ -864,7 +863,7 @@
       const files=[],index=[];
       for(const row of passed){
         const art={...row.artwork,status:"draft",revision:"R01"};
-        const g=D.sideSealGeometry(art),comp=D.computed(art),code=C.code128Bars(art.barcode,{moduleMm:.42,heightMm:25}),qr=C.qrMatrix(art.qr,"M").matrix;
+        const g=D.sideSealGeometry(art),comp=D.computed(art,state.factories),code=C.code128Bars(art.barcode,{moduleMm:.42,heightMm:25}),qr=C.qrMatrix(art.qr,"M").matrix;
         const pdf=P.createPdfBytes({artwork:art,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof"});
         const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg("proof",art)}`;
         const snap=JSON.stringify(D.canonicalData(art,state.factories),null,2);
@@ -873,7 +872,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.7.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.8.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
@@ -969,6 +968,7 @@
       const health=await api.health();
       state.apiBindings=health.bindings||state.apiBindings;
       state.apiOnline=Boolean(health.ok&&health.bindings?.d1);
+
       if(state.apiOnline){
         try{
           const me=await api.me();
@@ -979,26 +979,46 @@
           state.authError=e;
         }
       }
-      if(state.apiOnline&&state.identity?.roles?.length&&state.remoteArtworkId){
-        try{
-          const remote=await api.artwork(state.remoteArtworkId);
-          const row=remote.data.artwork;
-          state.artwork.status=A.statusFromApi(row.status);
-          state.artwork.revision=row.current_revision||state.artwork.revision;
-          state.remoteRevision=state.artwork.revision;
-          await loadComments();
-        }catch(e){
-          if(e.status===404){state.remoteArtworkId=null;localStorage.removeItem("cas:remoteArtworkId");}
-          else if(e.status===401||e.status===403){state.authError=e;}
+
+      if(state.apiOnline&&state.identity?.roles?.length){
+        await loadReferenceData(false);
+        if(permitted("auditRead")) await loadAudit(false);
+
+        if(state.remoteArtworkId){
+          try{
+            const remote=await api.artwork(state.remoteArtworkId);
+            const row=remote.data.artwork;
+            let snapshot={};
+            try{snapshot=JSON.parse(row.canonical_data_json||"{}");}catch{}
+            state.artwork=D.artworkFromCanonical(snapshot,{
+              sku:row.sku,
+              contractNo:row.contract_no,
+              factoryId:row.factory_id,
+              packageCount:row.package_count,
+              currentPackage:row.current_package,
+              status:A.statusFromApi(row.status),
+              revision:row.current_revision
+            });
+            state.remoteRevision=state.artwork.revision;
+            const comments=await api.comments(state.remoteArtworkId,state.artwork.revision);
+            state.comments=comments.data||[];
+          }catch(e){
+            if(e.status===404){state.remoteArtworkId=null;localStorage.removeItem("cas:remoteArtworkId");}
+            else if(e.status===401||e.status===403){state.authError=e;}
+          }
+        }
+
+        if(state.page==="admin"&&permitted("admin")){
+          try{state.adminUsers=(await api.adminUsers()).data||[];}catch{}
         }
       }
-      if(state.page==="admin"&&permitted("admin")) await loadAdminUsers();
     }catch(e){
       state.apiOnline=false;
       state.identity=null;
       state.authError=e;
     }finally{
-      state.apiChecked=true;render();
+      state.apiChecked=true;
+      render();
     }
   }
 
