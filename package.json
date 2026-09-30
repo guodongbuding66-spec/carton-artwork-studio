@@ -1,0 +1,15 @@
+{
+  "name": "carton-artwork-studio",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/domain.test.cjs && node tests/codes.test.cjs",
+    "check": "node --check assets/domain.js && node --check assets/codes.js && node --check assets/pdf.js && node --check assets/xlsx-lite.js && node --check assets/app.js && node --check worker/index.js && npm test",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}
