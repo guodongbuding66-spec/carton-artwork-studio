@@ -1,17 +1,10 @@
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const vm = require("node:vm");
+const { loadBrowserModules } = require("./_load-umd.cjs");
 
-function loadUmd(path) {
-  const code = fs.readFileSync(path, "utf8");
-  const module = { exports: {} };
-  vm.runInNewContext(code, { module, exports: module.exports, globalThis: {}, console });
-  return module.exports;
-}
-
-const qrCode = require("../assets/vendor/qrcode-generator.js");
-globalThis.qrcode = qrCode;
-const C = require("../assets/codes.js");
+const { CartonCodes: C } = loadBrowserModules([
+  "assets/vendor/qrcode-generator.js",
+  "assets/codes.js"
+]);
 
 function test(name, fn) {
   try { fn(); console.log("✓", name); }
@@ -30,6 +23,7 @@ test("Code128 model has quiet zones and positive bar widths", () => {
   assert.ok(m.widthMm > 0);
   assert.ok(m.bars.length > 20);
   assert.ok(m.bars.every(b => b.w > 0 && b.h > 0));
+  assert.equal(m.quietModules, 10);
 });
 
 test("Code128 rejects non printable ASCII", () => {
