@@ -49,6 +49,9 @@
       async factories() {
         return request("/api/factories");
       },
+      async createFactory(payload) {
+        return request("/api/factories", { method:"POST", body:JSON.stringify(payload) });
+      },
       async referenceRecords(params = {}) {
         const q = new URLSearchParams();
         if (params.namespace) q.set("namespace", params.namespace);
