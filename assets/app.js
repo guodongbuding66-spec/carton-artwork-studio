@@ -1292,7 +1292,7 @@
     const code=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
     const qrModel=C.qrMatrix(artwork.qr,qrEcc);
     const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qrModel.matrix,mode});
-    const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork)}`;
+    const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork,{factories:state.factories,qrEcc})}`;
     const snapshot=JSON.stringify(D.canonicalData(artwork,state.factories),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
@@ -1302,7 +1302,7 @@
       policies:state.productionPolicies
     },null,2);
 
-    const manifest=D.manifest(artwork,"vector-svg-pdf-1.2.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-1.3.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:qrModel.errorCorrectionLevel,version:qrModel.version,vector:true};
     manifest.barcode={symbology:barcodeSymbology,renderer:"Code128-B",vector:true};
     manifest.productionEvidence={
@@ -1378,7 +1378,7 @@
         kind:"PRODUCTION_BUNDLE",
         revision:state.artwork.revision,
         filename,
-        renderer:"1.2.0",
+        renderer:"1.3.0",
         actor:"web",
         manifest:built.manifest
       });
@@ -1399,14 +1399,14 @@
         const art={...row.artwork,status:"draft",revision:"R01"};
         const g=D.sideSealGeometry(art),comp=D.computed(art,state.factories),code=C.code128Bars(art.barcode,{moduleMm:.42,heightMm:25}),qr=C.qrMatrix(art.qr,"M").matrix;
         const pdf=P.createPdfBytes({artwork:art,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof"});
-        const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg("proof",art)}`;
+        const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg("proof",art,{factories:state.factories,qrEcc:"M"})}`;
         const snap=JSON.stringify(D.canonicalData(art,state.factories),null,2);
         const prefix=`row-${String(row.row).padStart(4,"0")}_${B.safeBase(art)}/`;
         files.push({name:prefix+"Proof.pdf",data:pdf},{name:prefix+"Proof.svg",data:svg},{name:prefix+"DataSnapshot.json",data:snap});
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.2.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.3.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
