@@ -490,6 +490,42 @@
       ${cards||'<div class="card-body"><div class="notice">D1 尚无 Production Policy 数据。</div></div>'}`;
   }
 
+  function compareValue(value){
+    if(value===undefined) return "—";
+    if(value===null) return "null";
+    if(typeof value==="object") return JSON.stringify(value);
+    return String(value);
+  }
+
+  function renderRevisionCompare(){
+    if(!state.remoteArtworkId){
+      return '<div class="card-body"><div class="notice">先从 Dashboard 打开一个 D1 Artwork，才能比较历史 Revision。</div></div>';
+    }
+    const revisions=state.remoteRevisions||[];
+    if(revisions.length<2){
+      return '<div class="card-body"><div class="notice">当前 Artwork 少于 2 个持久化 Revision，暂无可比较版本。</div></div>';
+    }
+    const options=revisions.map(r=>`<option value="${esc(r.revision)}">${esc(r.revision)} · ${esc(r.status||"")}</option>`).join("");
+    const compare=state.revisionCompare;
+    const rows=(compare?.changes||[]).map(x=>[
+      `<span class="mono">${esc(x.path)}</span>`,
+      `<span class="mono subtle">${esc(compareValue(x.from))}</span>`,
+      `<span class="mono subtle">${esc(compareValue(x.to))}</span>`,
+      `<span class="badge ${x.change==="ADDED"?"green":x.change==="REMOVED"?"red":"amber"}">${esc(x.change)}</span>`
+    ]);
+    return `
+      <div class="card-body">
+        <div class="row2">
+          <div class="field"><label>From Revision</label><select id="compare-from" class="input">${options}</select></div>
+          <div class="field"><label>To Revision</label><select id="compare-to" class="input">${options}</select></div>
+        </div>
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="run-compare">Compare Canonical Data</button></div>
+        ${compare?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL CHANGES</div><div class="kpi-value">${compare.total}</div></div><div class="kpi"><div class="kpi-label">CHANGED</div><div class="kpi-value">${compare.changed}</div></div><div class="kpi"><div class="kpi-label">ADDED</div><div class="kpi-value">${compare.added}</div></div><div class="kpi"><div class="kpi-label">REMOVED</div><div class="kpi-value">${compare.removed}</div></div></div>`:""}
+      </div>
+      ${compare?(rows.length?table(["Canonical Path","From","To","Change"],rows,true):'<div class="card-body"><div class="notice">两个 Revision 的 Canonical Data 完全一致。</div></div>'):'<div class="card-body"><div class="notice">选择两个 Revision 后执行 Compare。比较基于冻结的 Canonical Snapshot，不使用演示结果。</div></div>'}
+    `;
+  }
+
   function renderQuality(){
     const tabs=["profiles","reports","readiness","compare"];
     let body="";
@@ -502,7 +538,7 @@
       body=`<div class="card-body"><div class="kpis" style="margin:0"><div class="kpi"><div class="kpi-label">Current Errors</div><div class="kpi-value" style="color:#bc2f3b">${s.error}</div></div><div class="kpi"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:#a86b00">${s.warning}</div></div><div class="kpi"><div class="kpi-label">Passed</div><div class="kpi-value" style="color:#16835d">${s.pass}</div></div></div></div>${recent.length?table(["Actor","Time","Action","Preflight","Reason"],recent):`<div class="card-body"><div class="notice">暂无可读取的持久化 Preflight Audit 记录。当前工作稿检查结果显示在上方。</div></div>`}`;
     }
     if(state.qualityTab==="readiness") body=renderPolicyReadiness();
-    if(state.qualityTab==="compare") body=`<div class="card-body"><div class="notice">Version Compare roadmap: Text / Graphics / Code / Dieline · Side-by-side / Overlay / Difference / Flicker。当前不显示虚构比对结果。</div></div>`;
+    if(state.qualityTab==="compare") body=renderRevisionCompare();
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
   }
 
