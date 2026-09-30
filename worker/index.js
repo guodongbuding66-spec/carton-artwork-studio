@@ -136,9 +136,12 @@ export default {
 
     try {
       if (request.method === "GET" && url.pathname === "/api/factories") {
+        const includeAll=url.searchParams.get("include")==="all"&&can(identity,"ADMIN");
         const { results } = await env.DB.prepare(`
           SELECT id,name,crn,country,effective_at AS effectiveAt,status
-          FROM factories ORDER BY name
+          FROM factories
+          ${includeAll?"":"WHERE status='ACTIVE'"}
+          ORDER BY name
         `).all();
         return json({ data: results });
       }
