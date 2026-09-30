@@ -1239,23 +1239,44 @@
     downloadBlob(fileBase()+"_Proof.pdf",blob); toast("已生成 1:1 mm Vector Proof PDF（Code128 + QR 均为矢量）","success");
   }
 
-  async function productionArtifactSet(artwork, mode="production"){
+  async function productionArtifactSet(artwork, mode="production", evidence=null){
     const g=D.sideSealGeometry(artwork), comp=D.computed(artwork,state.factories);
+    const barcodePolicy=(evidence?.policies||state.productionPolicies||[]).find(x=>x.code==="BARCODE_POLICY");
+    const qrPolicy=(evidence?.policies||state.productionPolicies||[]).find(x=>x.code==="QR_POLICY");
+    const barcodeSymbology=String(barcodePolicy?.config?.symbology||approvedBarcodeSymbology()||"Code128-B");
+    const qrEcc=String(qrPolicy?.config?.ecc||approvedQrEcc()||"M").toUpperCase();
+
+    if(!/code\s*[-_ ]?128\s*[-_ ]?b/i.test(barcodeSymbology.replace(/CODE128/i,"Code 128"))) {
+      throw new Error(`Production renderer currently supports Code128-B only; policy requested ${barcodeSymbology}.`);
+    }
+
     const code=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
-    const qr=C.qrMatrix(artwork.qr,"M").matrix;
-    const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode});
+    const qrModel=C.qrMatrix(artwork.qr,qrEcc);
+    const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qrModel.matrix,mode});
     const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork)}`;
     const snapshot=JSON.stringify(D.canonicalData(artwork,state.factories),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
-    const manifest=D.manifest(artwork,"vector-svg-pdf-1.0.0");
-    manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
-    manifest.barcode={symbology:"Code 128-B PoC",vector:true};
+    const readinessEvidence=JSON.stringify(evidence||{
+      capturedAt:new Date().toISOString(),
+      readiness:state.productionReadiness,
+      policies:state.productionPolicies
+    },null,2);
+
+    const manifest=D.manifest(artwork,"vector-svg-pdf-1.2.0");
+    manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:qrModel.errorCorrectionLevel,version:qrModel.version,vector:true};
+    manifest.barcode={symbology:barcodeSymbology,renderer:"Code128-B",vector:true};
+    manifest.productionEvidence={
+      readiness:Boolean(evidence?.readiness?.ready??state.productionReadiness?.ready),
+      capturedAt:evidence?.capturedAt||null,
+      policyCodes:(evidence?.policies||state.productionPolicies||[]).map(x=>x.code)
+    };
     manifest.sha256={
       pdf:await sha256(pdfBytes),
       svg:await sha256(svg),
       snapshot:await sha256(snapshot),
-      preflight:await sha256(preflight)
+      preflight:await sha256(preflight),
+      readinessEvidence:await sha256(readinessEvidence)
     };
     const base=B.safeBase(artwork);
     return {base,manifest,files:[
@@ -1263,6 +1284,7 @@
       {name:"Production.svg",data:svg},
       {name:"DataSnapshot.json",data:snapshot},
       {name:"PreflightReport.json",data:preflight},
+      {name:"ProductionReadiness.json",data:readinessEvidence},
       {name:"Manifest.json",data:JSON.stringify(manifest,null,2)}
     ]};
   }
@@ -1272,11 +1294,13 @@
     if(!permitted("productionExport")||!state.apiOnline||!state.remoteArtworkId){toast("Production Export 需要 Cloudflare Access + Production Export 权限。","error");return;}
     if(state.artwork.status!=="approved"||s.blocking>0||!blockingCommentsResolved()){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
     try{
-      const [remote,readiness]=await Promise.all([
+      const [remote,readiness,policies]=await Promise.all([
         api.artwork(state.remoteArtworkId),
-        api.productionReadiness()
+        api.productionReadiness(),
+        api.productionPolicies()
       ]);
       state.productionReadiness=readiness.data||{ready:false,gates:[]};
+      state.productionPolicies=policies.data||[];
       if(!state.productionReadiness.ready){
         const blocked=(state.productionReadiness.gates||[]).filter(x=>!(x.approved&&x.valid)).map(x=>x.displayName||x.code).join(" / ");
         render();
@@ -1284,18 +1308,46 @@
         return;
       }
       if(String(remote.data.artwork.status||"").toUpperCase()!=="APPROVED"||remote.data.artwork.current_revision!==state.artwork.revision){toast("服务器端当前 Revision 未批准或已过期，已阻止生产稿导出。","error");return;}
-    }catch(e){toast("无法验证服务器端批准/生产就绪状态："+(e.message||e),"error");return;}
-    const built=await productionArtifactSet(state.artwork,"production");
-    built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nProduction policies: server-approved at export time.\n"});
-    const bundle=Z.createZipBlob(built.files);
-    const filename=built.base+"_ProductionBundle.zip";
-    downloadBlob(filename,bundle);
-    if(state.apiOnline&&state.apiBindings.r2&&state.remoteArtworkId){
-      try{
-        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"1.0.0",actor:"web",manifest:built.manifest});
-        toast("Production Bundle 已下载并同步到 R2","success");
-      }catch(e){toast("本地 Bundle 已生成，但 R2 同步失败："+(e.message||e),"error");}
-    }else toast("Production Bundle ZIP 已生成；R2 尚未连接","success");
+
+      const evidence={
+        capturedAt:new Date().toISOString(),
+        readiness:state.productionReadiness,
+        policies:state.productionPolicies.map(p=>({
+          code:p.code,
+          displayName:p.displayName,
+          status:p.status,
+          config:p.config,
+          submittedBy:p.submittedBy,
+          submittedAt:p.submittedAt,
+          approvedBy:p.approvedBy,
+          approvedAt:p.approvedAt,
+          updatedAt:p.updatedAt
+        }))
+      };
+
+      const built=await productionArtifactSet(state.artwork,"production",evidence);
+      built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nProduction policies: captured in ProductionReadiness.json and revalidated server-side at persistence time.\n"});
+      const bundle=Z.createZipBlob(built.files);
+      const filename=built.base+"_ProductionBundle.zip";
+
+      if(!state.apiBindings.r2){
+        toast("R2 未连接，生产稿不会只在浏览器本地生成；请先完成 Cloudflare staging/production binding。","error");
+        return;
+      }
+
+      const persisted=await api.uploadExport(state.remoteArtworkId,bundle,{
+        kind:"PRODUCTION_BUNDLE",
+        revision:state.artwork.revision,
+        filename,
+        renderer:"1.2.0",
+        actor:"web",
+        manifest:built.manifest
+      });
+      downloadBlob(filename,bundle);
+      toast(`Production Bundle 已通过服务器门禁、写入 R2 并下载 · SHA256 ${String(persisted.data?.sha256||"").slice(0,12)}…`,"success");
+      await loadAudit(false);
+    }catch(e){toast("Production Export 失败："+(e.message||e),"error");}
+    finally{render();}
   }
 
   async function exportBatchProofs(){
