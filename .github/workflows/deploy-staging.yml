@@ -17,6 +17,7 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: npm run check
+      - run: npm run test:migrations
       - name: Generate staging Wrangler config
         run: node scripts/render-wrangler.mjs staging
         env:
