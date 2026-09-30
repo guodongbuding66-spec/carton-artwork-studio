@@ -723,6 +723,93 @@
     }catch(e){toast(e.message||String(e),"error");}
   }
 
+  async function loadReferenceMasters(renderAfter=true){
+    if(!state.apiOnline||!state.identity){
+      state.referenceRecords=[];
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const response=await api.referenceRecords();
+      state.referenceRecords=response.data||[];
+    }catch(e){
+      state.referenceRecords=[];
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function createReferenceRecord(){
+    if(!permitted("referenceWrite")){toast("需要 Admin Master Data 权限。","error");return;}
+    const namespace=contentNamespace();
+    if(!namespace){toast("请选择 Customer / Product / Country / Shared。","error");return;}
+    const code=document.getElementById("master-code")?.value?.trim()||"";
+    const displayName=document.getElementById("master-name")?.value?.trim()||"";
+    const effectiveAt=document.getElementById("master-effective")?.value?.trim()||null;
+    let data={};
+    try{data=JSON.parse(document.getElementById("master-json")?.value||"{}");}
+    catch{toast("Data JSON 格式无效。","error");return;}
+    if(!code||!displayName){toast("Code 和 Display Name 必填。","error");return;}
+    try{
+      await api.createReferenceRecord({namespace,code,displayName,effectiveAt,data,status:"ACTIVE"});
+      await loadReferenceMasters(false);
+      render();
+      toast(`${namespace} Master 已创建`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function loadProductionReadiness(renderAfter=true){
+    if(!state.apiOnline||!state.identity){
+      state.productionPolicies=[];
+      state.productionReadiness={ready:false,gates:[]};
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const [policies,readiness]=await Promise.all([
+        api.productionPolicies(),
+        api.productionReadiness()
+      ]);
+      state.productionPolicies=policies.data||[];
+      state.productionReadiness=readiness.data||{ready:false,gates:[]};
+    }catch(e){
+      state.productionPolicies=[];
+      state.productionReadiness={ready:false,gates:[]};
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function handlePolicyAction(action, code){
+    const policy=state.productionPolicies.find(x=>x.code===code);
+    if(!policy){toast("Production Policy not found.","error");return;}
+    try{
+      if(action==="save"||action==="submit"){
+        if(!permitted("productionPolicyWrite")){toast("需要 Production Policy Write 权限。","error");return;}
+        let config;
+        try{config=JSON.parse(document.getElementById(`policy-config-${code}`)?.value||"{}");}
+        catch{toast("Policy JSON 格式无效。","error");return;}
+        const notes=document.getElementById(`policy-notes-${code}`)?.value?.trim()||"";
+        await api.updateProductionPolicy(code,{config,notes,reason:"Updated from Quality / Readiness"});
+        if(action==="submit"){
+          await api.submitProductionPolicy(code,{reason:"Submitted from Quality / Readiness"});
+        }
+      }
+      if(action==="approve"||action==="reject"){
+        if(!permitted("productionPolicyApprove")){toast("需要 Template Approver / Admin 权限。","error");return;}
+        await api.decideProductionPolicy(code,action==="approve"?"APPROVE":"REJECT",{
+          comment:action==="approve"?"Production policy reviewed and approved.":"Production policy requires revision."
+        });
+      }
+      await loadProductionReadiness(false);
+      render();
+      toast(`${code} · ${action} completed`,"success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }
+  }
+
   async function loadReferenceData(renderAfter=true){
     if(!state.apiOnline||!state.identity?.roles?.length){
       state.remoteArtworks=[];
