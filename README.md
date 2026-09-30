@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：0.5.0
+## 当前版本：0.6.0
 
 ### 已实现
 
@@ -51,6 +51,75 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v0.6.0 关键工程进展
+
+### 1. 前端开始接入 Cloudflare Persistence
+
+新增 `assets/api.js`，把浏览器端与 Cloudflare Worker API 隔离成独立 Adapter。
+
+当前 Artwork 工作流：
+
+```text
+Local Draft
+   ↓ Save
+D1 Artwork
+   ↓ Preflight
+D1 Preflight Run
+   ↓ Submit
+Immutable Revision / IN_REVIEW
+   ↓ Reviewer Decision
+APPROVED / REJECTED
+   ↓
+Production Bundle
+   ↓
+R2 + SHA-256 + Audit Log
+```
+
+如果 D1 未绑定或 API 不可达，界面明确显示 **Local Mode**，不会假装云端保存成功。
+
+### 2. Revision 开始真正不可变
+
+- `IN_REVIEW` 与 `APPROVED` 数据不能原地覆盖。
+- 被拒绝的 Revision 保留原快照；重新提交会创建下一 Revision。
+- Approved 后通过“创建新 Revision”继续修改。
+- Approval 仅允许对当前 `IN_REVIEW` Revision 操作。
+- Approval 前要求当前 Revision 存在非 Error Preflight。
+- 后端已预留 Blocking Comment Gate。
+
+### 3. Production Artifact 进入 R2
+
+在 Cloudflare R2 binding 可用时，Production Bundle 除浏览器下载外还会上传 R2，并写入：
+
+- D1 `exports`
+- SHA-256
+- Renderer version
+- Manifest
+- Audit log
+
+浏览器端仍保留本地下载，因此 R2 写入失败不会丢失刚生成的文件。
+
+### 4. Batch Import 进入 D1
+
+真实 Excel/CSV Import Review 可同步：
+
+- `import_jobs`
+- `import_rows`
+- Mapping Profile
+- Passed / Failed summary
+- Canonical row snapshot
+- row issues
+
+500 行以上按块提交，避免单次请求过大。
+
+### 5. UI 工作流不再允许直接改 Approved 状态
+
+Artwork 状态不再使用可随意切换的下拉框：
+
+- Draft：可编辑
+- In Review：字段锁定
+- Approved：字段锁定，可 Production Export
+- Rejected：允许修改，但重新提交生成新 Revision
 
 ## v0.5.0 关键工程进展
 
@@ -192,6 +261,7 @@ assets/
   xlsx-lite.js           # zero-dependency XLSX/CSV import engine
   batch.js               # row → artwork / validation / review
   zip.js                 # store-only ZIP writer
+  api.js                 # Cloudflare Worker/D1/R2 client adapter
   vendor/
     qrcode-generator.js  # MIT QR encoder
 
@@ -261,8 +331,8 @@ npm run check
 - Excel style/number-format 级 leading-zero 恢复
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Auth / RBAC
-- 前端尚未把所有工作流操作切换到 D1 API
-- R2/D1 API 已实现但仍需在 Cloudflare 账户创建并绑定资源
+- Reviewer 身份目前仍是开发态占位，尚未接 Cloudflare Access
+- D1/R2 API 与前端 Persistence Bridge 已实现，但仍需在 Cloudflare 账户创建并绑定正式资源
 - immutable approval workflow
 - Template visual regression
 - external print preflight adapter
