@@ -108,15 +108,34 @@ This distinction is deliberate:
 approved file ≠ implemented renderer capability
 ```
 
-## Next integration work
+## Server-side embedded-font renderer
 
-Future renderer integration must pin exact approved asset identities into the production evidence:
+The authoritative production path no longer trusts a browser-generated PDF.
 
-- asset type
-- code
-- version
-- SHA-256
-- approver
-- approval timestamp
+The Worker can now:
+
+1. resolve the exact FONT asset pinned by FONT_POLICY;
+2. read it privately from R2;
+3. recompute SHA-256;
+4. parse its TrueType `cmap / head / hhea / hmtx / maxp` tables;
+5. reject missing glyphs instead of silently falling back;
+6. embed the full TrueType bytes as PDF `FontFile2`;
+7. use a Type0 / CIDFontType2 font with `Identity-H`;
+8. write a ToUnicode CMap;
+9. persist the authoritative `PRODUCTION_PDF` in R2 with asset/policy evidence.
+
+Quality > Assets can generate a watermarked **Embed Test PDF** from an approved TrueType asset and the currently opened D1 Artwork. This test PDF is not a Production artifact.
+
+The Production Bundle must reference the previously persisted authoritative Production PDF export ID + SHA-256. The Worker rejects a Production Bundle that does not carry that server-rendered PDF linkage.
+
+## Remaining renderer work
+
+The next print-production integration is PDF/X:
+
+- exact approved ICC asset pinning
+- OutputIntent
+- PDF/X identification metadata
+- required page boxes / conformance rules
+- external validator regression
 
 The renderer must never select “latest file by filename” or silently fall back to a system font/profile.
