@@ -1,5 +1,7 @@
 # External PDF/X Validator Bridge
 
+> v2.0 trust policy: see `docs/PRODUCTION_PROMOTION_POLICY.md`.
+
 v1.9 adds a strict HTTP bridge for an independent PDF/X validator.
 
 This is an adapter contract, not a bundled validator and not a claim that any specific third-party product is already connected.
@@ -12,13 +14,13 @@ Worker variable:
 PDFX_VALIDATOR_URL=https://validator.example.com/api/validate
 ```
 
-Optional Worker secret:
+Required Worker secret for v2 staging/final acceptance:
 
 ```text
 PDFX_VALIDATOR_TOKEN
 ```
 
-The URL must use HTTPS.
+The URL must use HTTPS. v2.0 also requires the bearer secret to be present before the bridge is considered configured.
 
 Do not commit the token into `wrangler.jsonc`, source code, GitHub variables, or D1.
 
@@ -40,6 +42,10 @@ Content-Type: application/pdf
 Authorization: Bearer <token>          # only if configured
 X-CAS-PDFX-Profile: PDF/X-4
 X-CAS-Artifact-SHA256: <64-hex-sha256>
+X-CAS-Promotion-Policy-Version: 2.0.0
+X-CAS-Ruleset-Id: CAS-PDFX4-PRODUCTION-1
+X-CAS-Ruleset-Version: 1.0.0
+X-CAS-Ruleset-SHA256: f658882bd2d367839ea2fb3b3bce027320de4a70d480169feb3ba860588a6d80
 
 <PDF bytes>
 ```
@@ -63,8 +69,11 @@ Example:
   "status": "PASS",
   "profile": "PDF/X-4",
   "artifactSha256": "64-character SHA-256",
-  "validator": "Validator product/service name",
-  "version": "validator version",
+  "validator": "callas pdfToolbox CLI",
+  "version": "17.0.683",
+  "rulesetId": "CAS-PDFX4-PRODUCTION-1",
+  "rulesetVersion": "1.0.0",
+  "rulesetSha256": "f658882bd2d367839ea2fb3b3bce027320de4a70d480169feb3ba860588a6d80",
   "checks": [
     {"name": "PDF/X profile", "ok": true}
   ],
@@ -81,6 +90,8 @@ Mandatory integrity rules:
 - response must include the exact submitted artifact SHA-256;
 - SHA-256 must be 64 hex characters;
 - validator name and version are required;
+- a PASS result must match the v2.0 trusted primary validator identity/version;
+- a PASS result must match the pinned ruleset ID/version/SHA-256;
 - a response cannot say `PASS` while returning `checks[].ok=false`.
 
 HTTP errors, invalid JSON, SHA mismatch, timeout, or invalid response schema are stored as `ERROR`, not `FAIL`.
@@ -133,7 +144,7 @@ pdfxCandidateProfiles = ["PDF/X-4"]
 pdfxProfiles = []
 ```
 
-A later milestone must define which validator(s), versions, rulesets, and printer/RIP acceptance evidence are trusted enough to promote PDF/X-4 into `pdfxProfiles`.
+v2.0 defines the exact promotion criteria in `docs/PRODUCTION_PROMOTION_POLICY.md`. `pdfxProfiles` remains empty until the complete regression + secondary-validator + real printer/RIP evidence package has been approved.
 
 ## Trust model
 
