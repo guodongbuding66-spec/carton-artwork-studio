@@ -469,9 +469,9 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();}});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();}});
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
-    document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=()=>{state.templateTab=b.dataset.templateTab;render();});
+    document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=()=>{state.contentTab=b.dataset.contentTab;render();});
     document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();});
     document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
@@ -497,6 +497,7 @@
     document.querySelectorAll("[data-resolve-comment]").forEach(b=>b.onclick=()=>resolveComment(b.dataset.resolveComment));
     document.querySelectorAll("[data-save-user-roles]").forEach(b=>b.onclick=()=>saveUserRoles(b.dataset.saveUserRoles));
     document.querySelectorAll("[data-open-artwork]").forEach(b=>b.onclick=()=>openRemoteArtwork(b.dataset.openArtwork));
+    document.querySelectorAll("[data-edit-template-version]").forEach(b=>b.onclick=()=>openTemplateVersion(b.dataset.editTemplateVersion));
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
     const file=document.getElementById("batch-file");
@@ -512,6 +513,12 @@
     if(action==="new-revision") return createNewRevision();
     if(action==="add-comment") return addComment();
     if(action==="create-user") return createAdminUser();
+    if(action==="create-template-version") return createTemplateVersion();
+    if(action==="save-template-draft") return saveTemplateDraft();
+    if(action==="submit-template-version") return submitTemplateVersion();
+    if(action==="approve-template-version") return decideTemplateVersion("APPROVE");
+    if(action==="reject-template-version") return decideTemplateVersion("REJECT");
+    if(action==="close-template-editor"){state.templateEditor=null;render();return;}
     if(action==="refresh-dashboard") return loadRemoteArtworks();
     if(action==="refresh-audit") return loadAudit();
     if(action==="save-factory") return saveFactoryMaster();
