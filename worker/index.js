@@ -644,11 +644,16 @@ export default {
 
         const digest=await crypto.subtle.digest("SHA-256",bytes);
         const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
-        const objectKey=`_production-assets/${type.toLowerCase()}/${code}/${version}/${sha256.slice(0,16)}-${filename}`;
+        const safeVersion=version.replace(/[^a-zA-Z0-9._-]+/g,"_");
+        const objectKey=`_production-assets/${type.toLowerCase()}/${code}/${safeVersion}/${sha256.slice(0,16)}-${filename}`;
+        const decodeHeader=(name)=>{
+          const raw=String(request.headers.get(name)||"");
+          try{return decodeURIComponent(raw).trim();}catch{return raw.trim();}
+        };
         const metadata={
           ...inspection.metadata,
-          license:String(request.headers.get("x-asset-license")||"").trim(),
-          notes:String(request.headers.get("x-asset-notes")||"").trim()
+          license:decodeHeader("x-asset-license"),
+          notes:decodeHeader("x-asset-notes")
         };
         const id=crypto.randomUUID();
         try{
