@@ -68,6 +68,7 @@ export function permissionForRequest(method, pathname) {
   if (/^\/api\/production-assets\/[^/]+\/submit$/.test(p)) return "PRODUCTION_ASSET_WRITE";
   if (/^\/api\/production-assets\/[^/]+\/approval$/.test(p)) return "PRODUCTION_ASSET_APPROVE";
   if (/^\/api\/artworks\/[^/]+\/font-embed-validation$/.test(p)) return "PRODUCTION_ASSET_APPROVE";
+  if (/^\/api\/artworks\/[^/]+\/output-intent-validation$/.test(p)) return "PRODUCTION_ASSET_APPROVE";
   if (/^\/api\/artworks\/[^/]+\/render-production-pdf$/.test(p)) return "EXPORT_PRODUCTION";
 
   if (/^\/api\/template-versions\/[^/]+\/approval$/.test(p)) return "TEMPLATE_APPROVE";
