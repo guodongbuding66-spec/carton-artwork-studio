@@ -52,7 +52,10 @@
     templateVersionsMeta: null,
     templateEditor: null,
     remoteArtworks: [],
-    impact: null
+    impact: null,
+    referenceRecords: [],
+    productionPolicies: [],
+    productionReadiness: { ready:false, gates:[] }
   };
 
   const navItems = [
