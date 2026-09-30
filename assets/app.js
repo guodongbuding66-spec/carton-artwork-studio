@@ -55,7 +55,11 @@
     impact: null,
     referenceRecords: [],
     productionPolicies: [],
-    productionReadiness: { ready:false, gates:[] }
+    productionReadiness: { ready:false, gates:[] },
+    remoteRevisions: [],
+    compareFrom: null,
+    compareTo: null,
+    revisionCompare: null
   };
 
   const navItems = [
@@ -105,6 +109,16 @@
   function hasRole(role){return Boolean(state.identity?.roles?.includes(role));}
   function permitted(key){return Boolean(state.identity?.permissions?.[key]);}
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
+  function productionPolicy(code){return state.productionPolicies.find(x=>x.code===code)||null;}
+  function approvedQrEcc(){
+    const policy=productionPolicy("QR_POLICY");
+    const ecc=String(policy?.config?.ecc||"M").toUpperCase();
+    return ["L","M","Q","H"].includes(ecc)?ecc:"M";
+  }
+  function approvedBarcodeSymbology(){
+    const policy=productionPolicy("BARCODE_POLICY");
+    return String(policy?.config?.symbology||"Code128-B");
+  }
   function identityLabel(){
     if(state.identity) return `${state.identity.email} · ${state.identity.roles.join(", ")||"NO ROLE"}`;
     if(state.apiChecked&&state.authError) return "Access required";
