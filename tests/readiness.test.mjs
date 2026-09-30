@@ -20,12 +20,13 @@ assert.equal(validateProductionPolicy("PDFX_POLICY",{profile:"PDF/X-4"}).ok,fals
 assert.equal(RENDERER_CAPABILITIES.fontEmbedding,true);
 assert.equal(RENDERER_CAPABILITIES.fontOutlining,false);
 assert.deepEqual([...RENDERER_CAPABILITIES.pdfxProfiles],[]);
+assert.deepEqual([...RENDERER_CAPABILITIES.pdfxCandidateProfiles],["PDF/X-4"]);
 
 const rows=[
   {code:"BARCODE_POLICY",displayName:"Barcode",status:"APPROVED",configJson:JSON.stringify({symbology:"Code128-B",payloadRule:"SKU"})},
   {code:"QR_POLICY",displayName:"QR",status:"APPROVED",configJson:JSON.stringify({ecc:"M",payloadRule:"URL_BY_SKU"})},
   {code:"FONT_POLICY",displayName:"Font",status:"APPROVED",configJson:JSON.stringify({font:"Approved Sans",assetCode:"APPROVED_SANS",assetVersion:"1.0",embedded:true,outlined:false})},
-  {code:"PDFX_POLICY",displayName:"PDF/X",status:"APPROVED",configJson:JSON.stringify({profile:"PDF/X-4",iccAssetCode:"ISO_COATED_V2",iccAssetVersion:"1.0"})}
+  {code:"PDFX_POLICY",displayName:"PDF/X",status:"APPROVED",configJson:JSON.stringify({profile:"PDF/X-4",iccAssetCode:"ISO_COATED_V2",iccAssetVersion:"1.0",outputConditionIdentifier:"FOGRA39"})}
 ];
 
 const assets=[
