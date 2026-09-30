@@ -51,15 +51,16 @@ Policy JSON cannot claim a renderer feature that does not exist.
 
 Production also requires at least one approved FONT asset and one approved ICC_PROFILE asset. These asset approvals still do not enable renderer capability by themselves.
 
-At v1.7 the production renderer deliberately reports:
+At v1.8 the production renderer deliberately reports:
 
 - Code128-B: implemented
 - QR ECC L/M/Q/H: implemented
 - TrueType font embedding: implemented server-side
 - font outlining: not implemented
-- PDF/X: not implemented
+- PDF/X-4 candidate generation: implemented
+- externally validated PDF/X production profiles: none
 
-Production therefore remains blocked by PDF/X until that capability is actually shipped and validated.
+Production therefore remains blocked by PDF/X conformance until an independent validation / print-acceptance gate is shipped.
 
 ## R2 deep probe
 
@@ -140,3 +141,10 @@ The full application-level readiness check is performed after sign-in by an Admi
 Font and ICC assets are managed under Quality > Assets.
 
 See `docs/PRODUCTION_ASSETS.md`.
+
+
+## PDF/X-4 Candidate
+
+Candidate generation and its non-production boundary are documented in:
+
+`docs/PDFX4_CANDIDATE.md`

@@ -268,7 +268,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.7.0",
+        version: "1.8.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -588,6 +588,13 @@ export default {
         }
         const validation=validateProductionPolicy(code,current.config_json);
         if(!validation.ok)return err(409,"POLICY_VALIDATION_FAILED","Production policy validation failed.",validation.errors);
+        const approvedAssets=await loadApprovedProductionAssets(env);
+        const assetGate=summarizeProductionReadiness([
+          {code,status:"APPROVED",configJson:current.config_json,displayName:current.display_name}
+        ],undefined,approvedAssets).gates.find((x)=>x.code===code);
+        if(assetGate&&!assetGate.valid){
+          return err(409,"POLICY_ASSET_VALIDATION_FAILED","Production policy references unavailable or unsupported production assets.",assetGate.errors);
+        }
         await env.DB.prepare(`
           UPDATE production_policies
           SET status='SUBMITTED',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
@@ -617,6 +624,13 @@ export default {
         if(decision==="APPROVE"){
           const validation=validateProductionPolicy(code,current.config_json);
           if(!validation.ok)return err(409,"POLICY_VALIDATION_FAILED","Production policy validation failed.",validation.errors);
+          const approvedAssets=await loadApprovedProductionAssets(env);
+          const assetGate=summarizeProductionReadiness([
+            {code,status:"APPROVED",configJson:current.config_json,displayName:current.display_name}
+          ],undefined,approvedAssets).gates.find((x)=>x.code===code);
+          if(assetGate&&!assetGate.valid){
+            return err(409,"POLICY_ASSET_VALIDATION_FAILED","Production policy references unavailable or unsupported production assets.",assetGate.errors);
+          }
         }
         const approvalId=crypto.randomUUID(),next=decision==="APPROVE"?"APPROVED":"REJECTED";
         const stmts=[env.DB.prepare(`
@@ -883,6 +897,110 @@ export default {
         });
       }
 
+      const pdfxCandidateMatch=/^\/api\/artworks\/([^/]+)\/pdfx4-candidate-validation$/.exec(url.pathname);
+      if(request.method==="POST"&&pdfxCandidateMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const artworkId=pdfxCandidateMatch[1];
+        const fontAssetId=String(url.searchParams.get("fontAssetId")||"").trim();
+        const iccAssetId=String(url.searchParams.get("iccAssetId")||"").trim();
+        const outputConditionIdentifier=String(url.searchParams.get("outputConditionIdentifier")||"").trim();
+        if(!fontAssetId||!iccAssetId||!outputConditionIdentifier){
+          return err(400,"PDFX_CANDIDATE_INPUT_REQUIRED","fontAssetId, iccAssetId and outputConditionIdentifier are required.");
+        }
+
+        const [fontAsset,iccAsset,artwork,qrPolicy]=await Promise.all([
+          env.DB.prepare(`
+            SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+                   metadata_json AS metadataJson,status,approved_by AS approvedBy,approved_at AS approvedAt
+            FROM production_assets WHERE id=? AND asset_type='FONT' AND status='APPROVED'
+          `).bind(fontAssetId).first(),
+          env.DB.prepare(`
+            SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+                   metadata_json AS metadataJson,status,approved_by AS approvedBy,approved_at AS approvedAt
+            FROM production_assets WHERE id=? AND asset_type='ICC_PROFILE' AND status='APPROVED'
+          `).bind(iccAssetId).first(),
+          env.DB.prepare(`
+            SELECT id,sku,contract_no AS contractNo,factory_id AS factoryId,status,current_revision AS currentRevision,
+                   canonical_data_json AS canonicalDataJson
+            FROM artworks WHERE id=?
+          `).bind(artworkId).first(),
+          env.DB.prepare("SELECT config_json AS configJson FROM production_policies WHERE code='QR_POLICY'").first()
+        ]);
+        if(!fontAsset)return err(404,"APPROVED_FONT_NOT_FOUND","Approved FONT asset not found.");
+        if(!iccAsset)return err(404,"APPROVED_ICC_NOT_FOUND","Approved ICC_PROFILE asset not found.");
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+
+        let fontMetadata={},iccMetadata={};
+        try{fontMetadata=JSON.parse(fontAsset.metadataJson||"{}");}catch{}
+        try{iccMetadata=JSON.parse(iccAsset.metadataJson||"{}");}catch{}
+        if(!/^TrueType/i.test(String(fontMetadata.container||""))){
+          return err(409,"FONT_OUTLINE_UNSUPPORTED","PDF/X-4 candidate renderer currently supports approved TrueType-outline assets only.");
+        }
+        if(String(iccMetadata.colorSpace||"").toUpperCase()!=="CMYK"){
+          return err(409,"ICC_COLORSPACE_UNSUPPORTED","PDF/X-4 candidate requires an approved CMYK ICC output profile.");
+        }
+
+        let verifiedFont,verifiedIcc;
+        try{
+          [verifiedFont,verifiedIcc]=await Promise.all([
+            readVerifiedProductionAsset(env,{...fontAsset,metadata:fontMetadata}),
+            readVerifiedProductionAsset(env,{...iccAsset,metadata:iccMetadata})
+          ]);
+        }catch(e){
+          return err(409,e.message||"ASSET_READ_FAILED","Pinned candidate asset cannot be used.",e.detail);
+        }
+
+        const qrConfig=parseJsonObject(qrPolicy?.configJson);
+        const qrEcc=["L","M","Q","H"].includes(String(qrConfig.ecc||"").toUpperCase())?String(qrConfig.ecc).toUpperCase():"M";
+        let rendered;
+        try{
+          rendered=renderEmbeddedArtworkPdf({
+            snapshot:parseJsonObject(artwork.canonicalDataJson),
+            metadata:{
+              sku:artwork.sku,contractNo:artwork.contractNo,factoryId:artwork.factoryId,
+              revision:artwork.currentRevision,status:artwork.status
+            },
+            fontBytes:verifiedFont.bytes,
+            iccBytes:verifiedIcc.bytes,
+            pdfxProfile:"PDF/X-4",
+            outputConditionIdentifier,
+            qrEcc,
+            mode:"proof"
+          });
+        }catch(e){
+          return err(409,"PDFX4_CANDIDATE_RENDER_FAILED","PDF/X-4 candidate render failed.",e.message||String(e));
+        }
+        const structural=rendered.pdfxCandidate?.structural;
+        if(!structural?.ok){
+          return err(409,"PDFX4_STRUCTURAL_CHECK_FAILED","Generated PDF/X-4 candidate failed internal structural checks.",structural?.checks||[]);
+        }
+        const digest=await crypto.subtle.digest("SHA-256",rendered.bytes);
+        const pdfSha=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        await audit(env,identity,"PDFX_CANDIDATE",artworkId,"RENDER",{
+          newValue:{
+            revision:artwork.currentRevision,pdfSha256:pdfSha,
+            fontAsset:{id:fontAsset.id,sha256:fontAsset.sha256},
+            iccAsset:{id:iccAsset.id,sha256:iccAsset.sha256},
+            outputConditionIdentifier,structuralChecks:structural.checks
+          },
+          reason:"Internal PDF/X-4 candidate render; not certified for production"
+        });
+        const filename=(`PDFX4Candidate_${artwork.sku||artworkId}_${artwork.currentRevision}.pdf`).replace(/[^a-zA-Z0-9._-]+/g,"_");
+        return new Response(rendered.bytes,{
+          status:200,
+          headers:{
+            "content-type":"application/pdf",
+            "content-disposition":`attachment; filename="${filename}"`,
+            "cache-control":"no-store",
+            "x-cas-renderer":"pdfx4-candidate-1.8.0",
+            "x-cas-pdf-sha256":pdfSha,
+            "x-cas-font-sha256":fontAsset.sha256,
+            "x-cas-icc-sha256":iccAsset.sha256,
+            "x-cas-pdfx-candidate":"STRUCTURAL_PASS"
+          }
+        });
+      }
+
       const productionRenderMatch=/^\/api\/artworks\/([^/]+)\/render-production-pdf$/.exec(url.pathname);
       if(request.method==="POST"&&productionRenderMatch){
         if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
@@ -923,19 +1041,32 @@ export default {
         const policyMap=new Map(policyRows.map((p)=>[p.code,parseJsonObject(p.configJson)]));
         const fontPolicy=policyMap.get("FONT_POLICY")||{};
         const qrPolicy=policyMap.get("QR_POLICY")||{};
+        const pdfxPolicy=policyMap.get("PDFX_POLICY")||{};
         const fontAsset=approvedAssets.find((a)=>
           a.assetType==="FONT" &&
           String(a.code).toUpperCase()===String(fontPolicy.assetCode||"").toUpperCase() &&
           String(a.version)===String(fontPolicy.assetVersion||"")
         );
+        const iccAsset=approvedAssets.find((a)=>
+          a.assetType==="ICC_PROFILE" &&
+          String(a.code).toUpperCase()===String(pdfxPolicy.iccAssetCode||"").toUpperCase() &&
+          String(a.version)===String(pdfxPolicy.iccAssetVersion||"")
+        );
         if(!fontAsset)return err(409,"PINNED_FONT_NOT_FOUND","Pinned approved FONT asset was not found.");
-        let verified;
-        try{verified=await readVerifiedProductionAsset(env,fontAsset);}
-        catch(e){
+        if(!iccAsset)return err(409,"PINNED_ICC_NOT_FOUND","Pinned approved ICC_PROFILE asset was not found.");
+        let verifiedFont,verifiedIcc;
+        try{
+          [verifiedFont,verifiedIcc]=await Promise.all([
+            readVerifiedProductionAsset(env,fontAsset),
+            readVerifiedProductionAsset(env,iccAsset)
+          ]);
+        }catch(e){
           if(e.message==="ASSET_HASH_MISMATCH"){
-            await securityEvent(env,identity,"PRODUCTION_ASSET_HASH_MISMATCH",request,{productionAssetId:fontAsset.id,expected:fontAsset.sha256});
+            await securityEvent(env,identity,"PRODUCTION_ASSET_HASH_MISMATCH",request,{
+              fontAssetId:fontAsset.id,iccAssetId:iccAsset.id
+            });
           }
-          return err(409,e.message||"ASSET_READ_FAILED","Pinned font asset cannot be used.",e.detail);
+          return err(409,e.message||"ASSET_READ_FAILED","Pinned production asset cannot be used.",e.detail);
         }
 
         const snapshot=parseJsonObject(artwork.canonicalDataJson);
@@ -947,10 +1078,16 @@ export default {
               sku:artwork.sku,contractNo:artwork.contractNo,factoryId:artwork.factoryId,
               revision:artwork.currentRevision,status:artwork.status
             },
-            fontBytes:verified.bytes,
+            fontBytes:verifiedFont.bytes,
+            iccBytes:verifiedIcc.bytes,
+            pdfxProfile:String(pdfxPolicy.profile||""),
+            outputConditionIdentifier:String(pdfxPolicy.outputConditionIdentifier||""),
             qrEcc:String(qrPolicy.ecc||"M").toUpperCase(),
             mode:"production"
           });
+          if(pdfxPolicy.profile&&rendered.pdfxCandidate&&!rendered.pdfxCandidate.structural?.ok){
+            return err(409,"PDFX4_STRUCTURAL_CHECK_FAILED","Server production PDF failed internal PDF/X-4 structural checks.",rendered.pdfxCandidate.structural?.checks||[]);
+          }
         }catch(e){
           return err(409,"PRODUCTION_RENDER_FAILED","Server production PDF rendering failed.",e.message||String(e));
         }
@@ -958,11 +1095,13 @@ export default {
         const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
         const objectKey=`artworks/${artworkId}/${artwork.currentRevision}/Production-${sha256.slice(0,16)}.pdf`;
         const manifest={
-          rendererVersion:"embedded-truetype-1.7.0",
+          rendererVersion:"pdfx4-embedded-truetype-1.8.0",
           artworkId,
           revision:artwork.currentRevision,
           artifactSha256:sha256,
           fontAsset:{id:fontAsset.id,code:fontAsset.code,version:fontAsset.version,sha256:fontAsset.sha256,approvedBy:fontAsset.approvedBy,approvedAt:fontAsset.approvedAt},
+          iccAsset:{id:iccAsset.id,code:iccAsset.code,version:iccAsset.version,sha256:iccAsset.sha256,approvedBy:iccAsset.approvedBy,approvedAt:iccAsset.approvedAt},
+          pdfx:{profile:pdfxPolicy.profile,outputConditionIdentifier:pdfxPolicy.outputConditionIdentifier,structural:rendered.pdfxCandidate?.structural||null},
           readiness,
           policies:policyRows.map((p)=>({code:p.code,status:p.status,config:parseJsonObject(p.configJson),approvedBy:p.approvedBy,approvedAt:p.approvedAt})),
           generatedAt:new Date().toISOString(),
@@ -973,9 +1112,9 @@ export default {
         await env.DB.prepare(`
           INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
           VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
-        `).bind(exportId,artworkId,artwork.currentRevision,"PRODUCTION_PDF",objectKey,sha256,"embedded-truetype-1.7.0",JSON.stringify(manifest)).run();
+        `).bind(exportId,artworkId,artwork.currentRevision,"PRODUCTION_PDF",objectKey,sha256,"pdfx4-embedded-truetype-1.8.0",JSON.stringify(manifest)).run();
         await audit(env,identity,"EXPORT",exportId,"SERVER_RENDER_PRODUCTION_PDF",{
-          newValue:{artworkId,revision:artwork.currentRevision,objectKey,sha256,fontAssetId:fontAsset.id},
+          newValue:{artworkId,revision:artwork.currentRevision,objectKey,sha256,fontAssetId:fontAsset.id,iccAssetId:iccAsset.id,pdfxProfile:pdfxPolicy.profile},
           reason:"Authoritative server-side embedded-font production PDF"
         });
         const filename=(`${artwork.sku||artworkId}_${artwork.currentRevision}_Production.pdf`).replace(/[^a-zA-Z0-9._-]+/g,"_");
@@ -987,8 +1126,10 @@ export default {
             "cache-control":"no-store",
             "x-cas-export-id":exportId,
             "x-cas-artifact-sha256":sha256,
-            "x-cas-renderer":"embedded-truetype-1.7.0",
-            "x-cas-font-sha256":fontAsset.sha256
+            "x-cas-renderer":"pdfx4-embedded-truetype-1.8.0",
+            "x-cas-font-sha256":fontAsset.sha256,
+            "x-cas-icc-sha256":iccAsset.sha256,
+            "x-cas-pdfx-profile":String(pdfxPolicy.profile||"")
           }
         });
       }

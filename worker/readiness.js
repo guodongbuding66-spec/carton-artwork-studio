@@ -10,7 +10,8 @@ export const RENDERER_CAPABILITIES = Object.freeze({
   qrEcc: Object.freeze(["L","M","Q","H"]),
   fontEmbedding: true,
   fontOutlining: false,
-  pdfxProfiles: Object.freeze([])
+  pdfxProfiles: Object.freeze([]),
+  pdfxCandidateProfiles: Object.freeze(["PDF/X-4"])
 });
 
 export function parsePolicyConfig(value) {
@@ -72,8 +73,10 @@ export function validateProductionPolicy(code, value, capabilities = RENDERER_CA
     const profile=String(data.profile||"").trim().toUpperCase();
     const iccAssetCode=String(data.iccAssetCode||"").trim().toUpperCase();
     const iccAssetVersion=String(data.iccAssetVersion||"").trim();
+    const outputConditionIdentifier=String(data.outputConditionIdentifier||"").trim();
     if(!iccAssetCode) errors.push("PDFX_POLICY iccAssetCode is required.");
     if(!iccAssetVersion) errors.push("PDFX_POLICY iccAssetVersion is required.");
+    if(!outputConditionIdentifier) errors.push("PDFX_POLICY outputConditionIdentifier is required.");
     if(!profile || /UNCONFIRMED/i.test(profile)) {
       errors.push("PDF/X profile must be confirmed.");
     } else if(!capabilities.pdfxProfiles.map((x)=>String(x).toUpperCase()).includes(profile)) {
@@ -118,6 +121,15 @@ export function summarizeProductionReadiness(rows, capabilities = RENDERER_CAPAB
         String(x.version||"")===String(data.iccAssetVersion)
       );
       if(!asset) errors.push(`Approved ICC_PROFILE asset ${data.iccAssetCode}@${data.iccAssetVersion} was not found.`);
+      else{
+        let metadata=asset.metadata||{};
+        if(!metadata.colorSpace&&asset.metadataJson){
+          try{metadata=JSON.parse(asset.metadataJson);}catch{}
+        }
+        if(String(metadata.colorSpace||"").toUpperCase()!=="CMYK"){
+          errors.push(`ICC_PROFILE asset ${data.iccAssetCode}@${data.iccAssetVersion} is not a CMYK output profile supported by the PDF/X-4 candidate renderer.`);
+        }
+      }
     }
     const approved=String(row?.status||"").toUpperCase()==="APPROVED";
     return {
