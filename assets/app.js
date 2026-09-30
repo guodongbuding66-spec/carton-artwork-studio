@@ -120,7 +120,7 @@
           <header class="topbar">
             <div class="breadcrumb">Carton Artwork Studio /</div><div class="page-title">${esc(titleZh)}</div><div class="breadcrumb">${esc(titleEn)}</div>
             <div class="spacer"></div>
-            <label class="search"><input placeholder="搜索 SKU / Contract / CRN…" /></label>
+            <label class="search"><input id="global-search" placeholder="搜索 SKU / Contract / Artwork…" /></label>
             <span class="dev">DEV</span><span class="subtle mono">${state.identity?esc(state.identity.email):"No Access identity"}</span><button class="icon-btn" title="Notifications">◔</button><div class="avatar">${state.identity?esc((state.identity.displayName||state.identity.email).slice(0,2).toUpperCase()):"—"}</div>
           </header>
           <main class="content">${body}</main>
@@ -429,12 +429,12 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="admin")await loadAdminUsers();});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();}});
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=()=>{state.templateTab=b.dataset.templateTab;render();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=()=>{state.contentTab=b.dataset.contentTab;render();});
-    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=()=>{state.qualityTab=b.dataset.qualityTab;render();});
-    document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>{state.dialog="impact";render();});
+    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();});
+    document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
     document.querySelectorAll("[data-art]").forEach(el=>{
       el.oninput=el.onchange=()=>{
         const k=el.dataset.art;
@@ -456,6 +456,9 @@
     document.querySelectorAll("[data-action]").forEach(b=>b.onclick=()=>handleAction(b.dataset.action));
     document.querySelectorAll("[data-resolve-comment]").forEach(b=>b.onclick=()=>resolveComment(b.dataset.resolveComment));
     document.querySelectorAll("[data-save-user-roles]").forEach(b=>b.onclick=()=>saveUserRoles(b.dataset.saveUserRoles));
+    document.querySelectorAll("[data-open-artwork]").forEach(b=>b.onclick=()=>openRemoteArtwork(b.dataset.openArtwork));
+    const search=document.getElementById("global-search");
+    if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
     const file=document.getElementById("batch-file");
     if(file) file.onchange=async()=>{ if(file.files?.[0]) await importBatch(file.files[0]); };
   }
@@ -469,6 +472,9 @@
     if(action==="new-revision") return createNewRevision();
     if(action==="add-comment") return addComment();
     if(action==="create-user") return createAdminUser();
+    if(action==="refresh-dashboard") return loadRemoteArtworks();
+    if(action==="refresh-audit") return loadAudit();
+    if(action==="save-factory") return saveFactoryMaster();
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
     if(action==="dry-run"){
@@ -479,8 +485,7 @@
     if(action==="download-errors"){downloadText("failed_rows.csv",B.failedRowsCsv(state.batchReview),"text/csv;charset=utf-8");}
     if(action==="batch-generate") return exportBatchProofs();
     if(action==="save-mapping") return saveMappingProfile();
-    if(action==="close-dialog"){state.dialog=null;render();}
-    if(action==="impact-revision"){state.dialog=null;render();toast("已生成受影响 Artwork 的新 Revision 任务","success");}
+    if(action==="close-dialog"){state.dialog=null;state.impact=null;render();}
   }
 
   async function loadReferenceData(renderAfter=true){
