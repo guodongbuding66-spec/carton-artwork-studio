@@ -156,7 +156,7 @@ export default {
         let revision=current;
         let revisionId=existing?.id||crypto.randomUUID();
         const snapshot=JSON.stringify(b.dataSnapshot||JSON.parse(artwork.canonical_data_json||"{}"));
-        if(existing && !["DRAFT","REJECTED"].includes(String(existing.status||"").toUpperCase())) {
+        if(existing && String(existing.status||"").toUpperCase()!=="DRAFT") {
           const n=(Number(current.replace(/\D/g,""))||0)+1;
           revision="R"+String(n).padStart(2,"0");
           revisionId=crypto.randomUUID();
