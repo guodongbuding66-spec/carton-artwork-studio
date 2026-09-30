@@ -52,6 +52,7 @@ assert.equal(permissionForRequest("POST","/api/production-assets/upload"),"PRODU
 assert.equal(permissionForRequest("POST","/api/production-assets/a1/submit"),"PRODUCTION_ASSET_WRITE");
 assert.equal(permissionForRequest("POST","/api/production-assets/a1/approval"),"PRODUCTION_ASSET_APPROVE");
 assert.equal(permissionForRequest("POST","/api/artworks/a1/font-embed-validation"),"PRODUCTION_ASSET_APPROVE");
+assert.equal(permissionForRequest("POST","/api/artworks/a1/output-intent-validation"),"PRODUCTION_ASSET_APPROVE");
 assert.equal(permissionForRequest("POST","/api/artworks/a1/render-production-pdf"),"EXPORT_PRODUCTION");
 assert.equal(permissionForRequest("GET","/api/system/readiness"),"ADMIN");
 assert.equal(permissionForRequest("POST","/api/system/readiness/probe"),"ADMIN");
