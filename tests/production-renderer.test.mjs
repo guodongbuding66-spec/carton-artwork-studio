@@ -67,6 +67,18 @@ function makeSyntheticTrueType(){
   return out;
 }
 
+function makeSyntheticIcc(){
+  const b=new Uint8Array(132);
+  putU32(b,0,132);
+  b[8]=4;b[9]=0x30;
+  b.set(tagBytes("prtr"),12);
+  b.set(tagBytes("CMYK"),16);
+  b.set(tagBytes("Lab "),20);
+  b.set(tagBytes("acsp"),36);
+  putU32(b,128,0);
+  return b;
+}
+
 const snapshot={
   order:{contractNo:"HT24010213",market:"US"},
   product:{sku:"KF210215US-02PM-001"},
@@ -93,4 +105,18 @@ assert.ok(rendered.bytes.length>font.length);
 assert.equal(rendered.qr.ecc,"M");
 assert.equal(rendered.barcode.symbology,"CODE128-B");
 
-console.log("Embedded TrueType production renderer tests passed.");
+const icc=makeSyntheticIcc();
+const withOutputIntent=renderEmbeddedArtworkPdf({
+  snapshot,fontBytes:font,iccBytes:icc,qrEcc:"M",mode:"production",
+  outputIntent:{identifier:"Synthetic CMYK",info:"Synthetic CMYK",components:4,pdfxVersion:"PDF/X-4"}
+});
+const pdfxText=Buffer.from(withOutputIntent.bytes).toString("latin1");
+assert.ok(pdfxText.startsWith("%PDF-1.6"));
+assert.ok(pdfxText.includes("/OutputIntents [10 0 R]"));
+assert.ok(pdfxText.includes("/S /GTS_PDFX"));
+assert.ok(pdfxText.includes("/DestOutputProfile 11 0 R"));
+assert.ok(pdfxText.includes("/Type /Metadata /Subtype /XML"));
+assert.ok(pdfxText.includes("PDF/X-4"));
+assert.equal(withOutputIntent.outputIntent.embedded,true);
+
+console.log("Embedded TrueType + ICC OutputIntent renderer tests passed.");
