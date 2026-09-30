@@ -94,6 +94,12 @@
           body: JSON.stringify(payload)
         });
       },
+      async createRevision(id, payload) {
+        return request(`/api/artworks/${encodeURIComponent(id)}/revisions`, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      },
       async preflight(id, payload) {
         return request(`/api/artworks/${encodeURIComponent(id)}/preflight`, {
           method: "POST",
