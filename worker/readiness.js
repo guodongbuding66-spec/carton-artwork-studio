@@ -10,6 +10,8 @@ export const RENDERER_CAPABILITIES = Object.freeze({
   qrEcc: Object.freeze(["L","M","Q","H"]),
   fontEmbedding: true,
   fontOutlining: false,
+  iccOutputIntent: true,
+  pdfxMetadataCandidate: true,
   pdfxProfiles: Object.freeze([])
 });
 
