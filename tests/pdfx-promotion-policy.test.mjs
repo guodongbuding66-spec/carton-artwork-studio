@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import crypto from "node:crypto";
 import {
   PDFX_PRODUCTION_PROMOTION_POLICY,
   validateTrustedPrimaryValidatorEvidence,
@@ -12,6 +14,8 @@ assert.equal(p.profile,"PDF/X-4");
 assert.equal(p.primaryValidator.version,"17.0.683");
 assert.equal(p.secondaryValidator.version,"26.07");
 assert.equal(p.primaryValidator.ruleset.sha256,"f658882bd2d367839ea2fb3b3bce027320de4a70d480169feb3ba860588a6d80");
+const rulesetBytes=fs.readFileSync("config/pdfx/CAS-PDFX4-PRODUCTION-1.json");
+assert.equal(crypto.createHash("sha256").update(rulesetBytes).digest("hex"),p.primaryValidator.ruleset.sha256);
 
 const primary=(sha)=>({
   status:"PASS",
