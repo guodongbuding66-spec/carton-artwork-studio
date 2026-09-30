@@ -1004,6 +1004,171 @@ export default {
         });
       }
 
+      const externalPdfxValidationMatch=/^\/api\/artworks\/([^/]+)\/pdfx4-external-validation$/.exec(url.pathname);
+      if(request.method==="POST"&&externalPdfxValidationMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const validatorConfig=validateValidatorConfig(env);
+        if(!validatorConfig.ok)return err(503,"PDFX_VALIDATOR_NOT_CONFIGURED","External PDF/X validator is not configured.",validatorConfig.errors);
+
+        const artworkId=externalPdfxValidationMatch[1];
+        const fontAssetId=String(url.searchParams.get("fontAssetId")||"").trim();
+        const iccAssetId=String(url.searchParams.get("iccAssetId")||"").trim();
+        const outputConditionIdentifier=String(url.searchParams.get("outputConditionIdentifier")||"").trim();
+        if(!fontAssetId||!iccAssetId||!outputConditionIdentifier){
+          return err(400,"PDFX_VALIDATION_INPUT_REQUIRED","fontAssetId, iccAssetId and outputConditionIdentifier are required.");
+        }
+
+        const [fontAsset,iccAsset,artwork,qrPolicy]=await Promise.all([
+          env.DB.prepare(`
+            SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+                   metadata_json AS metadataJson,status,approved_by AS approvedBy,approved_at AS approvedAt
+            FROM production_assets WHERE id=? AND asset_type='FONT' AND status='APPROVED'
+          `).bind(fontAssetId).first(),
+          env.DB.prepare(`
+            SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+                   metadata_json AS metadataJson,status,approved_by AS approvedBy,approved_at AS approvedAt
+            FROM production_assets WHERE id=? AND asset_type='ICC_PROFILE' AND status='APPROVED'
+          `).bind(iccAssetId).first(),
+          env.DB.prepare(`
+            SELECT id,sku,contract_no AS contractNo,factory_id AS factoryId,status,current_revision AS currentRevision,
+                   canonical_data_json AS canonicalDataJson
+            FROM artworks WHERE id=?
+          `).bind(artworkId).first(),
+          env.DB.prepare("SELECT config_json AS configJson FROM production_policies WHERE code='QR_POLICY'").first()
+        ]);
+        if(!fontAsset)return err(404,"APPROVED_FONT_NOT_FOUND","Approved FONT asset not found.");
+        if(!iccAsset)return err(404,"APPROVED_ICC_NOT_FOUND","Approved ICC_PROFILE asset not found.");
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+
+        let fontMetadata={},iccMetadata={};
+        try{fontMetadata=JSON.parse(fontAsset.metadataJson||"{}");}catch{}
+        try{iccMetadata=JSON.parse(iccAsset.metadataJson||"{}");}catch{}
+        if(!/^TrueType/i.test(String(fontMetadata.container||""))){
+          return err(409,"FONT_OUTLINE_UNSUPPORTED","External PDF/X validation currently requires an approved TrueType-outline font asset.");
+        }
+        if(String(iccMetadata.colorSpace||"").toUpperCase()!=="CMYK"){
+          return err(409,"ICC_COLORSPACE_UNSUPPORTED","External PDF/X validation requires an approved CMYK ICC output profile.");
+        }
+
+        let verifiedFont,verifiedIcc;
+        try{
+          [verifiedFont,verifiedIcc]=await Promise.all([
+            readVerifiedProductionAsset(env,{...fontAsset,metadata:fontMetadata}),
+            readVerifiedProductionAsset(env,{...iccAsset,metadata:iccMetadata})
+          ]);
+        }catch(e){
+          return err(409,e.message||"ASSET_READ_FAILED","Pinned validation asset cannot be used.",e.detail);
+        }
+
+        const qrConfig=parseJsonObject(qrPolicy?.configJson);
+        const qrEcc=["L","M","Q","H"].includes(String(qrConfig.ecc||"").toUpperCase())?String(qrConfig.ecc).toUpperCase():"M";
+        let rendered;
+        try{
+          rendered=renderEmbeddedArtworkPdf({
+            snapshot:parseJsonObject(artwork.canonicalDataJson),
+            metadata:{
+              sku:artwork.sku,contractNo:artwork.contractNo,factoryId:artwork.factoryId,
+              revision:artwork.currentRevision,status:artwork.status
+            },
+            fontBytes:verifiedFont.bytes,
+            iccBytes:verifiedIcc.bytes,
+            pdfxProfile:"PDF/X-4",
+            outputConditionIdentifier,
+            qrEcc,
+            mode:"proof"
+          });
+        }catch(e){
+          return err(409,"PDFX4_CANDIDATE_RENDER_FAILED","PDF/X-4 candidate render failed.",e.message||String(e));
+        }
+        const structural=rendered.pdfxCandidate?.structural;
+        if(!structural?.ok){
+          return err(409,"PDFX4_STRUCTURAL_CHECK_FAILED","Generated PDF/X-4 candidate failed internal structural checks.",structural?.checks||[]);
+        }
+
+        const digest=await crypto.subtle.digest("SHA-256",rendered.bytes);
+        const pdfSha=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+
+        let external;
+        try{
+          external=await runExternalPdfxValidation(rendered.bytes,{
+            profile:"PDF/X-4",
+            artifactSha256:pdfSha
+          },env);
+        }catch(e){
+          const runId=crypto.randomUUID();
+          await env.DB.prepare(`
+            INSERT INTO pdfx_validation_runs(
+              id,artwork_id,revision,profile,artifact_sha256,validator_name,validator_version,status,report_json,created_by,created_at
+            ) VALUES(?,?,?,?,?,?,?,'ERROR',?,?,CURRENT_TIMESTAMP)
+          `).bind(
+            runId,artworkId,artwork.currentRevision,"PDF/X-4",pdfSha,
+            "external-validator","unknown",JSON.stringify({error:e.message||String(e),detail:e.detail||null}),
+            identity.email
+          ).run();
+          await audit(env,identity,"PDFX_VALIDATION",runId,"ERROR",{
+            newValue:{artworkId,revision:artwork.currentRevision,pdfSha256:pdfSha,error:e.message||String(e)},
+            reason:"External PDF/X validator bridge failed"
+          });
+          return err(502,e.message||"PDFX_VALIDATOR_FAILED","External PDF/X validation failed.",e.detail);
+        }
+
+        const runId=crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO pdfx_validation_runs(
+            id,artwork_id,revision,profile,artifact_sha256,validator_name,validator_version,status,report_json,created_by,created_at
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        `).bind(
+          runId,artworkId,artwork.currentRevision,"PDF/X-4",pdfSha,
+          external.validator,external.version,external.status,JSON.stringify({
+            checks:external.checks,
+            report:external.report,
+            fontAsset:{id:fontAsset.id,code:fontAsset.code,version:fontAsset.version,sha256:fontAsset.sha256},
+            iccAsset:{id:iccAsset.id,code:iccAsset.code,version:iccAsset.version,sha256:iccAsset.sha256},
+            outputConditionIdentifier,
+            internalStructural:structural
+          }),identity.email
+        ).run();
+
+        await audit(env,identity,"PDFX_VALIDATION",runId,external.status,{
+          newValue:{
+            artworkId,revision:artwork.currentRevision,pdfSha256:pdfSha,
+            validator:external.validator,version:external.version,status:external.status
+          },
+          reason:"External PDF/X validator result"
+        });
+
+        return json({data:{
+          id:runId,
+          artworkId,
+          revision:artwork.currentRevision,
+          profile:"PDF/X-4",
+          artifactSha256:pdfSha,
+          validator:external.validator,
+          validatorVersion:external.version,
+          status:external.status,
+          checks:external.checks,
+          report:external.report
+        }},{status:201});
+      }
+
+      const pdfxValidationListMatch=/^\/api\/artworks\/([^/]+)\/pdfx-validations$/.exec(url.pathname);
+      if(request.method==="GET"&&pdfxValidationListMatch){
+        const artworkId=pdfxValidationListMatch[1];
+        const {results}=await env.DB.prepare(`
+          SELECT id,revision,profile,artifact_sha256 AS artifactSha256,
+                 validator_name AS validator,validator_version AS validatorVersion,status,
+                 report_json AS reportJson,created_by AS createdBy,created_at AS createdAt
+          FROM pdfx_validation_runs
+          WHERE artwork_id=?
+          ORDER BY created_at DESC LIMIT 50
+        `).bind(artworkId).all();
+        return json({data:(results||[]).map((x)=>{
+          let report={};
+          try{report=JSON.parse(x.reportJson||"{}");}catch{}
+          return {...x,report};
+        })});
+      }
+
       const productionRenderMatch=/^\/api\/artworks\/([^/]+)\/render-production-pdf$/.exec(url.pathname);
       if(request.method==="POST"&&productionRenderMatch){
         if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
