@@ -45,7 +45,12 @@
     authError: null,
     comments: [],
     commentsLoading: false,
-    adminUsers: []
+    adminUsers: [],
+    auditLogs: [],
+    factories: [...D.factories],
+    templates: [],
+    remoteArtworks: [],
+    impact: null
   };
 
   const navItems = [
@@ -62,10 +67,10 @@
     return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" })[c]);
   }
 
-  function computed() { return D.computed(state.artwork); }
+  function computed() { return D.computed(state.artwork,state.factories); }
   function geometry() { return D.sideSealGeometry(state.artwork); }
   function checksFor(artwork) {
-    const groups=D.runPreflight(artwork);
+    const groups=D.runPreflight(artwork,state.factories);
     const barcode=groups.Codes?.find(x=>x.id==="barcode");
     if(barcode){
       try{
@@ -90,8 +95,8 @@
   }
   function checks() { return checksFor(state.artwork); }
   function summary() { return D.preflightSummary(checks()); }
-  function factory() { return D.findFactory(state.artwork.factoryId); }
-  function canonical() { return D.canonicalData(state.artwork); }
+  function factory() { return D.findFactory(state.artwork.factoryId,state.factories); }
+  function canonical() { return D.canonicalData(state.artwork,state.factories); }
   function hasRole(role){return Boolean(state.identity?.roles?.includes(role));}
   function permitted(key){return Boolean(state.identity?.permissions?.[key]);}
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
@@ -199,7 +204,7 @@
         <div class="notice"><strong>Package Meas</strong><br><span class="mono">${esc(c.packageMeas)}</span></div>
       `)}
       ${formSection("Production 生产", `
-        ${field("Factory","Master Data",`<select class="select" data-art="factoryId" ${isArtworkLocked()?"disabled":""}>${D.factories.map(x=>`<option value="${x.id}" ${a.factoryId===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select>`)}
+        ${field("Factory","Master Data",`<select class="select" data-art="factoryId" ${isArtworkLocked()?"disabled":""}>${state.factories.map(x=>`<option value="${x.id}" ${a.factoryId===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select>`)}
         ${field("CRN","factory.crn",`<input class="input mono" readonly value="${esc(f?.crn||"")}" />`)}
         ${field("Country of Origin","derived",`<input class="input" readonly value="${esc(f?.country||"")}" />`)}
       `)}
@@ -430,7 +435,7 @@
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
     if(action==="dry-run"){
-      state.batchReview=B.buildReview(state.batchRecords,state.batchIssues,D,{defaults:D.defaultArtwork,factories:D.factories,codes:C});
+      state.batchReview=B.buildReview(state.batchRecords,state.batchIssues,D,{defaults:D.defaultArtwork,factories:state.factories,codes:C});
       state.batchStep=Math.max(state.batchStep,3);render();
       const s=B.summarize(state.batchReview);toast(`Dry Run: ${s.passed} passed / ${s.failed} failed`,s.failed?"error":"success");
     }
@@ -513,7 +518,7 @@
     if(!permitted("artworkWrite")) throw new Error("Artwork Write permission is required.");
     localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
     if(!state.apiOnline)return null;
-    const canonicalData=D.canonicalData(state.artwork);
+    const canonicalData=D.canonicalData(state.artwork,state.factories);
     try{
       let response;
       if(state.remoteArtworkId){
@@ -587,7 +592,7 @@
       await persistPreflight();
       const pfStatus=s.error>0?"ERROR":s.warning>0?"WARNING":"PASS";
       const response=await api.submitArtwork(state.remoteArtworkId,{
-        dataSnapshot:D.canonicalData(state.artwork),
+        dataSnapshot:D.canonicalData(state.artwork,state.factories),
         preflightStatus:pfStatus,
         blockingErrors:s.blocking,
         preflightProfileVersion:"US_SIDE_SEAL_K_ONLY_V1@1",
@@ -628,7 +633,7 @@
     state.apiBusy=true;render();
     try{
       const response=await api.createRevision(state.remoteArtworkId,{
-        dataSnapshot:D.canonicalData(state.artwork),
+        dataSnapshot:D.canonicalData(state.artwork,state.factories),
         preflightProfileVersion:"US_SIDE_SEAL_K_ONLY_V1@1",
         actor:"web"
       });
@@ -653,7 +658,7 @@
     const qr=C.qrMatrix(artwork.qr,"M").matrix;
     const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode});
     const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork)}`;
-    const snapshot=JSON.stringify(D.canonicalData(artwork),null,2);
+    const snapshot=JSON.stringify(D.canonicalData(artwork,state.factories),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
     const manifest=D.manifest(artwork,"vector-svg-pdf-0.7.0");
@@ -737,7 +742,7 @@
     try{
       const parsed=await X.parseFile(file);
       const result=X.rowsToRecords(parsed.rows,{fillDown:true});
-      const review=B.buildReview(result.records,result.issues,D,{defaults:D.defaultArtwork,factories:D.factories,codes:C});
+      const review=B.buildReview(result.records,result.issues,D,{defaults:D.defaultArtwork,factories:state.factories,codes:C});
       state.batchSource=`${file.name} · ${parsed.source}`;
       state.batchRecords=result.records;
       state.batchIssues=result.issues;
@@ -775,7 +780,7 @@
       rowNo:r.row,
       sku:r.sku,
       status:r.status,
-      canonicalData:D.canonicalData(r.artwork),
+      canonicalData:D.canonicalData(r.artwork,state.factories),
       issues:r.issues
     }));
     for(let i=0;i<rows.length;i+=500) await api.saveImportRows(jobId,rows.slice(i,i+500));
