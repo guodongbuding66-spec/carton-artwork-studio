@@ -96,7 +96,7 @@ export function summarizeProductionReadiness(rows, capabilities = RENDERER_CAPAB
     const data=validation.data||{};
     if(code==="FONT_POLICY"&&data.assetCode&&data.assetVersion){
       const asset=approvedAssets.find((x)=>
-        String(x.assetType??x.asset_type||"").toUpperCase()==="FONT" &&
+        String((x.assetType??x.asset_type)||"").toUpperCase()==="FONT" &&
         String(x.code||"").toUpperCase()===String(data.assetCode).toUpperCase() &&
         String(x.version||"")===String(data.assetVersion)
       );
@@ -113,7 +113,7 @@ export function summarizeProductionReadiness(rows, capabilities = RENDERER_CAPAB
     }
     if(code==="PDFX_POLICY"&&data.iccAssetCode&&data.iccAssetVersion){
       const asset=approvedAssets.find((x)=>
-        String(x.assetType??x.asset_type||"").toUpperCase()==="ICC_PROFILE" &&
+        String((x.assetType??x.asset_type)||"").toUpperCase()==="ICC_PROFILE" &&
         String(x.code||"").toUpperCase()===String(data.iccAssetCode).toUpperCase() &&
         String(x.version||"")===String(data.iccAssetVersion)
       );
