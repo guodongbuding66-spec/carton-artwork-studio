@@ -619,7 +619,23 @@
         <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="upload-production-asset" ${state.productionAssetBusy?"disabled":""}>${state.productionAssetBusy?"Uploading…":"Upload Draft Asset"}</button></div>
       </div>`:"";
 
-    return `${uploader}${rows.length?table(["Type","Code","Version","File","Status","SHA-256","Metadata","Actions"],rows,true):'<div class="card-body"><div class="notice">尚无 Production Asset。正式 Font / ICC Profile 必须通过受控上传与四眼审批后才能进入后续 renderer 集成。</div></div>'}`;
+    const approvedFonts=(state.productionAssets||[]).filter(a=>a.assetType==="FONT"&&a.status==="APPROVED"&&/^TrueType/i.test(String(a.metadata?.container||"")));
+    const approvedIcc=(state.productionAssets||[]).filter(a=>a.assetType==="ICC_PROFILE"&&a.status==="APPROVED"&&String(a.metadata?.colorSpace||"").toUpperCase()==="CMYK");
+    const candidateTool=permitted("productionAssetApprove")?`
+      <div class="card-body" style="border-bottom:1px solid #e5e9ee">
+        <div class="notice warn" style="margin-bottom:10px"><strong>PDF/X-4 Candidate Test</strong> 只做内部结构验证，不代表通过 ISO/GWG/印厂外部 Preflight，不能作为正式生产稿。</div>
+        <div class="row2">
+          <div class="field"><label>Approved TrueType Font</label><select id="pdfx-candidate-font" class="input"><option value="">Select…</option>${approvedFonts.map(a=>`<option value="${esc(a.id)}">${esc(a.code)} @ ${esc(a.version)}</option>`).join("")}</select></div>
+          <div class="field"><label>Approved CMYK ICC</label><select id="pdfx-candidate-icc" class="input"><option value="">Select…</option>${approvedIcc.map(a=>`<option value="${esc(a.id)}">${esc(a.code)} @ ${esc(a.version)}</option>`).join("")}</select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Output Condition Identifier</label><input id="pdfx-output-condition" class="input mono" placeholder="Printer / FOGRA / GRACoL condition identifier"/></div>
+          <div class="field"><label>Artwork</label><input class="input mono" disabled value="${esc(state.remoteArtworkId||"Open a D1 Artwork first")}"/></div>
+        </div>
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="pdfx4-candidate" ${!state.remoteArtworkId||!approvedFonts.length||!approvedIcc.length?"disabled":""}>Render PDF/X-4 Candidate</button></div>
+      </div>`:"";
+
+    return `${uploader}${candidateTool}${rows.length?table(["Type","Code","Version","File","Status","SHA-256","Metadata","Actions"],rows,true):'<div class="card-body"><div class="notice">尚无 Production Asset。正式 Font / ICC Profile 必须通过受控上传与四眼审批后才能进入后续 renderer 集成。</div></div>'}`;
   }
 
   function renderQuality(){
@@ -787,6 +803,7 @@
     if(action==="refresh-system-readiness") return loadSystemReadiness();
     if(action==="run-readiness-probe") return runSystemReadinessProbe();
     if(action==="upload-production-asset") return uploadProductionAsset();
+    if(action==="pdfx4-candidate") return renderPdfX4Candidate();
     if(action==="run-compare") return loadRevisionCompare();
     if(action==="save-factory") return saveFactoryMaster();
     if(action==="proof") return exportProof();
@@ -974,6 +991,26 @@
       render();
       toast(`${namespace} Master 已创建`,"success");
     }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function renderPdfX4Candidate(){
+    if(!state.apiOnline||!permitted("productionAssetApprove")){toast("需要 Production Asset Approve 权限。","error");return;}
+    if(!state.remoteArtworkId){toast("请先从 Dashboard 打开一个 D1 Artwork。","error");return;}
+    const fontAssetId=document.getElementById("pdfx-candidate-font")?.value||"";
+    const iccAssetId=document.getElementById("pdfx-candidate-icc")?.value||"";
+    const outputConditionIdentifier=document.getElementById("pdfx-output-condition")?.value?.trim()||"";
+    if(!fontAssetId||!iccAssetId||!outputConditionIdentifier){
+      toast("请选择 Approved Font、Approved CMYK ICC，并填写 Output Condition Identifier。","error");return;
+    }
+    try{
+      const result=await api.renderPdfX4Candidate(state.remoteArtworkId,{fontAssetId,iccAssetId,outputConditionIdentifier});
+      downloadBlob(result.filename||"PDFX4Candidate.pdf",result.blob);
+      toast(`PDF/X-4 Candidate 结构检查通过 · PDF ${String(result.headers?.artifactSha256||"").slice(0,12)}… · ICC ${String(result.headers?.iccSha256||"").slice(0,12)}…`,"success");
+      if(permitted("auditRead")) await loadAudit(false);
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.map(x=>typeof x==="object"?(x.name||JSON.stringify(x)):String(x)).join(" · ")}`:"";
+      toast("PDF/X-4 Candidate 失败："+(e.message||e)+detail,"error");
+    }
   }
 
   async function loadProductionAssets(renderAfter=true){
@@ -1532,7 +1569,7 @@
       policies:state.productionPolicies
     },null,2);
 
-    const manifest=D.manifest(artwork,"vector-svg-pdf-1.7.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-1.8.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:qrModel.errorCorrectionLevel,version:qrModel.version,vector:true};
     manifest.barcode={symbology:barcodeSymbology,renderer:"Code128-B",vector:true};
     manifest.productionEvidence={
@@ -1613,7 +1650,7 @@
       if(pdfFile) pdfFile.data=serverPdf.blob;
       const svgFile=built.files.find(x=>x.name==="Production.svg");
       if(svgFile) svgFile.name="Reference.svg";
-      built.manifest.rendererVersion=serverPdf.headers?.renderer||"embedded-truetype-1.7.0";
+      built.manifest.rendererVersion=serverPdf.headers?.renderer||"pdfx4-embedded-truetype-1.8.0";
       built.manifest.authoritativePdf=evidence.authoritativePdf;
       built.manifest.sha256.pdf=serverPdf.headers?.artifactSha256||await sha256(serverPdf.blob);
       if(built.manifest.sha256.svg){
@@ -1639,7 +1676,7 @@
         kind:"PRODUCTION_BUNDLE",
         revision:state.artwork.revision,
         filename,
-        renderer:serverPdf.headers?.renderer||"embedded-truetype-1.7.0",
+        renderer:serverPdf.headers?.renderer||"pdfx4-embedded-truetype-1.8.0",
         actor:"web",
         manifest:built.manifest,
         authoritativePdfExportId:serverPdf.headers?.exportId,
@@ -1671,7 +1708,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.7.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.8.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
