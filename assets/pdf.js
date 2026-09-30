@@ -45,6 +45,7 @@
 
   function buildArtworkOps(artwork, geometry, computed, codeModel, options = {}) {
     const proof = options.mode === "proof";
+    const qrMatrix = options.qrMatrix || null;
     const ops = ["0 g", "0 G", "0.35 w"];
     const H = geometry.H, L = geometry.L, W = geometry.W, tab = geometry.closingTab;
 
@@ -80,13 +81,34 @@
     // Second CRN occurrence on a side panel.
     ops.push(textOp(H * 0.55, H + W * 0.5, 9, `CRN ${computed.crn}`, 90));
 
+    const blockW = artwork.codeBlockProfile === "200x64" ? 200 : 250;
+    const blockH = artwork.codeBlockProfile === "200x64" ? 64 : 80;
+    const codeX = H + L - blockW - 26;
+    const codeY = H + W + H + W - blockH - 24;
+
     if (codeModel?.bars?.length) {
-      const codeX = H + L - 300;
-      const codeY = H + W + H + W - 120;
+      const barcodeMaxW = Math.max(40, blockW - 78);
+      const scale = Math.min(1, barcodeMaxW / Math.max(1, codeModel.widthMm));
       for (const b of codeModel.bars) {
-        ops.push(rectOp(codeX + b.x, codeY, b.w, b.h, true));
+        ops.push(rectOp(codeX + 10 + b.x * scale, codeY + 16, b.w * scale, b.h, true));
       }
-      ops.push(textOp(codeX + 10, codeY - 7, 7.5, artwork.barcode));
+      ops.push(textOp(codeX + 10, codeY + 7, 7.5, artwork.barcode));
+    }
+
+    if (Array.isArray(qrMatrix) && qrMatrix.length) {
+      const quiet = 4;
+      const n = qrMatrix.length;
+      const qrSize = Math.min(52, blockH - 12);
+      const cell = qrSize / (n + quiet * 2);
+      const qx = codeX + blockW - qrSize - 8;
+      const qy = codeY + (blockH - qrSize) / 2;
+      for (let row = 0; row < n; row += 1) {
+        for (let col = 0; col < n; col += 1) {
+          if (qrMatrix[row][col]) {
+            ops.push(rectOp(qx + (col + quiet) * cell, qy + (row + quiet) * cell, cell, cell, true));
+          }
+        }
+      }
     }
 
     if (proof) {
@@ -98,10 +120,10 @@
     return ops.join("\n");
   }
 
-  function createPdfBytes({ artwork, geometry, computed, codeModel, mode = "production" }) {
+  function createPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode = "production" }) {
     const widthPt = mm(geometry.totalWidth);
     const heightPt = mm(geometry.totalHeight);
-    const stream = buildArtworkOps(artwork, geometry, computed, codeModel, { mode });
+    const stream = buildArtworkOps(artwork, geometry, computed, codeModel, { mode, qrMatrix });
     const objects = [];
 
     objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
