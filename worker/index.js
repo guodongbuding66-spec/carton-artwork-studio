@@ -1031,6 +1031,7 @@ export default {
         }
 
         const kind=(url.searchParams.get("kind")||"artifact").toUpperCase();
+        let productionEvidence=null;
         if(kind.includes("PRODUCTION")){
           const {results:policyRows}=await env.DB.prepare(`
             SELECT code,display_name AS displayName,status,config_json AS configJson,
@@ -1042,7 +1043,7 @@ export default {
           if(!readiness.ready){
             return err(409,"PRODUCTION_READINESS_BLOCKED","Production export is blocked until all production policies are approved and valid.",readiness.gates);
           }
-          request.__productionEvidence={
+          productionEvidence={
             readiness,
             policies:policyRows.map((p)=>({
               code:p.code,displayName:p.displayName,status:p.status,
@@ -1084,7 +1085,7 @@ export default {
 
         let clientManifest={};
         try{clientManifest=JSON.parse(request.headers.get("x-artwork-manifest")||"{}");}catch{}
-        const serverEvidence=request.__productionEvidence||null;
+        const serverEvidence=productionEvidence;
         const storedManifest={
           ...clientManifest,
           serverEvidence,
