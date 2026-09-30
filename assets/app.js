@@ -535,6 +535,129 @@
     if(action==="close-dialog"){state.dialog=null;state.impact=null;render();}
   }
 
+  function activeTemplateId(){
+    return state.templateVersionsMeta?.id || state.templates.find(t=>t.code===state.artwork.templateCode)?.id || state.templates[0]?.id || null;
+  }
+
+  async function loadTemplateVersions(renderAfter=true){
+    if(!state.apiOnline||!state.identity){
+      state.templateVersions=[];
+      state.templateVersionsMeta=null;
+      state.templateEditor=null;
+      if(renderAfter) render();
+      return;
+    }
+    const templateId=activeTemplateId();
+    if(!templateId){
+      state.templateVersions=[];
+      state.templateVersionsMeta=null;
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const response=await api.templateVersions(templateId);
+      state.templateVersionsMeta=response.data?.template||null;
+      state.templateVersions=response.data?.versions||[];
+      if(state.templateEditor){
+        state.templateEditor=state.templateVersions.find(v=>v.id===state.templateEditor.id)||null;
+      }
+    }catch(e){
+      state.templateVersions=[];
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  function openTemplateVersion(id){
+    const version=state.templateVersions.find(v=>v.id===id);
+    if(!version){toast("Template Version not found.","error");return;}
+    state.templateEditor={...version};
+    render();
+  }
+
+  async function createTemplateVersion(){
+    if(!permitted("templateWrite")){toast("需要 Template Designer / Admin 权限。","error");return;}
+    const templateId=activeTemplateId();
+    const version=document.getElementById("new-template-version")?.value?.trim()||"";
+    const effectiveAt=document.getElementById("new-template-effective")?.value?.trim()||null;
+    if(!templateId||!version){toast("请输入新 Template Version。","error");return;}
+    const base=state.templateVersions.find(v=>v.status==="APPROVED")||state.templateVersions[0]||null;
+    try{
+      const response=await api.createTemplateVersion(templateId,{
+        version,
+        effectiveAt,
+        baseVersionId:base?.id||null,
+        preflightProfile:base?.preflightProfile||"US_SIDE_SEAL_K_ONLY_V1",
+        notes:"Draft cloned from "+(base?.version||"template baseline")
+      });
+      await loadTemplateVersions(false);
+      state.templateTab="versions";
+      state.templateEditor=state.templateVersions.find(v=>v.id===response.data.id)||null;
+      render();
+      toast(`${version} Draft 已创建`,"success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  function templateEditorPayload(){
+    let templateJson;
+    try{
+      templateJson=JSON.parse(document.getElementById("template-json-editor")?.value||"{}");
+    }catch{
+      throw new Error("Template JSON 格式无效。");
+    }
+    return {
+      effectiveAt:document.getElementById("template-effective")?.value?.trim()||null,
+      preflightProfile:document.getElementById("template-preflight-profile")?.value?.trim()||"",
+      notes:document.getElementById("template-notes")?.value?.trim()||"",
+      templateJson
+    };
+  }
+
+  async function saveTemplateDraft(renderAfter=true){
+    if(!state.templateEditor||!permitted("templateWrite")){toast("没有 Template Draft 编辑权限。","error");return false;}
+    try{
+      const payload=templateEditorPayload();
+      await api.updateTemplateVersion(state.templateEditor.id,payload);
+      await loadTemplateVersions(false);
+      state.templateEditor=state.templateVersions.find(v=>v.id===state.templateEditor.id)||null;
+      if(renderAfter) render();
+      toast("Template Draft 已保存","success");
+      return true;
+    }catch(e){toast(e.message||String(e),"error");return false;}
+  }
+
+  async function submitTemplateVersion(){
+    if(!state.templateEditor||!permitted("templateWrite")){toast("没有 Template 提交权限。","error");return;}
+    if(["DRAFT","REJECTED"].includes(state.templateEditor.status)){
+      const saved=await saveTemplateDraft(false);
+      if(!saved)return;
+    }
+    try{
+      await api.submitTemplateVersion(state.templateEditor.id,{reason:"Submitted from Template Center"});
+      await loadTemplateVersions(false);
+      state.templateEditor=state.templateVersions.find(v=>v.id===state.templateEditor.id)||null;
+      render();
+      toast("Template Version 已提交审批","success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }
+  }
+
+  async function decideTemplateVersion(decision){
+    if(!state.templateEditor||!permitted("templateApprove")){toast("需要 Template Approver / Admin 权限。","error");return;}
+    try{
+      await api.decideTemplateVersion(state.templateEditor.id,decision,{
+        comment:decision==="APPROVE"?"Template schema and production rules reviewed.":"Template revision required."
+      });
+      await loadTemplateVersions(false);
+      state.templateEditor=state.templateVersions.find(v=>v.id===state.templateEditor.id)||null;
+      await loadReferenceData(false);
+      render();
+      toast(decision==="APPROVE"?"Template Version 已批准":"Template Version 已退回","success");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
   async function loadReferenceData(renderAfter=true){
     if(!state.apiOnline||!state.identity?.roles?.length){
       state.remoteArtworks=[];
