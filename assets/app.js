@@ -603,7 +603,7 @@
 
     const uploader=permitted("productionAssetWrite")?`
       <div class="card-body" style="border-bottom:1px solid #e5e9ee">
-        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传建立受控资产与审批链。TrueType 字体嵌入已进入服务器 Renderer；文字转曲与 PDF/X 仍未实现。原始 Font / ICC 文件保存在 R2，本页不提供原文件下载入口。</div>
+        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传建立受控资产与审批链。TrueType 字体嵌入已进入服务器 Renderer；PDF/X-4 Candidate 已支持 ICC OutputIntent + XMP/Box 结构检查，但外部 PDF/X conformance 尚未关闭。原始 Font / ICC 文件保存在 R2，本页不提供原文件下载入口。</div>
         <div class="row2">
           <div class="field"><label>Asset Type</label><select id="production-asset-type" class="input"><option value="FONT">FONT</option><option value="ICC_PROFILE">ICC_PROFILE</option></select></div>
           <div class="field"><label>Code</label><input id="production-asset-code" class="input mono" placeholder="ISUNOR_SANS_REGULAR"/></div>
@@ -689,7 +689,7 @@
             <div class="kpi"><div class="kpi-label">LAST R2 PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
           </div>
           <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
-            Staging 与 Production 是两套门禁。TrueType 字体嵌入已由服务器 Renderer 实现；文字转曲与 PDF/X 尚未实现时，Production 仍应保持 BLOCKED，不能靠 Policy JSON 伪造通过。
+            Staging 与 Production 是两套门禁。TrueType 字体嵌入已实现，PDF/X-4 Candidate 也可内部生成；但在外部 PDF/X conformance 验证未接入前，Production 仍保持 BLOCKED，不能靠 Policy JSON 或内部结构检查伪造通过。
           </div>
         </div>
         <div class="card-head"><h3>Staging Gates</h3></div>
