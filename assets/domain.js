@@ -59,8 +59,8 @@
     return Number(v || 0) * PT_PER_MM;
   }
 
-  function findFactory(id) {
-    return factories.find((f) => f.id === id) || null;
+  function findFactory(id, factoryList = factories) {
+    return (factoryList || factories).find((f) => f.id === id) || null;
   }
 
   function formatNumber(n) {
@@ -69,9 +69,9 @@
     return Number.isInteger(num) ? String(num) : String(round(num, 2)).replace(/\.0+$/, "");
   }
 
-  function canonicalData(artwork) {
+  function canonicalData(artwork, factoryList = factories) {
     const a = artwork;
-    const f = findFactory(a.factoryId);
+    const f = findFactory(a.factoryId, factoryList);
     return {
       order: {
         contractNo: a.contractNo,
@@ -117,9 +117,9 @@
     };
   }
 
-  function computed(artwork) {
+  function computed(artwork, factoryList = factories) {
     const a = artwork;
-    const f = findFactory(a.factoryId);
+    const f = findFactory(a.factoryId, factoryList);
     return {
       packageMeas: `${formatNumber(a.length)}x${formatNumber(a.width)}x${formatNumber(a.height)} INCH`,
       originText: f ? `Made in ${f.country}` : "Made in —",
@@ -200,10 +200,10 @@
     return { id, title, status, detail, category, blocking };
   }
 
-  function runPreflight(artwork) {
+  function runPreflight(artwork, factoryList = factories) {
     const a = artwork;
-    const f = findFactory(a.factoryId);
-    const c = computed(a);
+    const f = findFactory(a.factoryId, factoryList);
+    const c = computed(a, factoryList);
     const g = sideSealGeometry(a);
     const calib = calibrationMetrics();
 
@@ -347,6 +347,35 @@
     return h.toString(16).padStart(8, "0");
   }
 
+  function artworkFromCanonical(snapshot, metadata = {}) {
+    const s = snapshot || {};
+    const p = s.package || {};
+    const codes = s.codes || {};
+    const tpl = s.template || {};
+    const aw = s.artwork || {};
+    return {
+      ...defaultArtwork,
+      sku: s.product?.sku ?? metadata.sku ?? defaultArtwork.sku,
+      contractNo: s.order?.contractNo ?? metadata.contractNo ?? defaultArtwork.contractNo,
+      market: s.order?.market ?? defaultArtwork.market,
+      packageCount: Number(p.total ?? metadata.packageCount ?? defaultArtwork.packageCount),
+      currentPackage: Number(p.index ?? metadata.currentPackage ?? defaultArtwork.currentPackage),
+      netWeight: Number(p.netWeight ?? defaultArtwork.netWeight),
+      grossWeight: Number(p.grossWeight ?? defaultArtwork.grossWeight),
+      length: Number(p.length ?? defaultArtwork.length),
+      width: Number(p.width ?? defaultArtwork.width),
+      height: Number(p.height ?? defaultArtwork.height),
+      factoryId: s.factory?.id ?? metadata.factoryId ?? defaultArtwork.factoryId,
+      barcode: codes.barcode ?? defaultArtwork.barcode,
+      qr: codes.qr ?? defaultArtwork.qr,
+      codeBlockProfile: codes.profile ?? defaultArtwork.codeBlockProfile,
+      templateCode: tpl.code ?? metadata.templateCode ?? defaultArtwork.templateCode,
+      templateVersion: tpl.version ?? defaultArtwork.templateVersion,
+      revision: metadata.revision ?? aw.revision ?? defaultArtwork.revision,
+      status: String(metadata.status ?? aw.status ?? defaultArtwork.status).toLowerCase()
+    };
+  }
+
   function manifest(artwork, rendererVersion = "vector-svg-pdf-0.5.0") {
     const snapshot = canonicalData(artwork);
     const payload = stableStringify({ snapshot, rendererVersion });
@@ -373,6 +402,7 @@
     formatNumber,
     canonicalData,
     computed,
+    artworkFromCanonical,
     sideSealGeometry,
     calibrationMetrics,
     codeBlockDimensions,
