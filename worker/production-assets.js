@@ -23,7 +23,23 @@ export function inspectFont(bytesLike) {
   const numTables=u16be(bytes,4);
   if(numTables<1||numTables>4096) errors.push("Font table count is invalid.");
   const expectedDirectoryEnd=12+numTables*16;
-  if(expectedDirectoryEnd>bytes.length) errors.push("Font table directory exceeds file size.");
+  if(expectedDirectoryEnd>bytes.length) {
+    errors.push("Font table directory exceeds file size.");
+  } else {
+    const tags=new Set();
+    for(let i=0;i<numTables;i+=1){
+      const p=12+i*16;
+      const tag=ascii(bytes,p,4);
+      const offset=u32be(bytes,p+8);
+      const length=u32be(bytes,p+12);
+      if(!/^[ -~]{4}$/.test(tag)) errors.push(`Font table ${i} has an invalid tag.`);
+      if(tags.has(tag)) errors.push(`Font table tag ${tag} is duplicated.`);
+      tags.add(tag);
+      if(offset>bytes.length||length>bytes.length||offset+length>bytes.length){
+        errors.push(`Font table ${tag||i} exceeds file size.`);
+      }
+    }
+  }
   return {
     ok:errors.length===0,
     errors,
@@ -38,12 +54,16 @@ export function inspectFont(bytesLike) {
 export function inspectIcc(bytesLike) {
   const bytes=bytesLike instanceof Uint8Array?bytesLike:new Uint8Array(bytesLike||[]);
   const errors=[];
-  if(bytes.length<128) return {ok:false,errors:["ICC profile is smaller than the 128-byte header."],metadata:{}};
+  if(bytes.length<132) return {ok:false,errors:["ICC profile is smaller than header + tag-count minimum."],metadata:{}};
   const declaredSize=u32be(bytes,0);
   const signature=ascii(bytes,36,4);
   if(signature!=="acsp") errors.push("ICC header signature 'acsp' is missing.");
-  if(declaredSize<128) errors.push("ICC declared size is invalid.");
+  if(declaredSize<132) errors.push("ICC declared size is invalid.");
   if(declaredSize>bytes.length) errors.push("ICC declared size exceeds uploaded file size.");
+  const tagCount=u32be(bytes,128);
+  const tagTableEnd=132+tagCount*12;
+  if(tagCount>4096) errors.push("ICC tag count is unreasonable.");
+  if(tagTableEnd>bytes.length) errors.push("ICC tag table exceeds uploaded file size.");
   const major=bytes[8]||0;
   const minor=((bytes[9]||0)>>4)&0x0f;
   const bugfix=(bytes[9]||0)&0x0f;
@@ -57,7 +77,8 @@ export function inspectIcc(bytesLike) {
       colorSpace:ascii(bytes,16,4).trim(),
       pcs:ascii(bytes,20,4).trim(),
       signature,
-      version:`${major}.${minor}.${bugfix}`
+      version:`${major}.${minor}.${bugfix}`,
+      tagCount
     }
   };
 }
