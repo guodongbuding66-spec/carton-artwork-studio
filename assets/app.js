@@ -510,6 +510,7 @@
   }
 
   async function ensureRemoteArtwork(){
+    if(!permitted("artworkWrite")) throw new Error("Artwork Write permission is required.");
     localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
     if(!state.apiOnline)return null;
     const canonicalData=D.canonicalData(state.artwork);
@@ -535,6 +536,7 @@
   }
 
   async function saveDraft(){
+    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     if(["in_review","approved"].includes(state.artwork.status)){
       toast("已提交或已批准的 Revision 不允许原地修改；需要创建新 Revision。","error");return;
     }
@@ -560,6 +562,7 @@
   }
 
   async function runPreflightAction(){
+    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     state.pfBusy=true;state.apiBusy=true;render();
     try{
       if(!state.remoteArtworkId&&state.apiOnline)await ensureRemoteArtwork();
@@ -572,6 +575,7 @@
   }
 
   async function submitForReview(){
+    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     const s=summary();
     if(s.blocking>0){toast("存在 blocking errors，无法提交审核","error");return;}
     state.apiBusy=true;render();
@@ -594,12 +598,14 @@
       state.artwork.revision=response.data.revision;
       state.remoteRevision=response.data.revision;
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      await loadComments();
       toast(`${response.data.revision} 已提交审核`,"success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
   }
 
   async function reviewDecision(decision){
+    if(!permitted("review")){toast("需要 Reviewer / Admin 权限。","error");return;}
     if(!state.apiOnline||!state.remoteArtworkId){toast("Reviewer decision 需要 Cloudflare API。","error");return;}
     if(decision==="APPROVE"&&!blockingCommentsResolved()){toast("请先解决所有 Blocking comment。","error");return;}
     state.apiBusy=true;render();
@@ -617,6 +623,7 @@
   }
 
   async function createNewRevision(){
+    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     if(!state.apiOnline||!state.remoteArtworkId){toast("创建新 Revision 需要 Cloudflare API。","error");return;}
     state.apiBusy=true;render();
     try{
