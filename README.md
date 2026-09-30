@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：0.9.0
+## 当前版本：1.0.0
 
 ### 已实现
 
@@ -46,11 +46,66 @@
 - Content Master / CRN Impact Analysis
 - Quality / Versioned Preflight Profile / Audit Log
 - Cloudflare Worker API + Access/RBAC gateway + live master-data/audit APIs
-- D1 baseline migration + Batch / Mapping Profile + Users/Roles/Security migration
+- D1 baseline migration + Batch / Mapping Profile + Users/Roles/Security + Template Lifecycle + Production Readiness migration
 - Mapping Profile / Import Job D1 APIs
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.0.0 关键工程进展
+
+### 1. Production Readiness 变成硬门禁
+
+正式 Production Export 现在需要四个生产政策全部 **APPROVED + 配置有效**：
+
+- Barcode Business Policy
+- QR Business Policy
+- Approved Font Policy
+- PDF/X Production Policy
+
+初始状态均为 **DRAFT / 未确认**，不会因为当前技术编码器可以生成条码或 QR，就假装业务规则已经确认。
+
+### 2. 关键生产政策支持四眼审批
+
+流程：
+
+```text
+Admin edits policy
+      ↓
+DRAFT
+      ↓ validate
+SUBMITTED
+      ↓ different Template Approver / Admin identity
+APPROVED / REJECTED
+```
+
+提交人不能批准自己提交的同一政策。
+
+### 3. Production Bundle 防止浏览器绕过
+
+生产稿导出现在有两层门禁：
+
+1. 浏览器在生成/下载 Production Bundle **之前**重新读取服务器 Production Readiness；
+2. Worker 在写 R2 **之前**再次检查 Production Readiness。
+
+因此不能通过修改 LocalStorage 或只绕过 UI 按钮拿到有效生产稿。
+
+### 4. Content Master 从占位进入 D1
+
+新增通用 Reference Master：
+
+- CUSTOMER
+- PRODUCT
+- COUNTRY
+- SHARED
+
+支持 D1 持久化、有效日期、状态、JSON 扩展字段和 Audit。
+
+### 5. 演示 Factory 不再冒充正式 Master Data
+
+早期工程 scaffold 中的 3 个示例 Factory 被迁移为 `SAMPLE` 状态。
+
+正式 `GET /api/factories` 默认只返回 `ACTIVE` Factory，避免 fresh deployment 把测试工厂当成真实业务资料。
 
 ## v0.9.0 关键工程进展
 
@@ -515,8 +570,8 @@ npm run check
 
 - 一维码最终 Symbology / Barcode payload 业务确认
 - QR payload / ECC 业务确认；当前模板默认 ECC M，Version 自动选择
-- Approved Font Registry + font embedding / outlining
-- PDF/X profile
+- Approved Font Registry / embedding / outlining 已进入 Production Policy gate，仍需提供并批准实际方案
+- PDF/X profile 已进入 Production Policy gate，仍需确认目标 profile 与转换/验证实现
 - Excel style/number-format 级 leading-zero 恢复
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Cloudflare Access / RBAC 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application 与 D1/R2 资源
