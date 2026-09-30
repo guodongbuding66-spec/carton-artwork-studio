@@ -39,6 +39,14 @@ export function inspectFont(bytesLike) {
         errors.push(`Font table ${tag||i} exceeds file size.`);
       }
     }
+    const requiredBase=["cmap","head","hhea","hmtx","maxp"];
+    for(const tag of requiredBase) if(!tags.has(tag)) errors.push(`Required font table ${tag} is missing.`);
+    if(isTrueType||isAppleTrue){
+      for(const tag of ["glyf","loca"]) if(!tags.has(tag)) errors.push(`TrueType outline table ${tag} is missing.`);
+    }
+    if(isOpenType&&!tags.has("CFF ")&&!tags.has("CFF2")){
+      errors.push("OpenType/CFF font is missing CFF or CFF2 outlines.");
+    }
   }
   return {
     ok:errors.length===0,
