@@ -85,8 +85,8 @@
           filename: meta.filename || file?.name || "asset.bin"
         });
         const headers = new Headers({ "content-type": file?.type || "application/octet-stream" });
-        if (meta.license) headers.set("x-asset-license", meta.license);
-        if (meta.notes) headers.set("x-asset-notes", meta.notes);
+        if (meta.license) headers.set("x-asset-license", encodeURIComponent(meta.license));
+        if (meta.notes) headers.set("x-asset-notes", encodeURIComponent(meta.notes));
         return request("/api/production-assets/upload?" + q, { method:"POST", headers, body:file });
       },
       async submitProductionAsset(id, payload = {}) {
