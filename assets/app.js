@@ -359,14 +359,14 @@
 
   function renderContent(){
     const tabs=["factories","customers","products","countries","shared"];
-    const factories=state.factories.map(f=>[
+    const factories=(state.apiOnline&&state.identity?state.factories:[]).map(f=>[
       f.name,
       `<span class="mono">${esc(f.crn)}</span>`,
       f.country,
       f.effectiveAt||f.effective||"—",
       permitted("admin")?`<button class="btn small" data-impact="${esc(f.id)}">Impact / Edit</button>`:"—"
     ]);
-    return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.contentTab===t?"active":""}" data-content-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${state.contentTab==="factories"?table(["Factory","CRN","Country","Effective",""],factories,true):`<div class="card-body"><div class="notice">该 Master Data 模块已预留。所有正式 Artwork Revision 保存冻结 Snapshot，Master Data 后续变化不会污染历史稿。</div></div>`}</section>`;
+    return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.contentTab===t?"active":""}" data-content-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${state.contentTab==="factories"?(factories.length?table(["Factory","CRN","Country","Effective",""],factories,true):`<div class="card-body"><div class="notice warn">Cloudflare Access / D1 未连接或当前没有 Factory Master 数据。这里不显示演示数据。</div></div>`):`<div class="card-body"><div class="notice">该 Master Data 模块已预留。所有正式 Artwork Revision 保存冻结 Snapshot，Master Data 后续变化不会污染历史稿。</div></div>`}</section>`;
   }
 
   function renderQuality(){
