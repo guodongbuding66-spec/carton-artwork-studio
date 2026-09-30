@@ -92,59 +92,40 @@
   }
 
   /**
-   * Deterministic QR-style technical preview matrix.
-   * IMPORTANT: this is deliberately NOT presented as a standards-compliant QR encoder.
-   * The production gate remains blocked until a verified QR encoder replaces this preview.
+   * Standards-based QR matrix using Kazuhiko Arase's MIT qrcode-generator.
+   * Type number 0 selects the smallest QR version that fits the payload.
    */
-  function qrPreviewMatrix(text, size = 29) {
-    const n = Math.max(21, Math.min(41, Math.round(size)));
-    const m = Array.from({ length: n }, () => Array(n).fill(false));
-    const reserved = Array.from({ length: n }, () => Array(n).fill(false));
+  function qrMatrix(text, errorCorrectionLevel = "M") {
+    const factory = typeof globalThis !== "undefined" ? globalThis.qrcode : null;
+    if (typeof factory !== "function") throw new Error("QR encoder is not loaded.");
+    if (factory.stringToBytesFuncs?.["UTF-8"]) factory.stringToBytes = factory.stringToBytesFuncs["UTF-8"];
+    const ecc = ["L","M","Q","H"].includes(errorCorrectionLevel) ? errorCorrectionLevel : "M";
+    const qr = factory(0, ecc);
+    qr.addData(String(text ?? ""), "Byte");
+    qr.make();
+    const n = qr.getModuleCount();
+    const matrix = Array.from({ length: n }, (_, row) =>
+      Array.from({ length: n }, (_, col) => Boolean(qr.isDark(row, col)))
+    );
+    return { matrix, errorCorrectionLevel: ecc, version: (n - 17) / 4 };
+  }
 
-    function finder(r0, c0) {
-      for (let r = 0; r < 7; r += 1) for (let c = 0; c < 7; c += 1) {
-        const rr = r0 + r, cc = c0 + c;
-        const edge = r === 0 || c === 0 || r === 6 || c === 6;
-        const core = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-        m[rr][cc] = edge || core;
-        reserved[rr][cc] = true;
-      }
-    }
-
-    finder(0, 0);
-    finder(0, n - 7);
-    finder(n - 7, 0);
-
-    for (let i = 8; i < n - 8; i += 1) {
-      m[6][i] = i % 2 === 0;
-      m[i][6] = i % 2 === 0;
-      reserved[6][i] = reserved[i][6] = true;
-    }
-
-    let seed = fnv1a(String(text || ""));
-    function randBit() {
-      seed ^= seed << 13; seed >>>= 0;
-      seed ^= seed >>> 17; seed >>>= 0;
-      seed ^= seed << 5; seed >>>= 0;
-      return (seed & 1) === 1;
-    }
-
-    for (let r = 0; r < n; r += 1) for (let c = 0; c < n; c += 1) {
-      if (!reserved[r][c]) m[r][c] = randBit() ^ ((r + c) % 3 === 0);
-    }
-    return m;
+  function qrPreviewMatrix(text, sizeOrLevel = "M") {
+    const ecc = typeof sizeOrLevel === "string" ? sizeOrLevel : "M";
+    return qrMatrix(text, ecc).matrix;
   }
 
   function qrPreviewSvg(text, options = {}) {
-    const matrix = qrPreviewMatrix(text, options.size || 29);
+    const model = qrMatrix(text, options.errorCorrectionLevel || "M");
+    const matrix = model.matrix;
     const moduleMm = Number(options.moduleMm ?? 1.8);
     const quiet = Number(options.quietModules ?? 4);
     const n = matrix.length;
     const side = (n + quiet * 2) * moduleMm;
     const parts = [];
-    for (let r = 0; r < n; r += 1) for (let c = 0; c < n; c += 1) {
-      if (matrix[r][c]) {
-        const x = (c + quiet) * moduleMm;
+    for (let r = 0; r < n; r += 1) for (let col = 0; col < n; col += 1) {
+      if (matrix[r][col]) {
+        const x = (col + quiet) * moduleMm;
         const y = (r + quiet) * moduleMm;
         parts.push(`<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width="${moduleMm}" height="${moduleMm}" fill="#000"/>`);
       }
@@ -153,7 +134,9 @@
       matrix,
       widthMm: side,
       heightMm: side,
-      isStandardsCompliant: false,
+      isStandardsCompliant: true,
+      errorCorrectionLevel: model.errorCorrectionLevel,
+      version: model.version,
       svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${side} ${side}" width="${side}mm" height="${side}mm"><rect width="100%" height="100%" fill="#fff"/>${parts.join("")}</svg>`
     };
   }
@@ -163,6 +146,7 @@
     code128Modules,
     code128Bars,
     code128Svg,
+    qrMatrix,
     qrPreviewMatrix,
     qrPreviewSvg
   };
