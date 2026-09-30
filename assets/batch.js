@@ -68,7 +68,7 @@
     return { row, cell: cell || "", field, message, severity, source };
   }
 
-  function validateArtworkRow(artwork, record, domain) {
+  function validateArtworkRow(artwork, record, domain, optionsCodes) {
     const out = [];
     const row = record._row;
     const cells = record._cells || {};
@@ -93,6 +93,15 @@
     }
     if (artwork.grossWeight > 0 && artwork.netWeight > 0 && artwork.grossWeight < artwork.netWeight) {
       out.push(issue(row, cells.grossWeight, "grossWeight", "G.W. must be >= N.W."));
+    }
+
+    if (optionsCodes?.code128Values && artwork.barcode) {
+      try { optionsCodes.code128Values(artwork.barcode); }
+      catch (e) { out.push(issue(row, cells.barcode, "barcode", e.message || "Barcode cannot be encoded.")); }
+    }
+    if (optionsCodes?.qrMatrix && artwork.qr) {
+      try { optionsCodes.qrMatrix(artwork.qr, "M"); }
+      catch (e) { out.push(issue(row, cells.qr, "qr", e.message || "QR cannot be encoded.")); }
     }
 
     if (domain?.runPreflight) {
@@ -126,7 +135,7 @@
     }
     return (records || []).map((record) => {
       const artwork = recordToArtwork(record, options);
-      const issues = dedupeIssues([...(byRow.get(record._row) || []), ...validateArtworkRow(artwork, record, domain)]);
+      const issues = dedupeIssues([...(byRow.get(record._row) || []), ...validateArtworkRow(artwork, record, domain, options.codes)]);
       const errors = issues.filter((i) => i.severity !== "warning");
       const warnings = issues.filter((i) => i.severity === "warning");
       return {
