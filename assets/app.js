@@ -185,7 +185,7 @@
 
   function renderArtwork() {
     const s = summary();
-    const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && Boolean(state.remoteArtworkId);
+    const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && Boolean(state.remoteArtworkId) && Boolean(state.productionReadiness?.ready);
     return `
       <div class="artwork-header">
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
@@ -818,12 +818,15 @@
       return;
     }
     try{
-      const [factoryResponse,templateResponse,artworkResponse]=await Promise.all([
-        api.factories(),api.templates(),api.artworks()
+      const [factoryResponse,templateResponse,artworkResponse,referenceResponse,policyResponse,readinessResponse]=await Promise.all([
+        api.factories(),api.templates(),api.artworks(),api.referenceRecords(),api.productionPolicies(),api.productionReadiness()
       ]);
-      if(factoryResponse.data?.length) state.factories=factoryResponse.data;
+      state.factories=factoryResponse.data||[];
       state.templates=templateResponse.data||[];
       state.remoteArtworks=artworkResponse.data||[];
+      state.referenceRecords=referenceResponse.data||[];
+      state.productionPolicies=policyResponse.data||[];
+      state.productionReadiness=readinessResponse.data||{ready:false,gates:[]};
     }catch(e){
       toast("Reference data load failed: "+(e.message||e),"error");
     }
@@ -1130,7 +1133,7 @@
   }
 
   async function productionArtifactSet(artwork, mode="production"){
-    const g=D.sideSealGeometry(artwork), comp=D.computed(artwork);
+    const g=D.sideSealGeometry(artwork), comp=D.computed(artwork,state.factories);
     const code=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
     const qr=C.qrMatrix(artwork.qr,"M").matrix;
     const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode});
@@ -1138,7 +1141,7 @@
     const snapshot=JSON.stringify(D.canonicalData(artwork,state.factories),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
-    const manifest=D.manifest(artwork,"vector-svg-pdf-0.8.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-1.0.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
     manifest.barcode={symbology:"Code 128-B PoC",vector:true};
     manifest.sha256={
@@ -1162,17 +1165,27 @@
     if(!permitted("productionExport")||!state.apiOnline||!state.remoteArtworkId){toast("Production Export 需要 Cloudflare Access + Production Export 权限。","error");return;}
     if(state.artwork.status!=="approved"||s.blocking>0||!blockingCommentsResolved()){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
     try{
-      const remote=await api.artwork(state.remoteArtworkId);
+      const [remote,readiness]=await Promise.all([
+        api.artwork(state.remoteArtworkId),
+        api.productionReadiness()
+      ]);
+      state.productionReadiness=readiness.data||{ready:false,gates:[]};
+      if(!state.productionReadiness.ready){
+        const blocked=(state.productionReadiness.gates||[]).filter(x=>!(x.approved&&x.valid)).map(x=>x.displayName||x.code).join(" / ");
+        render();
+        toast("Production Readiness 未通过："+(blocked||"policy gate"),"error");
+        return;
+      }
       if(String(remote.data.artwork.status||"").toUpperCase()!=="APPROVED"||remote.data.artwork.current_revision!==state.artwork.revision){toast("服务器端当前 Revision 未批准或已过期，已阻止生产稿导出。","error");return;}
-    }catch(e){toast("无法验证服务器端批准状态："+(e.message||e),"error");return;}
+    }catch(e){toast("无法验证服务器端批准/生产就绪状态："+(e.message||e),"error");return;}
     const built=await productionArtifactSet(state.artwork,"production");
-    built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nQR ECC: M\nFont embedding / PDF-X remain separate production gates.\n"});
+    built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nProduction policies: server-approved at export time.\n"});
     const bundle=Z.createZipBlob(built.files);
     const filename=built.base+"_ProductionBundle.zip";
     downloadBlob(filename,bundle);
     if(state.apiOnline&&state.apiBindings.r2&&state.remoteArtworkId){
       try{
-        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"0.8.0",actor:"web",manifest:built.manifest});
+        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"1.0.0",actor:"web",manifest:built.manifest});
         toast("Production Bundle 已下载并同步到 R2","success");
       }catch(e){toast("本地 Bundle 已生成，但 R2 同步失败："+(e.message||e),"error");}
     }else toast("Production Bundle ZIP 已生成；R2 尚未连接","success");
@@ -1195,7 +1208,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"0.8.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.0.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
