@@ -288,8 +288,12 @@
     return `<div class="comments">${composer}${list}</div>`;
   }
 
-  function dielineSvg(mode="editor", artwork=state.artwork) {
-    const a=artwork,g=D.sideSealGeometry(a),c=D.computed(a), safe=22;
+  function dielineSvg(mode="editor", artwork=state.artwork, options={}) {
+    const a=artwork;
+    const g=D.sideSealGeometry(a);
+    const factoryList=options.factories||state.factories;
+    const c=D.computed(a,factoryList);
+    const safe=22;
     const proof=mode==="proof", production=mode==="production";
     const showD=production?false:(proof?true:state.showDieline);
     const showS=production?false:(proof?true:state.showSafe);
@@ -300,7 +304,8 @@
     const safeBox=showS?`<rect x="${g.H+safe}" y="${g.H+g.W+g.H+safe}" width="${g.L-safe*2}" height="${g.W-safe*2}" fill="none" stroke="#15976d" stroke-dasharray="6 4"/>`:"";
     const labels=showP?g.panels.map(p=>`<text x="${p.x+p.w/2}" y="${p.y+p.h/2}" text-anchor="middle" fill="#aab4be" font-size="16" font-family="Arial">${p.id}</text>`).join(""):"";
     const bx=g.H+45, by=g.H+g.W+g.H+68;
-    const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118, a.codeBlockProfile, a);
+    const qrEcc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
+    const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118,a.codeBlockProfile,a,{qrEcc});
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
     const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
@@ -311,7 +316,7 @@
         <text x="${bx}" y="${by+24}" font-size="14">N.W. ${esc(a.netWeight)} LBS   G.W. ${esc(a.grossWeight)} LBS</text>
         <text x="${bx}" y="${by+44}" font-size="14">Package Meas ${esc(c.packageMeas)}</text>
         <text x="${bx}" y="${by+64}" font-size="14">CRN ${esc(c.crn)}</text>
-        <text x="${bx}" y="${by+84}" font-size="14">Contract No ${esc(a.contractNo)}   ·   ${esc(c.originText)}   ·   US</text>
+        <text x="${bx}" y="${by+84}" font-size="14">Contract No ${esc(a.contractNo)}   ·   ${esc(c.originText)}   ·   ${esc(a.market||"US")}</text>
         ${note}
         <g transform="translate(${g.H*.55} ${g.H+g.W*.56}) rotate(90)"><text font-size="14">CRN ${esc(c.crn)}</text></g>
       </g>
@@ -319,13 +324,14 @@
     </svg>`;
   }
 
-  function renderCodeBlock(x,y,profile,artwork=state.artwork){
+  function renderCodeBlock(x,y,profile,artwork=state.artwork,options={}){
     const dims=D.codeBlockDimensions(profile), b=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
     const scale=Math.min((dims.w-72)/b.widthMm,1.15);
     const bars=b.bars.map(r=>`<rect x="${(x+10+r.x*scale).toFixed(2)}" y="${y+14}" width="${(r.w*scale).toFixed(2)}" height="${r.h}" fill="#000"/>`).join("");
-    const qm=C.qrMatrix(artwork.qr,"M").matrix, qSize=Math.min(54,dims.h-14), quiet=4, mod=qSize/(qm.length+quiet*2), qx=x+dims.w-qSize-8,qy=y+7;
+    const ecc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
+    const qm=C.qrMatrix(artwork.qr,ecc).matrix, qSize=Math.min(54,dims.h-14), quiet=4, mod=qSize/(qm.length+quiet*2), qx=x+dims.w-qSize-8,qy=y+7;
     const qr=qm.flatMap((row,rr)=>row.map((v,cc)=>v?`<rect x="${(qx+(cc+quiet)*mod).toFixed(2)}" y="${(qy+(rr+quiet)*mod).toFixed(2)}" width="${mod.toFixed(2)}" height="${mod.toFixed(2)}" fill="#000"/>`:"")).join("");
-    return `<g><rect x="${x}" y="${y}" width="${dims.w}" height="${dims.h}" rx="2" fill="#fff" stroke="#8d98a3"/>${bars}<text x="${x+12}" y="${y+48}" font-family="Arial" font-size="8">${esc(artwork.barcode)}</text>${qr}<text x="${x+8}" y="${y+dims.h-5}" font-family="Arial" font-size="7" fill="#555">🔒 Locked CodeBlock · QR M · standards encoder</text></g>`;
+    return `<g><rect x="${x}" y="${y}" width="${dims.w}" height="${dims.h}" rx="2" fill="#fff" stroke="#8d98a3"/>${bars}<text x="${x+12}" y="${y+48}" font-family="Arial" font-size="8">${esc(artwork.barcode)}</text>${qr}<text x="${x+8}" y="${y+dims.h-5}" font-family="Arial" font-size="7" fill="#555">🔒 Locked CodeBlock · QR ${esc(ecc)} · standards encoder</text></g>`;
   }
 
   function renderPreflight(){
