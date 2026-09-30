@@ -18,6 +18,8 @@ export const PERMISSIONS = Object.freeze({
   REFERENCE_WRITE: ["ADMIN"],
   PRODUCTION_POLICY_WRITE: ["ADMIN"],
   PRODUCTION_POLICY_APPROVE: ["TEMPLATE_APPROVER","ADMIN"],
+  PRODUCTION_ASSET_WRITE: ["ADMIN"],
+  PRODUCTION_ASSET_APPROVE: ["TEMPLATE_APPROVER","ADMIN"],
   EXPORT_PRODUCTION: ["OPERATOR","ADMIN"],
   ADMIN: ["ADMIN"]
 });
@@ -62,6 +64,9 @@ export function permissionForRequest(method, pathname) {
   if (/^\/api\/production-policies\/[^/]+\/approval$/.test(p)) return "PRODUCTION_POLICY_APPROVE";
   if (/^\/api\/production-policies\/[^/]+\/submit$/.test(p)) return "PRODUCTION_POLICY_WRITE";
   if (/^\/api\/production-policies\/[^/]+$/.test(p) && m === "PATCH") return "PRODUCTION_POLICY_WRITE";
+  if (p === "/api/production-assets/upload") return "PRODUCTION_ASSET_WRITE";
+  if (/^\/api\/production-assets\/[^/]+\/submit$/.test(p)) return "PRODUCTION_ASSET_WRITE";
+  if (/^\/api\/production-assets\/[^/]+\/approval$/.test(p)) return "PRODUCTION_ASSET_APPROVE";
 
   if (/^\/api\/template-versions\/[^/]+\/approval$/.test(p)) return "TEMPLATE_APPROVE";
   if (/^\/api\/template-versions\/[^/]+\/submit$/.test(p)) return "TEMPLATE_WRITE";
