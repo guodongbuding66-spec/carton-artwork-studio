@@ -61,7 +61,9 @@
     compareTo: null,
     revisionCompare: null,
     compareMode: "side",
-    compareOpacity: 0.5
+    compareOpacity: 0.5,
+    systemReadiness: null,
+    readinessProbeBusy: false
   };
 
   const navItems = [
@@ -578,6 +580,51 @@
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
   }
 
+  function renderSystemReadiness(){
+    const r=state.systemReadiness;
+    if(!r) return `<section class="card"><div class="card-head"><h3>Staging Readiness Center</h3><span class="spacer"></span><button class="btn small" data-action="refresh-system-readiness">Refresh</button></div><div class="card-body"><div class="notice">尚未读取服务器 Readiness 状态。</div></div></section>`;
+
+    const stagingRows=(r.stagingChecks||[]).map(x=>[
+      x.label,
+      `<span class="badge ${x.ok?"green":"red"}">${x.status}</span>`,
+      x.detail
+    ]);
+    const productionRows=(r.productionChecks||[]).map(x=>[
+      x.label,
+      `<span class="badge ${x.ok?"green":"red"}">${x.status}</span>`,
+      x.detail
+    ]);
+    const diag=r.diagnostics||{};
+    const lastProbe=diag.lastR2Probe?.createdAt||"Never";
+    return `
+      <section class="card">
+        <div class="card-head">
+          <h3>Staging Readiness Center</h3>
+          <span class="badge ${r.stagingReady?"green":"red"}">${esc(r.status)}</span>
+          <span class="badge ${r.productionReady?"green":"amber"}">${esc(r.productionStatus)}</span>
+          <span class="spacer"></span>
+          <button class="btn small" data-action="refresh-system-readiness">Refresh</button>
+          <button class="btn primary small" data-action="run-readiness-probe" ${state.readinessProbeBusy?"disabled":""}>${state.readinessProbeBusy?"Probing…":"Run R2 Deep Probe"}</button>
+        </div>
+        <div class="card-body">
+          <div class="kpis" style="margin:0">
+            <div class="kpi"><div class="kpi-label">STAGING GATES</div><div class="kpi-value">${r.summary?.stagingPassed||0}/${r.summary?.stagingTotal||0}</div></div>
+            <div class="kpi"><div class="kpi-label">PRODUCTION GATES</div><div class="kpi-value">${r.summary?.productionPassed||0}/${r.summary?.productionTotal||0}</div></div>
+            <div class="kpi"><div class="kpi-label">LATEST MIGRATION</div><div class="kpi-value mono" style="font-size:13px">${esc(diag.latestMigration||"unknown")}</div></div>
+            <div class="kpi"><div class="kpi-label">LAST R2 PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
+          </div>
+          <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
+            Staging 与 Production 是两套门禁。字体嵌入/转曲或 PDF/X 尚未真正实现时，Production 应继续显示 BLOCKED，而不能靠 Policy JSON 伪造通过。
+          </div>
+        </div>
+        <div class="card-head"><h3>Staging Gates</h3></div>
+        ${table(["Gate","Result","Detail"],stagingRows,true)}
+        <div class="card-head"><h3>Production Gates</h3></div>
+        ${table(["Gate","Result","Detail"],productionRows,true)}
+      </section>
+    `;
+  }
+
   function renderAdmin(){
     const roles=["OPERATOR","REVIEWER","TEMPLATE_DESIGNER","TEMPLATE_APPROVER","ADMIN"];
     if(!permitted("admin")) return '<section class="card"><div class="card-body"><div class="notice warn">Admin 权限由 Cloudflare Access 身份 + D1 RBAC 决定。当前用户没有系统管理权限。</div></div></section>';
@@ -592,7 +639,8 @@
       x.actor||"—",x.createdAt||"—",x.objectType||"—",x.action||"—",x.objectId||"—",x.reason||"—"
     ]);
     return `
-      <section class="card"><div class="card-head"><h3>Access / RBAC Users</h3><span class="subtle">Cloudflare Access 提供身份，D1 控制应用角色</span></div><div class="card-body">
+      ${renderSystemReadiness()}
+      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Access / RBAC Users</h3><span class="subtle">Cloudflare Access 提供身份，D1 控制应用角色</span></div><div class="card-body">
         <div class="row2"><div class="field"><label>Email</label><input id="admin-user-email" class="input" placeholder="name@company.com"/></div><div class="field"><label>Display Name</label><input id="admin-user-name" class="input" placeholder="Name"/></div></div>
         <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-user">Create User</button></div>
       </div>${table(["Email","Name","Status","Roles",""],userRows,true)}</section>
@@ -618,7 +666,7 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();}});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();await loadSystemReadiness();}});
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=async()=>{state.contentTab=b.dataset.contentTab;render();if(state.contentTab!=="factories")await loadReferenceMasters();});
@@ -675,6 +723,8 @@
     if(action==="close-template-editor"){state.templateEditor=null;render();return;}
     if(action==="refresh-dashboard") return loadRemoteArtworks();
     if(action==="refresh-audit") return loadAudit();
+    if(action==="refresh-system-readiness") return loadSystemReadiness();
+    if(action==="run-readiness-probe") return runSystemReadinessProbe();
     if(action==="run-compare") return loadRevisionCompare();
     if(action==="save-factory") return saveFactoryMaster();
     if(action==="proof") return exportProof();
@@ -1099,6 +1149,39 @@
       await loadComments();
       toast("Blocking comment 已解决","success");
     }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function loadSystemReadiness(renderAfter=true){
+    if(!state.apiOnline||!permitted("admin")){
+      state.systemReadiness=null;
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const response=await api.systemReadiness();
+      state.systemReadiness=response.data||null;
+    }catch(e){
+      state.systemReadiness=null;
+      toast("Readiness load failed: "+(e.message||e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function runSystemReadinessProbe(){
+    if(!state.apiOnline||!permitted("admin")){toast("需要 Admin 权限。","error");return;}
+    state.readinessProbeBusy=true;render();
+    try{
+      const response=await api.runSystemReadinessProbe();
+      state.systemReadiness=response.data?.readiness||null;
+      const probe=response.data?.probe;
+      toast(probe?.ok?"R2 write/read/delete probe passed":"R2 probe failed: "+(probe?.error||"unknown"),probe?.ok?"success":"error");
+      if(permitted("auditRead")) await loadAudit(false);
+    }catch(e){
+      toast("R2 readiness probe failed: "+(e.message||e),"error");
+    }finally{
+      state.readinessProbeBusy=false;
+      render();
+    }
   }
 
   async function loadAdminUsers(){
@@ -1547,6 +1630,7 @@
 
         if(state.page==="admin"&&permitted("admin")){
           try{state.adminUsers=(await api.adminUsers()).data||[];}catch{}
+          try{state.systemReadiness=(await api.systemReadiness()).data||null;}catch{}
         }
       }
     }catch(e){
