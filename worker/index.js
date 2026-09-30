@@ -588,6 +588,13 @@ export default {
         }
         const validation=validateProductionPolicy(code,current.config_json);
         if(!validation.ok)return err(409,"POLICY_VALIDATION_FAILED","Production policy validation failed.",validation.errors);
+        const approvedAssets=await loadApprovedProductionAssets(env);
+        const assetGate=summarizeProductionReadiness([
+          {code,status:"APPROVED",configJson:current.config_json,displayName:current.display_name}
+        ],undefined,approvedAssets).gates.find((x)=>x.code===code);
+        if(assetGate&&!assetGate.valid){
+          return err(409,"POLICY_ASSET_VALIDATION_FAILED","Production policy references unavailable or unsupported production assets.",assetGate.errors);
+        }
         await env.DB.prepare(`
           UPDATE production_policies
           SET status='SUBMITTED',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
@@ -617,6 +624,13 @@ export default {
         if(decision==="APPROVE"){
           const validation=validateProductionPolicy(code,current.config_json);
           if(!validation.ok)return err(409,"POLICY_VALIDATION_FAILED","Production policy validation failed.",validation.errors);
+          const approvedAssets=await loadApprovedProductionAssets(env);
+          const assetGate=summarizeProductionReadiness([
+            {code,status:"APPROVED",configJson:current.config_json,displayName:current.display_name}
+          ],undefined,approvedAssets).gates.find((x)=>x.code===code);
+          if(assetGate&&!assetGate.valid){
+            return err(409,"POLICY_ASSET_VALIDATION_FAILED","Production policy references unavailable or unsupported production assets.",assetGate.errors);
+          }
         }
         const approvalId=crypto.randomUUID(),next=decision==="APPROVE"?"APPROVED":"REJECTED";
         const stmts=[env.DB.prepare(`
