@@ -64,6 +64,7 @@ function publicIdentity(identity) {
     permissions: {
       artworkWrite: can(identity, "ARTWORK_WRITE"),
       review: can(identity, "REVIEW"),
+      auditRead: can(identity, "AUDIT_READ"),
       commentWrite: can(identity, "COMMENT_WRITE"),
       batchWrite: can(identity, "BATCH_WRITE"),
       templateWrite: can(identity, "TEMPLATE_WRITE"),
