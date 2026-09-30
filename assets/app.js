@@ -527,9 +527,9 @@
     const rightSvg=dielineSvg("editor",right.artwork,{factories:right.factories,qrEcc:"M"});
     const toolbar=`<div class="toolbar" style="margin:10px 0"><button class="btn small ${state.compareMode==="side"?"primary":""}" data-compare-mode="side">Side by side</button><button class="btn small ${state.compareMode==="overlay"?"primary":""}" data-compare-mode="overlay">Overlay</button>${state.compareMode==="overlay"?`<label class="subtle" style="margin-left:8px">To opacity <input id="compare-opacity" type="range" min="0" max="1" step=".05" value="${state.compareOpacity}"/></label>`:""}</div>`;
     if(state.compareMode==="overlay"){
-      return `${toolbar}<div class="card-body"><div style="position:relative;overflow:auto;min-height:520px;background:#fff;border:1px solid #d8dee6"><div style="position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:center;overflow:auto">${leftSvg}</div><div id="compare-overlay-top" style="position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:center;overflow:auto;opacity:${state.compareOpacity}">${rightSvg}</div></div><div class="subtle" style="margin-top:6px">${esc(compare.from.revision)} = base · ${esc(compare.to.revision)} = overlay</div></div>`;
+      return `${toolbar}<div class="card-body"><div class="revision-overlay"><div class="revision-overlay-layer">${leftSvg}</div><div id="compare-overlay-top" class="revision-overlay-layer" style="opacity:${state.compareOpacity}">${rightSvg}</div></div><div class="subtle" style="margin-top:6px">${esc(compare.from.revision)} = base · ${esc(compare.to.revision)} = overlay</div></div>`;
     }
-    return `${toolbar}<div class="row2" style="align-items:start"><section class="card"><div class="card-head"><strong>${esc(compare.from.revision)}</strong><span class="subtle">${esc(compare.from.status||"")}</span></div><div class="card-body" style="overflow:auto;max-height:650px">${leftSvg}</div></section><section class="card"><div class="card-head"><strong>${esc(compare.to.revision)}</strong><span class="subtle">${esc(compare.to.status||"")}</span></div><div class="card-body" style="overflow:auto;max-height:650px">${rightSvg}</div></section></div>`;
+    return `${toolbar}<div class="revision-visual-grid"><section class="card"><div class="card-head"><strong>${esc(compare.from.revision)}</strong><span class="subtle">${esc(compare.from.status||"")}</span></div><div class="card-body revision-visual">${leftSvg}</div></section><section class="card"><div class="card-head"><strong>${esc(compare.to.revision)}</strong><span class="subtle">${esc(compare.to.status||"")}</span></div><div class="card-body revision-visual">${rightSvg}</div></section></div>`;
   }
 
   function renderRevisionCompare(){
@@ -648,6 +648,9 @@
     document.querySelectorAll("[data-open-artwork]").forEach(b=>b.onclick=()=>openRemoteArtwork(b.dataset.openArtwork));
     document.querySelectorAll("[data-edit-template-version]").forEach(b=>b.onclick=()=>openTemplateVersion(b.dataset.editTemplateVersion));
     document.querySelectorAll("[data-policy-action]").forEach(b=>b.onclick=()=>handlePolicyAction(b.dataset.policyAction,b.dataset.policyCode));
+    document.querySelectorAll("[data-compare-mode]").forEach(b=>b.onclick=()=>{state.compareMode=b.dataset.compareMode;render();});
+    const compareOpacity=document.getElementById("compare-opacity");
+    if(compareOpacity) compareOpacity.oninput=()=>{state.compareOpacity=Number(compareOpacity.value);const top=document.getElementById("compare-overlay-top");if(top)top.style.opacity=String(state.compareOpacity);};
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
     const file=document.getElementById("batch-file");
