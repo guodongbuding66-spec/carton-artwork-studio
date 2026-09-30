@@ -13,7 +13,7 @@ Required checks:
 - Cloudflare Access identity is used
 - AUTH_BYPASS is disabled
 - D1 binding is present
-- D1 schema latest migration = `0006_system_readiness.sql`
+- D1 schema latest migration = `0007_production_assets.sql`
 - required D1 tables are present
 - R2 binding is present
 - R2 write / read / delete deep probe has passed within 24 hours
@@ -48,6 +48,8 @@ PRODUCTION_READY
 ```
 
 Policy JSON cannot claim a renderer feature that does not exist.
+
+Production also requires at least one approved FONT asset and one approved ICC_PROFILE asset. These asset approvals still do not enable renderer capability by themselves.
 
 At v1.5 the production renderer deliberately reports:
 
@@ -131,3 +133,10 @@ The post-deploy smoke test verifies:
 - unauthenticated `/api/me` does not pass through as an authenticated request
 
 The full application-level readiness check is performed after sign-in by an Admin from the Readiness Center because application RBAC is user-based rather than service-token-based.
+
+
+## Production Asset Registry
+
+Font and ICC assets are managed under Quality > Assets.
+
+See `docs/PRODUCTION_ASSETS.md`.
