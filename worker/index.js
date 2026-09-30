@@ -145,7 +145,10 @@ async function collectSystemReadiness(env, identity) {
       lastR2Probe:lastProbe?{
         status:lastProbe.status,
         createdAt:lastProbe.createdAt,
-        report:lastProbe.reportJson?JSON.parse(lastProbe.reportJson):null
+        report:(()=>{
+          try{return lastProbe.reportJson?JSON.parse(lastProbe.reportJson):null;}
+          catch{return null;}
+        })()
       }:null,
       bindings:{d1:Boolean(env.DB),r2:Boolean(env.ARTWORK_FILES),assets:Boolean(env.ASSETS)},
       auth:{identitySource:identity?.source||null,bypassEnabled:String(env.AUTH_BYPASS||"")==="1",bootstrapAdminConfigured:Boolean(String(env.BOOTSTRAP_ADMIN_EMAIL||"").trim())}
@@ -264,17 +267,55 @@ export default {
 
       if(request.method==="POST"&&url.pathname==="/api/system/readiness/probe"){
         const probe=await runR2DeepProbe(env);
-        const id=crypto.randomUUID();
+        const probeId=crypto.randomUUID();
         await env.DB.prepare(`
           INSERT INTO system_readiness_runs(id,scope,status,report_json,actor,created_at)
           VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
-        `).bind(id,"R2",probe.status,JSON.stringify(probe),identity.email).run();
-        await audit(env,identity,"SYSTEM_READINESS_RUN",id,"R2_DEEP_PROBE",{
-          newValue:probe,
-          reason:"Admin-initiated staging readiness probe"
-        });
+        `).bind(probeId,"R2",probe.status,JSON.stringify(probe),identity.email).run();
+
         const readiness=await collectSystemReadiness(env,identity);
-        return json({data:{probe,readiness}},{status:201});
+        const systemRunId=crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO system_readiness_runs(id,scope,status,report_json,actor,created_at)
+          VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
+        `).bind(
+          systemRunId,
+          "SYSTEM",
+          readiness.stagingReady?"PASS":"FAIL",
+          JSON.stringify(readiness),
+          identity.email
+        ).run();
+
+        await audit(env,identity,"SYSTEM_READINESS_RUN",systemRunId,"STAGING_DEEP_CHECK",{
+          newValue:{
+            stagingReady:readiness.stagingReady,
+            productionReady:readiness.productionReady,
+            stagingPassed:readiness.summary?.stagingPassed,
+            stagingTotal:readiness.summary?.stagingTotal,
+            r2Probe:probe.status
+          },
+          reason:"Admin-initiated staging readiness deep check"
+        });
+        return json({data:{probe,readiness,systemRunId}},{status:201});
+      }
+
+      if(request.method==="POST"&&url.pathname==="/api/factories"){
+        const b=await bodyJson(request);
+        const name=String(b.name||"").trim();
+        const crn=String(b.crn||"").trim();
+        const country=String(b.country||"").trim();
+        if(!name||!crn||!country)return err(400,"INVALID_FACTORY","name, crn and country are required.");
+        const id=crypto.randomUUID();
+        const status=String(b.status||"ACTIVE").toUpperCase();
+        await env.DB.prepare(`
+          INSERT INTO factories(id,name,crn,country,effective_at,status,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        `).bind(id,name,crn,country,b.effectiveAt||null,status).run();
+        await audit(env,identity,"FACTORY",id,"CREATE_MASTER",{
+          newValue:{name,crn,country,effectiveAt:b.effectiveAt||null,status},
+          reason:b.reason||"Factory master created"
+        });
+        return json({data:{id,name,crn,country,effectiveAt:b.effectiveAt||null,status}},{status:201});
       }
 
       if (request.method === "GET" && url.pathname === "/api/factories") {
