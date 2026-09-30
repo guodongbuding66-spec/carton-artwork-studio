@@ -8,7 +8,7 @@ const base={
   bindings:{d1:true,r2:true,assets:true},
   latestMigration:EXPECTED_LATEST_MIGRATION,
   schemaOk:true,
-  counts:{approvedTemplates:1,activeFactories:1,productionPolicies:4},
+  counts:{approvedTemplates:1,activeFactories:1,productionPolicies:4,approvedFonts:0,approvedIccProfiles:0},
   roleUsers:{OPERATOR:["operator@example.com"],REVIEWER:["reviewer@example.com"]},
   lastR2Probe:{status:"PASS",createdAt:"2026-09-30T08:00:00.000Z"},
   nowMs:Date.parse("2026-09-30T09:00:00.000Z"),
@@ -48,6 +48,7 @@ assert.ok(wrongMigration.stagingChecks.find(x=>x.id==="SCHEMA_CURRENT"&&!x.ok));
 
 const productionReady=buildSystemReadiness({
   ...base,
+  counts:{...base.counts,approvedFonts:1,approvedIccProfiles:1},
   productionReadiness:{
     ready:true,
     rendererCapabilities:{fontEmbedding:true,pdfxProfiles:["PDF/X-4"]},
