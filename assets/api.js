@@ -68,6 +68,7 @@
             factoryId: artwork.factoryId || null,
             packageCount: artwork.packageCount,
             currentPackage: artwork.currentPackage,
+            revision: artwork.revision || "R01",
             canonicalData,
             actor
           })
