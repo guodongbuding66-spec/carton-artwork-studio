@@ -586,7 +586,7 @@
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=async()=>{state.contentTab=b.dataset.contentTab;render();if(state.contentTab!=="factories")await loadReferenceMasters();});
-    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();});
+    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();if(state.qualityTab==="compare"&&state.remoteArtworkId&&!state.remoteRevisions.length)await refreshRemoteRevisionMetadata();});
     document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
     document.querySelectorAll("[data-art]").forEach(el=>{
       el.oninput=el.onchange=()=>{
@@ -965,6 +965,9 @@
       });
       state.remoteArtworkId=id;
       state.remoteRevision=state.artwork.revision;
+      state.remoteRevisions=remote.data?.revisions||[];
+      state.revisionCompare=null;
+      syncRevisionCompareDefaults();
       state.comments=[];
       localStorage.setItem("cas:remoteArtworkId",id);
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
@@ -1184,6 +1187,7 @@
       state.remoteRevision=response.data.revision;
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
       await loadComments();
+      await refreshRemoteRevisionMetadata(false);
       toast(`${response.data.revision} 已提交审核`,"success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
@@ -1202,6 +1206,7 @@
       state.artwork.status=response.data.status.toLowerCase();
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
       await loadComments();
+      await refreshRemoteRevisionMetadata(false);
       toast(decision==="APPROVE"?"Revision 已批准":"Revision 已退回","success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
@@ -1220,7 +1225,9 @@
       state.artwork.revision=response.data.revision;
       state.artwork.status="draft";
       state.comments=[];
+      state.revisionCompare=null;
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      await refreshRemoteRevisionMetadata(false);
       toast(`${response.data.revision} Draft 已创建`,"success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
@@ -1436,6 +1443,9 @@
               revision:row.current_revision
             });
             state.remoteRevision=state.artwork.revision;
+            state.remoteRevisions=remote.data?.revisions||[];
+            state.revisionCompare=null;
+            syncRevisionCompareDefaults();
             const comments=await api.comments(state.remoteArtworkId,state.artwork.revision);
             state.comments=comments.data||[];
           }catch(e){
