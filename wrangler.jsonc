@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "carton-artwork-studio",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-30",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  }
+  // Production bindings are intentionally disabled until resources are provisioned:
+  // "d1_databases": [{
+  //   "binding": "DB",
+  //   "database_name": "carton-artwork-studio-db",
+  //   "database_id": "<D1_DATABASE_ID>",
+  //   "migrations_dir": "migrations"
+  // }],
+  // "r2_buckets": [{
+  //   "binding": "ARTWORK_FILES",
+  //   "bucket_name": "carton-artwork-studio-files"
+  // }]
+}
