@@ -597,14 +597,14 @@
     if(!r) return `<section class="card"><div class="card-head"><h3>Staging Readiness Center</h3><span class="spacer"></span><button class="btn small" data-action="refresh-system-readiness">Refresh</button></div><div class="card-body"><div class="notice">尚未读取服务器 Readiness 状态。</div></div></section>`;
 
     const stagingRows=(r.stagingChecks||[]).map(x=>[
-      x.label,
-      `<span class="badge ${x.ok?"green":"red"}">${x.status}</span>`,
-      x.detail
+      esc(x.label),
+      `<span class="badge ${x.ok?"green":"red"}">${esc(x.status)}</span>`,
+      esc(x.detail)
     ]);
     const productionRows=(r.productionChecks||[]).map(x=>[
-      x.label,
-      `<span class="badge ${x.ok?"green":"red"}">${x.status}</span>`,
-      x.detail
+      esc(x.label),
+      `<span class="badge ${x.ok?"green":"red"}">${esc(x.status)}</span>`,
+      esc(x.detail)
     ]);
     const diag=r.diagnostics||{};
     const lastProbe=diag.lastR2Probe?.createdAt||"Never";
