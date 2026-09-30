@@ -3,6 +3,7 @@ import { parseTemplateJson, validateTemplateJson } from "./template.js";
 import { parsePolicyConfig, validateProductionPolicy, summarizeProductionReadiness } from "./readiness.js";
 import { diffJson } from "./diff.js";
 import { EXPECTED_LATEST_MIGRATION, buildSystemReadiness } from "./system-readiness.js";
+import { inspectProductionAsset, safeAssetCode } from "./production-assets.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -64,7 +65,7 @@ const REQUIRED_SCHEMA_TABLES = Object.freeze([
   "mapping_profiles","import_jobs","import_rows",
   "users","user_roles","security_events",
   "reference_records","production_policies","production_policy_approvals",
-  "system_readiness_runs"
+  "system_readiness_runs","production_assets","production_asset_approvals"
 ]);
 
 async function collectSystemReadiness(env, identity) {
@@ -79,10 +80,12 @@ async function collectSystemReadiness(env, identity) {
     latestMigration=null;
   }
 
-  const [templateCount,factoryCount,policyCount,roleRows,lastProbe]=await Promise.all([
+  const [templateCount,factoryCount,policyCount,approvedFontCount,approvedIccCount,roleRows,lastProbe]=await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS count FROM template_versions WHERE status='APPROVED'").first(),
     env.DB.prepare("SELECT COUNT(*) AS count FROM factories WHERE status='ACTIVE'").first(),
     env.DB.prepare("SELECT COUNT(*) AS count FROM production_policies").first(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM production_assets WHERE asset_type='FONT' AND status='APPROVED'").first(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM production_assets WHERE asset_type='ICC_PROFILE' AND status='APPROVED'").first(),
     env.DB.prepare(`
       SELECT lower(u.email) AS email,ur.role
       FROM users u
@@ -123,7 +126,9 @@ async function collectSystemReadiness(env, identity) {
     counts:{
       approvedTemplates:Number(templateCount?.count||0),
       activeFactories:Number(factoryCount?.count||0),
-      productionPolicies:Number(policyCount?.count||0)
+      productionPolicies:Number(policyCount?.count||0),
+      approvedFonts:Number(approvedFontCount?.count||0),
+      approvedIccProfiles:Number(approvedIccCount?.count||0)
     },
     roleUsers,
     lastR2Probe:lastProbe?{status:lastProbe.status,createdAt:lastProbe.createdAt}:null,
@@ -139,7 +144,9 @@ async function collectSystemReadiness(env, identity) {
       counts:report.summary?{
         approvedTemplates:Number(templateCount?.count||0),
         activeFactories:Number(factoryCount?.count||0),
-        productionPolicies:Number(policyCount?.count||0)
+        productionPolicies:Number(policyCount?.count||0),
+        approvedFonts:Number(approvedFontCount?.count||0),
+        approvedIccProfiles:Number(approvedIccCount?.count||0)
       }:{},
       roleUsers,
       lastR2Probe:lastProbe?{
@@ -216,7 +223,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.5.0",
+        version: "1.6.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
