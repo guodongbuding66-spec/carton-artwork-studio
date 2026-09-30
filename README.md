@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.5.0
+## 当前版本：1.6.0
 
 ### 已实现
 
@@ -47,11 +47,87 @@
 - Quality / Versioned Preflight Profile / Audit Log
 - Cloudflare Worker API + Access/RBAC gateway + live master-data/audit APIs
 - Staging Readiness Center + R2 deep probe + release gate
+- Production Asset Registry：Font / ICC + SHA-256 + Four-eyes approval
 - D1 baseline migration + Batch / Mapping Profile + Users/Roles/Security + Template Lifecycle + Production Readiness + System Readiness migration
 - Mapping Profile / Import Job D1 APIs
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.6.0 关键工程进展
+
+### 1. Production Asset Registry
+
+Quality 新增 **Assets** 页面，正式 Font / ICC Profile 不再依赖本地文件名或人工口头约定。
+
+支持：
+
+- `FONT`
+- `ICC_PROFILE`
+- R2 私有存储
+- SHA-256
+- Code / Version
+- License / Source metadata
+- DRAFT → SUBMITTED → APPROVED / REJECTED
+- Four-eyes approval
+- 新 Approved Version 自动 Retire 同 Code 的旧版本
+
+### 2. 上传前结构验证
+
+Font：
+
+- TrueType / OpenType / SFNT signature
+- Table Directory
+- Table Tag
+- Offset / Length bounds
+
+ICC：
+
+- profile size
+- `acsp`
+- ICC version
+- Profile Class
+- Color Space / PCS
+- Tag Table bounds
+
+结构错误文件不会进入正式 Asset Registry。
+
+### 3. Approval 前重新验证 R2 内容
+
+审批不只相信 Upload 时的结果。
+
+APPROVE 前 Worker 会重新：
+
+```text
+R2 GET
+↓
+SHA-256 recompute
+↓
+compare stored SHA-256
+↓
+structural validation again
+↓
+APPROVE
+```
+
+如 R2 文件内容被替换，审批会被阻断并记录 Security Event。
+
+### 4. Asset Provenance Gate
+
+Font / ICC 在提交审批前必须填写 License / Source Note。
+
+系统记录来源，但不会因为填写了文字就自动推定许可证有效。
+
+### 5. Production Readiness 增加资产门禁
+
+Production 现在额外要求：
+
+- 至少一个 Approved FONT
+- 至少一个 Approved ICC_PROFILE
+
+但这**不会**把尚未实现的 Font Embedding / Outlining / PDF-X 伪装成 READY。
+
+当前 Production 仍然正确保持 BLOCKED，直到 Renderer 真正消费这些已批准资产。
 
 ## v1.5.0 关键工程进展
 
@@ -738,6 +814,7 @@ docs/
   CODE_PDF_XLSX_V0.3.md
   CLOUDFLARE_DEPLOYMENT.md
   STAGING_READINESS.md
+  PRODUCTION_ASSETS.md
 migrations/
   0001_init.sql
   0002_batch_and_artifacts.sql
@@ -745,6 +822,7 @@ migrations/
   0004_template_lifecycle.sql
   0005_reference_and_readiness.sql
   0006_system_readiness.sql
+  0007_production_assets.sql
 worker/
   auth.js                 # Access identity + RBAC policy
   index.js
@@ -805,8 +883,8 @@ npm run check
 
 - 一维码最终 Symbology / Barcode payload 业务确认
 - QR payload / ECC 业务确认；当前模板默认 ECC M，Version 自动选择
-- Approved Font Registry / embedding / outlining 已进入 Production Policy gate，仍需提供并批准实际方案
-- PDF/X profile 已进入 Production Policy gate，仍需确认目标 profile 与转换/验证实现
+- Approved Font / ICC Asset Registry 已实现；仍需把批准资产真正接入 PDF Renderer 的 font embedding / outlining 与 OutputIntent
+- PDF/X Policy + ICC Asset 已有受控审批链；仍需确认目标 PDF/X profile，并实现 OutputIntent / PDF-X metadata / 外部验证
 - Excel style/number-format leading-zero 恢复已实现；仍需更多真实 Packing List 样本做兼容性回归
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Cloudflare Access / RBAC / Staging Readiness 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application、D1/R2 与 Access Service Token
