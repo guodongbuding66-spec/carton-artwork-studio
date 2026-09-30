@@ -52,6 +52,8 @@ export function permissionForRequest(method, pathname) {
 
   if (p.startsWith("/api/admin/")) return "ADMIN";
   if (p === "/api/system/readiness" || p === "/api/system/readiness/probe") return "ADMIN";
+  if (p === "/api/factories" && m === "POST") return "ADMIN";
+  if (/^\/api\/factories\/[^/]+$/.test(p) && m === "PATCH") return "ADMIN";
   if (p === "/api/audit") return "AUDIT_READ";
 
   if (p === "/api/reference-records" && m === "POST") return "REFERENCE_WRITE";
