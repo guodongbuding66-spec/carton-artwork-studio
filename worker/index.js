@@ -1098,7 +1098,7 @@ export default {
         await env.DB.prepare(`
           INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
           VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
-        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"1.2.0",JSON.stringify(storedManifest)).run();
+        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"1.3.0",JSON.stringify(storedManifest)).run();
         await audit(env, identity, "EXPORT", id, "UPLOAD", {
           newValue:{
             artworkId,revision,kind,objectKey,sha256,
