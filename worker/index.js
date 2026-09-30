@@ -1620,6 +1620,22 @@ export default {
 
         const kind=(url.searchParams.get("kind")||"artifact").toUpperCase();
         let productionEvidence=null;
+        let authoritativePdf=null;
+        if(kind==="PRODUCTION_BUNDLE"){
+          const authoritativePdfExportId=String(request.headers.get("x-authoritative-pdf-export")||"").trim();
+          const authoritativePdfSha256=String(request.headers.get("x-authoritative-pdf-sha256")||"").trim().toLowerCase();
+          if(!authoritativePdfExportId||!authoritativePdfSha256){
+            return err(409,"AUTHORITATIVE_PDF_REQUIRED","Production Bundle must reference a server-rendered authoritative Production PDF.");
+          }
+          authoritativePdf=await env.DB.prepare(`
+            SELECT id,artwork_id AS artworkId,revision,kind,object_key AS objectKey,sha256,renderer_version AS rendererVersion
+            FROM exports
+            WHERE id=? AND artwork_id=? AND kind='PRODUCTION_PDF'
+          `).bind(authoritativePdfExportId,artworkId).first();
+          if(!authoritativePdf||String(authoritativePdf.sha256||"").toLowerCase()!==authoritativePdfSha256){
+            return err(409,"AUTHORITATIVE_PDF_MISMATCH","Referenced authoritative Production PDF export/hash is invalid.");
+          }
+        }
         if(kind.includes("PRODUCTION")){
           const {results:policyRows}=await env.DB.prepare(`
             SELECT code,display_name AS displayName,status,config_json AS configJson,
@@ -1649,6 +1665,9 @@ export default {
         const revision=url.searchParams.get("revision")||artwork.current_revision||"R01";
         if(revision!==artwork.current_revision) {
           return err(409,"STALE_REVISION","Production artifact revision must match the current approved revision.");
+        }
+        if(authoritativePdf&&authoritativePdf.revision!==revision){
+          return err(409,"AUTHORITATIVE_PDF_REVISION_MISMATCH","Authoritative Production PDF must belong to the same current revision.");
         }
         const rev=await env.DB.prepare(
           "SELECT status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
@@ -1684,7 +1703,13 @@ export default {
           serverEvidence,
           persistedAt:new Date().toISOString(),
           persistedBy:identity.email,
-          artifactSha256:sha256
+          artifactSha256:sha256,
+          authoritativePdf:authoritativePdf?{
+            exportId:authoritativePdf.id,
+            sha256:authoritativePdf.sha256,
+            objectKey:authoritativePdf.objectKey,
+            rendererVersion:authoritativePdf.rendererVersion
+          }:null
         };
 
         const id=crypto.randomUUID();
@@ -1695,6 +1720,8 @@ export default {
         await audit(env, identity, "EXPORT", id, "UPLOAD", {
           newValue:{
             artworkId,revision,kind,objectKey,sha256,
+            authoritativePdfExportId:authoritativePdf?.id||null,
+            authoritativePdfSha256:authoritativePdf?.sha256||null,
             readiness:serverEvidence?.readiness?.ready===true,
             policies:serverEvidence?.policies?.map((p)=>({code:p.code,status:p.status,approvedBy:p.approvedBy}))||[]
           },
