@@ -584,10 +584,12 @@
       const canSubmit=["DRAFT","REJECTED"].includes(a.status)&&permitted("productionAssetWrite");
       const canReview=a.status==="SUBMITTED"&&permitted("productionAssetApprove");
       const canFontTest=a.assetType==="FONT"&&a.status==="APPROVED"&&Boolean(state.remoteArtworkId)&&permitted("productionAssetApprove");
+      const canIccTest=a.assetType==="ICC_PROFILE"&&a.status==="APPROVED"&&Boolean(state.remoteArtworkId)&&permitted("productionAssetApprove");
       const actions=[
         canSubmit?`<button class="btn small" data-production-asset-action="submit" data-production-asset-id="${esc(a.id)}">Submit</button>`:"",
         canReview?`<button class="btn small" data-production-asset-action="reject" data-production-asset-id="${esc(a.id)}">Reject</button><button class="btn success small" data-production-asset-action="approve" data-production-asset-id="${esc(a.id)}">Approve</button>`:"",
-        canFontTest?`<button class="btn small" data-production-asset-action="font-test" data-production-asset-id="${esc(a.id)}">Embed Test PDF</button>`:""
+        canFontTest?`<button class="btn small" data-production-asset-action="font-test" data-production-asset-id="${esc(a.id)}">Embed Test PDF</button>`:"",
+        canIccTest?`<button class="btn small" data-production-asset-action="icc-test" data-production-asset-id="${esc(a.id)}">OutputIntent Test PDF</button>`:""
       ].join(" ");
       return [
         `<span class="badge blue">${esc(a.assetType)}</span>`,
@@ -603,7 +605,7 @@
 
     const uploader=permitted("productionAssetWrite")?`
       <div class="card-body" style="border-bottom:1px solid #e5e9ee">
-        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传建立受控资产与审批链。TrueType 字体嵌入已进入服务器 Renderer；文字转曲与 PDF/X 仍未实现。原始 Font / ICC 文件保存在 R2，本页不提供原文件下载入口。</div>
+        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传建立受控资产与审批链。TrueType 字体嵌入已进入服务器 Renderer；ICC OutputIntent + PDF/X-4 XMP Candidate 可生成验证稿，但尚未通过外部 PDF/X conformance validator。原始 Font / ICC 文件保存在 R2，本页不提供原文件下载入口。</div>
         <div class="row2">
           <div class="field"><label>Asset Type</label><select id="production-asset-type" class="input"><option value="FONT">FONT</option><option value="ICC_PROFILE">ICC_PROFILE</option></select></div>
           <div class="field"><label>Code</label><input id="production-asset-code" class="input mono" placeholder="ISUNOR_SANS_REGULAR"/></div>
@@ -673,7 +675,7 @@
             <div class="kpi"><div class="kpi-label">LAST R2 PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
           </div>
           <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
-            Staging 与 Production 是两套门禁。TrueType 字体嵌入已由服务器 Renderer 实现；文字转曲与 PDF/X 尚未实现时，Production 仍应保持 BLOCKED，不能靠 Policy JSON 伪造通过。
+            Staging 与 Production 是两套门禁。TrueType 字体嵌入已由服务器 Renderer 实现；ICC OutputIntent / PDF/X-4 metadata candidate 已进入技术验证，但外部 PDF/X conformance 尚未通过时，Production 仍应保持 BLOCKED。
           </div>
         </div>
         <div class="card-head"><h3>Staging Gates</h3></div>
@@ -1026,6 +1028,15 @@
         const result=await api.renderFontEmbedValidation(state.remoteArtworkId,id);
         downloadBlob(result.filename||"FontEmbedValidation.pdf",result.blob);
         toast(`Server Font Embed Test 已生成 · PDF ${String(result.headers?.artifactSha256||"").slice(0,12)}… · Font ${String(result.headers?.fontSha256||"").slice(0,12)}…`,"success");
+        if(permitted("auditRead")) await loadAudit(false);
+        return;
+      }
+      if(action==="icc-test"){
+        if(!state.remoteArtworkId){toast("请先从 Dashboard 打开一个 D1 Artwork。","error");return;}
+        if(!permitted("productionAssetApprove")){toast("需要 Production Asset Approve 权限。","error");return;}
+        const result=await api.renderOutputIntentValidation(state.remoteArtworkId,id);
+        downloadBlob(result.filename||"OutputIntentValidation.pdf",result.blob);
+        toast(`ICC OutputIntent Candidate 已生成 · PDF ${String(result.headers?.artifactSha256||"").slice(0,12)}… · ICC ${String(result.headers?.iccSha256||"").slice(0,12)}… · ${result.headers?.pdfxCandidate||"PDF/X candidate"}`,"success");
         if(permitted("auditRead")) await loadAudit(false);
         return;
       }
