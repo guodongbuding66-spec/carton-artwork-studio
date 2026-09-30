@@ -69,6 +69,12 @@
       async productionReadiness() {
         return request("/api/production-readiness");
       },
+      async systemReadiness() {
+        return request("/api/system/readiness");
+      },
+      async runSystemReadinessProbe() {
+        return request("/api/system/readiness/probe", { method:"POST", body:"{}" });
+      },
       async updateProductionPolicy(code, payload) {
         return request(`/api/production-policies/${encodeURIComponent(code)}`, {
           method:"PATCH", body:JSON.stringify(payload)
