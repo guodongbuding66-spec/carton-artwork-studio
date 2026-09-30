@@ -59,7 +59,9 @@
     remoteRevisions: [],
     compareFrom: null,
     compareTo: null,
-    revisionCompare: null
+    revisionCompare: null,
+    compareMode: "side",
+    compareOpacity: 0.5
   };
 
   const navItems = [
@@ -288,8 +290,12 @@
     return `<div class="comments">${composer}${list}</div>`;
   }
 
-  function dielineSvg(mode="editor", artwork=state.artwork) {
-    const a=artwork,g=D.sideSealGeometry(a),c=D.computed(a), safe=22;
+  function dielineSvg(mode="editor", artwork=state.artwork, options={}) {
+    const a=artwork;
+    const g=D.sideSealGeometry(a);
+    const factoryList=options.factories||state.factories;
+    const c=D.computed(a,factoryList);
+    const safe=22;
     const proof=mode==="proof", production=mode==="production";
     const showD=production?false:(proof?true:state.showDieline);
     const showS=production?false:(proof?true:state.showSafe);
@@ -300,7 +306,8 @@
     const safeBox=showS?`<rect x="${g.H+safe}" y="${g.H+g.W+g.H+safe}" width="${g.L-safe*2}" height="${g.W-safe*2}" fill="none" stroke="#15976d" stroke-dasharray="6 4"/>`:"";
     const labels=showP?g.panels.map(p=>`<text x="${p.x+p.w/2}" y="${p.y+p.h/2}" text-anchor="middle" fill="#aab4be" font-size="16" font-family="Arial">${p.id}</text>`).join(""):"";
     const bx=g.H+45, by=g.H+g.W+g.H+68;
-    const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118, a.codeBlockProfile, a);
+    const qrEcc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
+    const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118,a.codeBlockProfile,a,{qrEcc});
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
     const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
@@ -311,7 +318,7 @@
         <text x="${bx}" y="${by+24}" font-size="14">N.W. ${esc(a.netWeight)} LBS   G.W. ${esc(a.grossWeight)} LBS</text>
         <text x="${bx}" y="${by+44}" font-size="14">Package Meas ${esc(c.packageMeas)}</text>
         <text x="${bx}" y="${by+64}" font-size="14">CRN ${esc(c.crn)}</text>
-        <text x="${bx}" y="${by+84}" font-size="14">Contract No ${esc(a.contractNo)}   ·   ${esc(c.originText)}   ·   US</text>
+        <text x="${bx}" y="${by+84}" font-size="14">Contract No ${esc(a.contractNo)}   ·   ${esc(c.originText)}   ·   ${esc(a.market||"US")}</text>
         ${note}
         <g transform="translate(${g.H*.55} ${g.H+g.W*.56}) rotate(90)"><text font-size="14">CRN ${esc(c.crn)}</text></g>
       </g>
@@ -319,13 +326,14 @@
     </svg>`;
   }
 
-  function renderCodeBlock(x,y,profile,artwork=state.artwork){
+  function renderCodeBlock(x,y,profile,artwork=state.artwork,options={}){
     const dims=D.codeBlockDimensions(profile), b=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
     const scale=Math.min((dims.w-72)/b.widthMm,1.15);
     const bars=b.bars.map(r=>`<rect x="${(x+10+r.x*scale).toFixed(2)}" y="${y+14}" width="${(r.w*scale).toFixed(2)}" height="${r.h}" fill="#000"/>`).join("");
-    const qm=C.qrMatrix(artwork.qr,"M").matrix, qSize=Math.min(54,dims.h-14), quiet=4, mod=qSize/(qm.length+quiet*2), qx=x+dims.w-qSize-8,qy=y+7;
+    const ecc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
+    const qm=C.qrMatrix(artwork.qr,ecc).matrix, qSize=Math.min(54,dims.h-14), quiet=4, mod=qSize/(qm.length+quiet*2), qx=x+dims.w-qSize-8,qy=y+7;
     const qr=qm.flatMap((row,rr)=>row.map((v,cc)=>v?`<rect x="${(qx+(cc+quiet)*mod).toFixed(2)}" y="${(qy+(rr+quiet)*mod).toFixed(2)}" width="${mod.toFixed(2)}" height="${mod.toFixed(2)}" fill="#000"/>`:"")).join("");
-    return `<g><rect x="${x}" y="${y}" width="${dims.w}" height="${dims.h}" rx="2" fill="#fff" stroke="#8d98a3"/>${bars}<text x="${x+12}" y="${y+48}" font-family="Arial" font-size="8">${esc(artwork.barcode)}</text>${qr}<text x="${x+8}" y="${y+dims.h-5}" font-family="Arial" font-size="7" fill="#555">🔒 Locked CodeBlock · QR M · standards encoder</text></g>`;
+    return `<g><rect x="${x}" y="${y}" width="${dims.w}" height="${dims.h}" rx="2" fill="#fff" stroke="#8d98a3"/>${bars}<text x="${x+12}" y="${y+48}" font-family="Arial" font-size="8">${esc(artwork.barcode)}</text>${qr}<text x="${x+8}" y="${y+dims.h-5}" font-family="Arial" font-size="7" fill="#555">🔒 Locked CodeBlock · QR ${esc(ecc)} · standards encoder</text></g>`;
   }
 
   function renderPreflight(){
@@ -497,6 +505,33 @@
     return String(value);
   }
 
+  function frozenModel(side){
+    const snapshot=side?.snapshot||{};
+    const artwork=D.artworkFromCanonical(snapshot,{
+      revision:side?.revision,
+      status:A.statusFromApi(side?.status||"DRAFT")
+    });
+    const frozenFactory=snapshot.factory ? [{
+      id:snapshot.factory.id,
+      name:snapshot.factory.name,
+      crn:snapshot.factory.crn,
+      country:snapshot.factory.country
+    }] : [];
+    return {artwork,factories:frozenFactory};
+  }
+
+  function renderCompareVisual(compare){
+    if(!compare?.from?.snapshot||!compare?.to?.snapshot) return "";
+    const left=frozenModel(compare.from), right=frozenModel(compare.to);
+    const leftSvg=dielineSvg("editor",left.artwork,{factories:left.factories,qrEcc:"M"});
+    const rightSvg=dielineSvg("editor",right.artwork,{factories:right.factories,qrEcc:"M"});
+    const toolbar=`<div class="toolbar" style="margin:10px 0"><button class="btn small ${state.compareMode==="side"?"primary":""}" data-compare-mode="side">Side by side</button><button class="btn small ${state.compareMode==="overlay"?"primary":""}" data-compare-mode="overlay">Overlay</button>${state.compareMode==="overlay"?`<label class="subtle" style="margin-left:8px">To opacity <input id="compare-opacity" type="range" min="0" max="1" step=".05" value="${state.compareOpacity}"/></label>`:""}</div>`;
+    if(state.compareMode==="overlay"){
+      return `${toolbar}<div class="card-body"><div class="revision-overlay"><div class="revision-overlay-layer">${leftSvg}</div><div id="compare-overlay-top" class="revision-overlay-layer" style="opacity:${state.compareOpacity}">${rightSvg}</div></div><div class="subtle" style="margin-top:6px">${esc(compare.from.revision)} = base · ${esc(compare.to.revision)} = overlay</div></div>`;
+    }
+    return `${toolbar}<div class="revision-visual-grid"><section class="card"><div class="card-head"><strong>${esc(compare.from.revision)}</strong><span class="subtle">${esc(compare.from.status||"")}</span></div><div class="card-body revision-visual">${leftSvg}</div></section><section class="card"><div class="card-head"><strong>${esc(compare.to.revision)}</strong><span class="subtle">${esc(compare.to.status||"")}</span></div><div class="card-body revision-visual">${rightSvg}</div></section></div>`;
+  }
+
   function renderRevisionCompare(){
     if(!state.remoteArtworkId){
       return '<div class="card-body"><div class="notice">先从 Dashboard 打开一个 D1 Artwork，才能比较历史 Revision。</div></div>';
@@ -519,10 +554,11 @@
           <div class="field"><label>From Revision</label><select id="compare-from" class="input">${optionHtml(state.compareFrom)}</select></div>
           <div class="field"><label>To Revision</label><select id="compare-to" class="input">${optionHtml(state.compareTo)}</select></div>
         </div>
-        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="run-compare">Compare Canonical Data</button></div>
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="run-compare">Compare Revision</button></div>
         ${compare?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL CHANGES</div><div class="kpi-value">${compare.total}</div></div><div class="kpi"><div class="kpi-label">CHANGED</div><div class="kpi-value">${compare.changed}</div></div><div class="kpi"><div class="kpi-label">ADDED</div><div class="kpi-value">${compare.added}</div></div><div class="kpi"><div class="kpi-label">REMOVED</div><div class="kpi-value">${compare.removed}</div></div></div>`:""}
       </div>
-      ${compare?(rows.length?table(["Canonical Path","From","To","Change"],rows,true):'<div class="card-body"><div class="notice">两个 Revision 的 Canonical Data 完全一致。</div></div>'):'<div class="card-body"><div class="notice">选择两个 Revision 后执行 Compare。比较基于冻结的 Canonical Snapshot，不使用演示结果。</div></div>'}
+      ${compare?renderCompareVisual(compare):""}
+      ${compare?(rows.length?table(["Canonical Path","From","To","Change"],rows,true):'<div class="card-body"><div class="notice">两个 Revision 的 Canonical Data 完全一致。</div></div>'):'<div class="card-body"><div class="notice">选择两个 Revision 后执行 Compare。比较和预览都来自冻结的 Canonical Snapshot。</div></div>'}
     `;
   }
 
@@ -612,6 +648,9 @@
     document.querySelectorAll("[data-open-artwork]").forEach(b=>b.onclick=()=>openRemoteArtwork(b.dataset.openArtwork));
     document.querySelectorAll("[data-edit-template-version]").forEach(b=>b.onclick=()=>openTemplateVersion(b.dataset.editTemplateVersion));
     document.querySelectorAll("[data-policy-action]").forEach(b=>b.onclick=()=>handlePolicyAction(b.dataset.policyAction,b.dataset.policyCode));
+    document.querySelectorAll("[data-compare-mode]").forEach(b=>b.onclick=()=>{state.compareMode=b.dataset.compareMode;render();});
+    const compareOpacity=document.getElementById("compare-opacity");
+    if(compareOpacity) compareOpacity.oninput=()=>{state.compareOpacity=Number(compareOpacity.value);const top=document.getElementById("compare-overlay-top");if(top)top.style.opacity=String(state.compareOpacity);};
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
     const file=document.getElementById("batch-file");
@@ -1253,7 +1292,7 @@
     const code=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
     const qrModel=C.qrMatrix(artwork.qr,qrEcc);
     const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qrModel.matrix,mode});
-    const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork)}`;
+    const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork,{factories:state.factories,qrEcc})}`;
     const snapshot=JSON.stringify(D.canonicalData(artwork,state.factories),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
@@ -1263,7 +1302,7 @@
       policies:state.productionPolicies
     },null,2);
 
-    const manifest=D.manifest(artwork,"vector-svg-pdf-1.2.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-1.3.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:qrModel.errorCorrectionLevel,version:qrModel.version,vector:true};
     manifest.barcode={symbology:barcodeSymbology,renderer:"Code128-B",vector:true};
     manifest.productionEvidence={
@@ -1339,7 +1378,7 @@
         kind:"PRODUCTION_BUNDLE",
         revision:state.artwork.revision,
         filename,
-        renderer:"1.2.0",
+        renderer:"1.3.0",
         actor:"web",
         manifest:built.manifest
       });
@@ -1360,14 +1399,14 @@
         const art={...row.artwork,status:"draft",revision:"R01"};
         const g=D.sideSealGeometry(art),comp=D.computed(art,state.factories),code=C.code128Bars(art.barcode,{moduleMm:.42,heightMm:25}),qr=C.qrMatrix(art.qr,"M").matrix;
         const pdf=P.createPdfBytes({artwork:art,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof"});
-        const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg("proof",art)}`;
+        const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg("proof",art,{factories:state.factories,qrEcc:"M"})}`;
         const snap=JSON.stringify(D.canonicalData(art,state.factories),null,2);
         const prefix=`row-${String(row.row).padStart(4,"0")}_${B.safeBase(art)}/`;
         files.push({name:prefix+"Proof.pdf",data:pdf},{name:prefix+"Proof.svg",data:svg},{name:prefix+"DataSnapshot.json",data:snap});
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.2.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.3.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");

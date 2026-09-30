@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.2.0
+## 当前版本：1.3.0
 
 ### 已实现
 
@@ -51,6 +51,38 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.3.0 关键工程进展
+
+### 1. Revision Compare 增加真实视觉对比
+
+Quality > Compare 在 Canonical Path 差异之外，现在可以直接渲染两个冻结 Revision：
+
+- Side by side
+- Overlay
+- Overlay opacity
+
+两个画面都来自各自 Revision 保存的 Canonical Snapshot，不使用当前 Factory Master 覆盖历史 CRN / Origin。
+
+### 2. 历史 Factory Snapshot 与当前 Master Data 解耦
+
+视觉比较时，Factory / CRN / Country 从 Revision Snapshot 自身恢复。
+
+因此 Factory Master 后续修改不会让历史 Revision 在 Compare 页面“被改写”。
+
+### 3. SVG / PDF renderer context 对齐
+
+修复了一个重要一致性问题：Artwork SVG 预览之前会走本地 seed Factory，而不是当前 D1 Factory Master。
+
+现在：
+
+- 当前 Artwork SVG → 当前 D1 Factory Master
+- 历史 Revision SVG → 冻结 Snapshot Factory
+- Production PDF → 当前已批准 Factory 数据
+- Production SVG → 与 PDF 相同 Factory + QR ECC context
+- Batch Proof PDF / SVG → 显式使用同一 QR ECC M
+
+避免同一个 Bundle 里的 PDF 与 SVG 出现 CRN、Origin 或 QR ECC 不一致。
 
 ## v1.2.0 关键工程进展
 
@@ -671,7 +703,7 @@ npm run check
 - Cloudflare Access / RBAC 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application 与 D1/R2 资源
 - D1/R2 API 与前端 Persistence Bridge 已实现，但仍需绑定正式 staging / production resources
 - immutable approval workflow 与 four-eyes 已进入后端；仍需 staging 双身份验收
-- Production renderer snapshot regression 已实现；Canonical Revision Compare 已实现，图形像素/矢量叠加差分仍待扩展
+- Production renderer snapshot regression、Canonical Revision Compare、Side-by-side / Overlay 已实现；像素级 Difference / Flicker 仍待扩展
 - external print preflight adapter
 - 实物 Barcode Verifier 数据接入
 

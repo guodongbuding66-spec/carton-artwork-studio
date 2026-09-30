@@ -90,7 +90,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.2.0",
+        version: "1.3.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -651,8 +651,8 @@ export default {
         const diff=diffJson(leftData,rightData);
         return json({data:{
           artwork,
-          from:{revision:left.revision,status:left.status,createdBy:left.createdBy,createdAt:left.createdAt},
-          to:{revision:right.revision,status:right.status,createdBy:right.createdBy,createdAt:right.createdAt},
+          from:{revision:left.revision,status:left.status,createdBy:left.createdBy,createdAt:left.createdAt,snapshot:leftData},
+          to:{revision:right.revision,status:right.status,createdBy:right.createdBy,createdAt:right.createdAt,snapshot:rightData},
           ...diff
         }});
       }
@@ -1098,7 +1098,7 @@ export default {
         await env.DB.prepare(`
           INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
           VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
-        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"1.2.0",JSON.stringify(storedManifest)).run();
+        `).bind(id,artworkId,revision,kind,objectKey,sha256,url.searchParams.get("renderer")||"1.3.0",JSON.stringify(storedManifest)).run();
         await audit(env, identity, "EXPORT", id, "UPLOAD", {
           newValue:{
             artworkId,revision,kind,objectKey,sha256,
