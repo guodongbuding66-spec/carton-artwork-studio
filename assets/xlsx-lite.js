@@ -95,8 +95,10 @@
         const type = typeMatch?.[1] || "";
         const valueMatch = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(body);
         const inlineMatch = /<t\b[^>]*>([\s\S]*?)<\/t>/.exec(body);
+        const formulaMatch = /<f\b[^>]*>([\s\S]*?)<\/f>/.exec(body);
         let value = valueMatch ? decodeXmlText(valueMatch[1]) : (inlineMatch ? decodeXmlText(inlineMatch[1]) : "");
-        if (type === "s") value = sharedStrings[Number(value)] ?? "";
+        if (formulaMatch && !valueMatch && !inlineMatch) value = `__FORMULA_NO_CACHE__:${decodeXmlText(formulaMatch[1])}`;
+        if (type === "s" && !String(value).startsWith("__FORMULA_NO_CACHE__:")) value = sharedStrings[Number(value)] ?? "";
         if (type === "b") value = value === "1";
         row[col] = value;
       }
@@ -196,7 +198,7 @@
       });
       if (!best || score > best.score) best = { rowIndex, mapping, score };
     });
-    if (!best || best.score < 2) throw new Error("No recognizable header row found.");
+    if (!best || best.score < 2 || best.mapping.sku === undefined) throw new Error("No recognizable header row with SKU/Item field found.");
     return best;
   }
 
@@ -210,6 +212,7 @@
     const records = [];
     const issues = [];
     let previous = {};
+    const fillDownFields = new Set(options.fillDownFields || ["contractNo","packageCount","factory"]);
 
     for (let r = header.rowIndex + 1; r < rows.length; r += 1) {
       const row = rows[r] || [];
@@ -222,8 +225,12 @@
       const rec = { _row: r + 1, _cells: {} };
       for (const [key, col] of Object.entries(header.mapping)) {
         let value = row[col] ?? "";
-        if (options.fillDown !== false && String(value).trim() === "" && previous[key] != null) value = previous[key];
-        if (String(value).trim() !== "") previous[key] = value;
+        if (typeof value === "string" && value.startsWith("__FORMULA_NO_CACHE__:")) {
+          issues.push({ severity:"error", row:r+1, cell:columnLabel(col)+String(r+1), field:key, message:"Formula cell has no cached value. Recalculate and save the workbook before import." });
+          value = "";
+        }
+        if (options.fillDown !== false && fillDownFields.has(key) && String(value).trim() === "" && previous[key] != null) value = previous[key];
+        if (fillDownFields.has(key) && String(value).trim() !== "") previous[key] = value;
         rec[key] = value;
         rec._cells[key] = columnLabel(col) + String(r + 1);
       }

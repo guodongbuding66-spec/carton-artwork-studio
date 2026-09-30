@@ -1,0 +1,12 @@
+const assert = require("node:assert/strict");
+const { loadBrowserModules } = require("./_load-umd.cjs");
+const { CartonZip: Z } = loadBrowserModules(["assets/zip.js"]);
+
+const out = Z.createZipBytes([{name:"a.txt",data:"hello"},{name:"b.json",data:'{"ok":true}'}],{date:new Date("2026-01-02T03:04:06Z")});
+assert.equal(out[0],0x50);assert.equal(out[1],0x4b);assert.equal(out[2],0x03);assert.equal(out[3],0x04);
+const text = Buffer.from(out).toString("latin1");
+assert.ok(text.includes("a.txt"));
+assert.ok(text.includes("b.json"));
+assert.ok(text.includes("hello"));
+assert.ok(out.length>40);
+console.log("ZIP tests passed.");

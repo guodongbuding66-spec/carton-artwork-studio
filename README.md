@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：0.3.0
+## 当前版本：0.5.0
 
 ### 已实现
 
@@ -23,8 +23,8 @@
 - SVG 技术预览
 - Data / Layout / Codes / Print 四类实时 Preflight
 - **真实 Code 128-B 矢量编码 + checksum + quiet zone**
-- **真实 QR Version 4-L Byte-mode 编码 + Reed-Solomon ECC + 自动 mask 选择**
-- Browser `BarcodeDetector` 可用时支持“矢量 → 栅格 → 重新解码”数字验证
+- **真实 QR 编码：自动 Version + ECC M，使用 MIT `qrcode-generator`，SVG/PDF 均输出矢量 modules**
+- QR UTF-8 payload 支持
 - **1:1 mm Vector PDF Renderer**
 - Proof PDF 含 `NOT FOR PRODUCTION`
 - Production PDF 为 K-only 黑色矢量对象
@@ -40,68 +40,77 @@
 - 行 / 单元格级错误定位
 - Excel Scientific Notation 基础归一化
 - Dry Run / Import Review / Error CSV
+- **通过行可真实批量生成 Proof PDF / SVG / DataSnapshot，并打包为单一 ZIP**
+- 自动检测 Mapping 结果并在 Batch 页面展示
 - Templates / Variables / Rules / Layers / Tests / Versions
 - Content Master / CRN Impact Analysis
 - Quality / Versioned Preflight Profile / Audit Log
 - Cloudflare Worker API scaffold
-- D1 baseline migration
+- D1 baseline migration + Batch / Mapping Profile migration
+- Mapping Profile / Import Job D1 APIs
+- R2 Artwork Export 上传 / 下载 API + SHA-256
 - Cloudflare Assets / D1 / R2 部署路线
-- 18 个自动测试
+- CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
 
-## 本轮关键工程进展
+## v0.5.0 关键工程进展
 
-### 1. Barcode / QR 不再是假图
+### 1. QR 从“技术预览”升级为标准编码器
 
-`assets/codes.js` 已实现：
+项目现已 vendoring Kazuhiko Arase 的 MIT `qrcode-generator`：
+
+- 自动选择 QR Version
+- UTF-8 Byte Mode
+- ECC M（当前模板默认）
+- 网页 SVG 使用真实 QR modules
+- PDF Renderer 使用同一 matrix 输出矢量矩形
+- Batch 逐行验证 QR 是否可编码
+
+第三方来源与许可证记录在 `THIRD_PARTY_NOTICES.md`。
+
+> QR 的**业务 payload 和最终 ECC 级别**仍需客户/箱厂确认；编码器真实并不代表业务规则已经最终确认。
+
+### 2. Batch 从“Import Review”进入真实生成
+
+当前流程：
 
 ```text
-Code 128-B
-├── Start B
-├── ASCII payload encoding
-├── Mod-103 checksum
-├── STOP
-└── Quiet Zone
-
-QR Version 4-L
-├── Byte Mode UTF-8
-├── 80 Data Codewords
-├── 20 Reed-Solomon ECC Codewords
-├── Finder / Timing / Alignment
-├── Format Information
-├── 8 Mask candidates
-└── Penalty-based mask selection
+XLSX / CSV
+↓
+Header Detection
+↓
+Alias Mapping
+↓
+Selective Fill Down
+↓
+Formula Cache Check
+↓
+Canonical Artwork Row
+↓
+Row Preflight
+↓
+PASS / ERROR
+↓
+Generate Passed Proofs
 ```
 
-默认 QR 示例已经通过独立 OpenCV QR 解码验证。
+通过行会实际调用同一套：
 
-> 当前仍未确认客户/箱厂要求的一维码最终 Symbology，因此 v0.3 使用 Code 128-B 作为真实编码 PoC；不能擅自把它定义成 GS1-128。
+- mm Geometry
+- Code 128 renderer
+- QR renderer
+- Vector PDF renderer
+- SVG renderer
 
-### 2. 1:1 Vector PDF
+并生成一个 `BatchProofs_YYYY-MM-DD.zip`。
 
-`assets/pdf.js` 使用 PDF 原生 vector operators 输出：
+失败行不会被静默跳过，`failed_rows.csv` 会记录 Row / Cell / Field / Error。
 
-- Text
-- Code 128 bars
-- QR modules
-- Proof dieline / crease
-- Production artwork
+### 3. Production Export 与 README 对齐
 
-页面 `MediaBox` 由同一个真实 mm Geometry 转换为 pt：
-
-```text
-1 mm = 72 / 25.4 pt
-```
-
-因此网页 SVG Preview 与 PDF 不再是两套独立坐标模型。
-
-当前字体使用 PDF Core Helvetica 作为技术 PoC，**Arial/批准字体嵌入或文字转曲仍是正式 Production Gate**。
-
-### 3. Production Bundle 加入 SHA-256
-
-当前正式导出包：
+单个已批准 Artwork 现在真正导出：
 
 ```text
-US_SIDE_SEAL_<SKU>_<PACKAGE>_<REV>_ProductionBundle.zip
+<Artwork>_ProductionBundle.zip
 ├── Production.pdf
 ├── Production.svg
 ├── DataSnapshot.json
@@ -110,31 +119,49 @@ US_SIDE_SEAL_<SKU>_<PACKAGE>_<REV>_ProductionBundle.zip
 └── README.txt
 ```
 
-`Manifest.json` 记录 PDF/SVG/Snapshot/Preflight 的 SHA-256，用于审计和后续不可变 Revision。
+Manifest 为 PDF / SVG / Snapshot / Preflight 记录 SHA-256。
 
-### 4. Excel 已从“UI 假数据”升级为真实 Parser
+Production 仍必须满足：
 
-`assets/xlsx-lite.js` 在浏览器直接解析 `.xlsx`：
+- Approved
+- 0 blocking error
+- Blocking review comment resolved
 
-```text
-XLSX ZIP
-  ↓
-Central Directory
-  ↓
-Deflate / Stored Entries
-  ↓
-sharedStrings.xml
-  ↓
-worksheet XML
-  ↓
-Header Detection / Alias Mapping
-  ↓
-Normalized Records
-  ↓
-Cell-level Validation
-```
+### 4. XLSX Import 加固
 
-当前支持 `.xlsx` / `.csv`；旧式 `.xls` BIFF 暂不解析，会明确提示另存为 `.xlsx`。
+`assets/xlsx-lite.js` 追加：
+
+- Header 必须包含 SKU / Item 类型字段
+- Formula 有公式但无 cached value → cell-level ERROR
+- Fill Down 改为**字段白名单**
+  - Contract No.
+  - Package Count
+  - Factory
+- 不再错误地向下复制 SKU / Barcode / QR
+
+### 5. Cloudflare Persistence API
+
+新增 `migrations/0002_batch_and_artifacts.sql`：
+
+- `mapping_profiles`
+- `import_jobs`
+- `import_rows`
+
+Worker 新增：
+
+- `GET/POST /api/mapping-profiles`
+- `GET/POST /api/import-jobs`
+- `GET /api/import-jobs/:id`
+- `POST /api/import-jobs/:id/rows`
+- `POST /api/artworks/:id/exports`
+- `GET /api/exports/:id`
+
+Artifact 上传接口会：
+
+1. 写入 R2
+2. 计算 SHA-256
+3. 写入 D1 `exports`
+4. 写入 Audit Log
 
 ## 源 PDF Calibration
 
@@ -160,9 +187,13 @@ assets/
   app.css
   app.js
   domain.js
-  codes.js               # Code128 + QR vector engines
+  codes.js               # Code128 + standards QR adapter
   pdf.js                 # 1:1 vector PDF renderer
   xlsx-lite.js           # zero-dependency XLSX/CSV import engine
+  batch.js               # row → artwork / validation / review
+  zip.js                 # store-only ZIP writer
+  vendor/
+    qrcode-generator.js  # MIT QR encoder
 
 docs/
   DEVELOPMENT_PLAN_V3.md
@@ -171,12 +202,16 @@ docs/
   CLOUDFLARE_DEPLOYMENT.md
 migrations/
   0001_init.sql
+  0002_batch_and_artifacts.sql
 worker/
   index.js
 tests/
   domain.test.cjs
-  codes-pdf.test.cjs
+  codes.test.cjs
   xlsx.test.cjs
+  batch.test.cjs
+  pdf.test.cjs
+  zip.test.cjs
 index.html
 wrangler.jsonc
 package.json
@@ -197,8 +232,7 @@ npm run check
 - Weight / Package blocking
 - PDF 200 mm calibration
 - Code 128 checksum / unsupported payload
-- QR Version 4-L codeword/ECC/matrix
-- QR payload capacity
+- standards QR matrix / ECC M / UTF-8 payload
 - PDF header / 1:1 MediaBox / Proof watermark
 - CSV Header Detection
 - XLSX ZIP + Shared Strings
@@ -221,14 +255,14 @@ npm run check
 ## 尚未达到正式生产条件的部分
 
 - 一维码最终 Symbology / Barcode payload 业务确认
-- QR payload / ECC 业务确认；当前引擎固定 Version 4-L
+- QR payload / ECC 业务确认；当前模板默认 ECC M，Version 自动选择
 - Approved Font Registry + font embedding / outlining
 - PDF/X profile
 - Excel style/number-format 级 leading-zero 恢复
-- Batch Passed Rows 真正逐行调用 PDF Renderer
+- Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Auth / RBAC
-- D1 persistence
-- R2 artifact persistence
+- 前端尚未把所有工作流操作切换到 D1 API
+- R2/D1 API 已实现但仍需在 Cloudflare 账户创建并绑定资源
 - immutable approval workflow
 - Template visual regression
 - external print preflight adapter
