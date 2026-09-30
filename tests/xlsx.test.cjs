@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
-const X = require("../assets/xlsx-lite.js");
+const { loadBrowserModules } = require("./_load-umd.cjs");
+const { CartonImport: X } = loadBrowserModules(["assets/xlsx-lite.js"]);
 
 function test(name, fn) {
   try { fn(); console.log("✓", name); }
