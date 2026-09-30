@@ -1,8 +1,14 @@
 const assert = require("node:assert/strict");
-globalThis.qrcode = require("../assets/vendor/qrcode-generator.js");
-const D = require("../assets/domain.js");
-const C = require("../assets/codes.js");
-const P = require("../assets/pdf.js");
+const { loadBrowserModules } = require("./_load-umd.cjs");
+const ctx = loadBrowserModules([
+  "assets/domain.js",
+  "assets/vendor/qrcode-generator.js",
+  "assets/codes.js",
+  "assets/pdf.js"
+]);
+const D = ctx.CartonDomain;
+const C = ctx.CartonCodes;
+const P = ctx.CartonPdf;
 
 const a = {...D.defaultArtwork};
 const g = D.sideSealGeometry(a);
