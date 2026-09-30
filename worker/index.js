@@ -4,6 +4,7 @@ import { parsePolicyConfig, validateProductionPolicy, summarizeProductionReadine
 import { diffJson } from "./diff.js";
 import { EXPECTED_LATEST_MIGRATION, buildSystemReadiness } from "./system-readiness.js";
 import { inspectProductionAsset, safeAssetCode } from "./production-assets.js";
+import { renderEmbeddedArtworkPdf } from "./production-renderer.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -58,6 +59,45 @@ async function securityEvent(env, identity, eventType, request, detail = {}) {
   }
 }
 
+async function loadApprovedProductionAssets(env) {
+  const {results}=await env.DB.prepare(`
+    SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+           size_bytes AS sizeBytes,media_type AS mediaType,metadata_json AS metadataJson,
+           status,approved_by AS approvedBy,approved_at AS approvedAt
+    FROM production_assets
+    WHERE status='APPROVED'
+    ORDER BY asset_type,code,version
+  `).all();
+  return (results||[]).map((x)=>{
+    let metadata={};
+    try{metadata=JSON.parse(x.metadataJson||"{}");}catch{}
+    return {...x,metadata};
+  });
+}
+
+
+async function readVerifiedProductionAsset(env, asset) {
+  if(!env.ARTWORK_FILES) throw new Error("R2_NOT_BOUND");
+  const object=await env.ARTWORK_FILES.get(asset.objectKey||asset.object_key);
+  if(!object) throw new Error("ASSET_OBJECT_MISSING");
+  const bytes=new Uint8Array(await object.arrayBuffer());
+  const digest=await crypto.subtle.digest("SHA-256",bytes);
+  const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+  if(sha256!==asset.sha256) throw new Error("ASSET_HASH_MISMATCH");
+  const inspection=inspectProductionAsset(asset.assetType||asset.asset_type,bytes);
+  if(!inspection.ok) {
+    const error=new Error("ASSET_REVALIDATION_FAILED");
+    error.detail=inspection.errors;
+    throw error;
+  }
+  return {bytes,sha256,inspection};
+}
+
+function parseJsonObject(value) {
+  try{return JSON.parse(value||"{}");}
+  catch{return {};}
+}
+
 const REQUIRED_SCHEMA_TABLES = Object.freeze([
   "templates","template_versions","template_approvals",
   "factories","artworks","artwork_revisions","comments","approvals",
@@ -106,11 +146,14 @@ async function collectSystemReadiness(env, identity) {
     if(roleUsers[row.role]) roleUsers[row.role].push(row.email);
   }
 
-  const {results:policyRows}=await env.DB.prepare(`
-    SELECT code,display_name AS displayName,status,config_json AS configJson
-    FROM production_policies ORDER BY code
-  `).all();
-  const productionReadiness=summarizeProductionReadiness(policyRows);
+  const [{results:policyRows},approvedAssets]=await Promise.all([
+    env.DB.prepare(`
+      SELECT code,display_name AS displayName,status,config_json AS configJson
+      FROM production_policies ORDER BY code
+    `).all(),
+    loadApprovedProductionAssets(env)
+  ]);
+  const productionReadiness=summarizeProductionReadiness(policyRows,undefined,approvedAssets);
 
   const report=buildSystemReadiness({
     identitySource:identity?.source||null,
@@ -225,7 +268,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.6.0",
+        version: "1.7.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
@@ -497,11 +540,14 @@ export default {
       }
 
       if(request.method==="GET"&&url.pathname==="/api/production-readiness"){
-        const {results}=await env.DB.prepare(`
-          SELECT code,display_name AS displayName,status,config_json AS configJson
-          FROM production_policies ORDER BY code
-        `).all();
-        return json({data:summarizeProductionReadiness(results)});
+        const [{results},approvedAssets]=await Promise.all([
+          env.DB.prepare(`
+            SELECT code,display_name AS displayName,status,config_json AS configJson
+            FROM production_policies ORDER BY code
+          `).all(),
+          loadApprovedProductionAssets(env)
+        ]);
+        return json({data:summarizeProductionReadiness(results,undefined,approvedAssets)});
       }
 
       const policyMatch=/^\/api\/production-policies\/([^/]+)$/.exec(url.pathname);
@@ -765,6 +811,186 @@ export default {
           reason:b.comment||"Production asset review decision"
         });
         return json({data:{id,status:decision==="APPROVE"?"APPROVED":"REJECTED",reviewer:identity.email}},{status:201});
+      }
+
+      const fontValidationMatch=/^\/api\/artworks\/([^/]+)\/font-embed-validation$/.exec(url.pathname);
+      if(request.method==="POST"&&fontValidationMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const artworkId=fontValidationMatch[1];
+        const assetId=String(url.searchParams.get("assetId")||"").trim();
+        if(!assetId)return err(400,"ASSET_ID_REQUIRED","assetId is required.");
+        const asset=await env.DB.prepare(`
+          SELECT id,asset_type AS assetType,code,version,filename,object_key AS objectKey,sha256,
+                 metadata_json AS metadataJson,status,approved_by AS approvedBy,approved_at AS approvedAt
+          FROM production_assets WHERE id=? AND asset_type='FONT' AND status='APPROVED'
+        `).bind(assetId).first();
+        if(!asset)return err(404,"APPROVED_FONT_NOT_FOUND","Approved FONT asset not found.");
+        let metadata={};
+        try{metadata=JSON.parse(asset.metadataJson||"{}");}catch{}
+        if(!/^TrueType/i.test(String(metadata.container||""))){
+          return err(409,"FONT_OUTLINE_UNSUPPORTED","Embedded renderer currently supports approved TrueType-outline assets only.");
+        }
+        const artwork=await env.DB.prepare(`
+          SELECT id,sku,contract_no AS contractNo,factory_id AS factoryId,status,current_revision AS currentRevision,
+                 canonical_data_json AS canonicalDataJson
+          FROM artworks WHERE id=?
+        `).bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        const snapshot=parseJsonObject(artwork.canonicalDataJson);
+        let verified;
+        try{verified=await readVerifiedProductionAsset(env,{...asset,metadata});}
+        catch(e){
+          if(e.message==="ASSET_HASH_MISMATCH"){
+            await securityEvent(env,identity,"PRODUCTION_ASSET_HASH_MISMATCH",request,{productionAssetId:asset.id,expected:asset.sha256});
+          }
+          return err(409,e.message||"ASSET_READ_FAILED","Font asset cannot be used for validation rendering.",e.detail);
+        }
+        const qrPolicy=await env.DB.prepare("SELECT config_json AS configJson FROM production_policies WHERE code='QR_POLICY'").first();
+        const qrConfig=parseJsonObject(qrPolicy?.configJson);
+        const qrEcc=["L","M","Q","H"].includes(String(qrConfig.ecc||"").toUpperCase())?String(qrConfig.ecc).toUpperCase():"M";
+        let rendered;
+        try{
+          rendered=renderEmbeddedArtworkPdf({
+            snapshot,
+            metadata:{
+              sku:artwork.sku,contractNo:artwork.contractNo,factoryId:artwork.factoryId,
+              revision:artwork.currentRevision,status:artwork.status
+            },
+            fontBytes:verified.bytes,
+            qrEcc,
+            mode:"proof"
+          });
+        }catch(e){
+          return err(409,"FONT_EMBED_RENDER_FAILED","Embedded-font validation render failed.",e.message||String(e));
+        }
+        const digest=await crypto.subtle.digest("SHA-256",rendered.bytes);
+        const pdfSha=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        await audit(env,identity,"PRODUCTION_ASSET",asset.id,"FONT_EMBED_VALIDATION",{
+          newValue:{artworkId,revision:artwork.currentRevision,pdfSha256:pdfSha,fontSha256:asset.sha256,qrEcc},
+          reason:"Server-side embedded-font validation proof"
+        });
+        const filename=(`FontEmbedValidation_${artwork.sku||artworkId}_${asset.code}_${asset.version}.pdf`).replace(/[^a-zA-Z0-9._-]+/g,"_");
+        return new Response(rendered.bytes,{
+          status:200,
+          headers:{
+            "content-type":"application/pdf",
+            "content-disposition":`attachment; filename="${filename}"`,
+            "cache-control":"no-store",
+            "x-cas-renderer":"embedded-truetype-1.7.0",
+            "x-cas-pdf-sha256":pdfSha,
+            "x-cas-font-sha256":asset.sha256
+          }
+        });
+      }
+
+      const productionRenderMatch=/^\/api\/artworks\/([^/]+)\/render-production-pdf$/.exec(url.pathname);
+      if(request.method==="POST"&&productionRenderMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const artworkId=productionRenderMatch[1];
+        const artwork=await env.DB.prepare(`
+          SELECT id,sku,contract_no AS contractNo,factory_id AS factoryId,status,current_revision AS currentRevision,
+                 canonical_data_json AS canonicalDataJson
+          FROM artworks WHERE id=?
+        `).bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+        if(String(artwork.status).toUpperCase()!=="APPROVED")return err(409,"NOT_APPROVED","Artwork must be approved.");
+
+        const rev=await env.DB.prepare(
+          "SELECT status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
+        ).bind(artworkId,artwork.currentRevision).first();
+        if(!rev||String(rev.status).toUpperCase()!=="APPROVED"){
+          return err(409,"REVISION_NOT_APPROVED","Current Revision is not approved.");
+        }
+        const unresolved=await env.DB.prepare(`
+          SELECT COUNT(*) AS count FROM comments
+          WHERE artwork_id=? AND revision=? AND blocking=1 AND resolved=0
+        `).bind(artworkId,artwork.currentRevision).first();
+        if(Number(unresolved?.count||0)>0)return err(409,"BLOCKING_COMMENTS","Production render is blocked by unresolved review comments.");
+
+        const [{results:policyRows},approvedAssets]=await Promise.all([
+          env.DB.prepare(`
+            SELECT code,display_name AS displayName,status,config_json AS configJson,
+                   submitted_by AS submittedBy,submitted_at AS submittedAt,
+                   approved_by AS approvedBy,approved_at AS approvedAt
+            FROM production_policies ORDER BY code
+          `).all(),
+          loadApprovedProductionAssets(env)
+        ]);
+        const readiness=summarizeProductionReadiness(policyRows,undefined,approvedAssets);
+        if(!readiness.ready){
+          return err(409,"PRODUCTION_READINESS_BLOCKED","Server production renderer is blocked by production readiness gates.",readiness.gates);
+        }
+        const policyMap=new Map(policyRows.map((p)=>[p.code,parseJsonObject(p.configJson)]));
+        const fontPolicy=policyMap.get("FONT_POLICY")||{};
+        const qrPolicy=policyMap.get("QR_POLICY")||{};
+        const fontAsset=approvedAssets.find((a)=>
+          a.assetType==="FONT" &&
+          String(a.code).toUpperCase()===String(fontPolicy.assetCode||"").toUpperCase() &&
+          String(a.version)===String(fontPolicy.assetVersion||"")
+        );
+        if(!fontAsset)return err(409,"PINNED_FONT_NOT_FOUND","Pinned approved FONT asset was not found.");
+        let verified;
+        try{verified=await readVerifiedProductionAsset(env,fontAsset);}
+        catch(e){
+          if(e.message==="ASSET_HASH_MISMATCH"){
+            await securityEvent(env,identity,"PRODUCTION_ASSET_HASH_MISMATCH",request,{productionAssetId:fontAsset.id,expected:fontAsset.sha256});
+          }
+          return err(409,e.message||"ASSET_READ_FAILED","Pinned font asset cannot be used.",e.detail);
+        }
+
+        const snapshot=parseJsonObject(artwork.canonicalDataJson);
+        let rendered;
+        try{
+          rendered=renderEmbeddedArtworkPdf({
+            snapshot,
+            metadata:{
+              sku:artwork.sku,contractNo:artwork.contractNo,factoryId:artwork.factoryId,
+              revision:artwork.currentRevision,status:artwork.status
+            },
+            fontBytes:verified.bytes,
+            qrEcc:String(qrPolicy.ecc||"M").toUpperCase(),
+            mode:"production"
+          });
+        }catch(e){
+          return err(409,"PRODUCTION_RENDER_FAILED","Server production PDF rendering failed.",e.message||String(e));
+        }
+        const digest=await crypto.subtle.digest("SHA-256",rendered.bytes);
+        const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        const objectKey=`artworks/${artworkId}/${artwork.currentRevision}/Production-${sha256.slice(0,16)}.pdf`;
+        const manifest={
+          rendererVersion:"embedded-truetype-1.7.0",
+          artworkId,
+          revision:artwork.currentRevision,
+          artifactSha256:sha256,
+          fontAsset:{id:fontAsset.id,code:fontAsset.code,version:fontAsset.version,sha256:fontAsset.sha256,approvedBy:fontAsset.approvedBy,approvedAt:fontAsset.approvedAt},
+          readiness,
+          policies:policyRows.map((p)=>({code:p.code,status:p.status,config:parseJsonObject(p.configJson),approvedBy:p.approvedBy,approvedAt:p.approvedAt})),
+          generatedAt:new Date().toISOString(),
+          generatedBy:identity.email
+        };
+        await env.ARTWORK_FILES.put(objectKey,rendered.bytes,{httpMetadata:{contentType:"application/pdf"}});
+        const exportId=crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
+          VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
+        `).bind(exportId,artworkId,artwork.currentRevision,"PRODUCTION_PDF",objectKey,sha256,"embedded-truetype-1.7.0",JSON.stringify(manifest)).run();
+        await audit(env,identity,"EXPORT",exportId,"SERVER_RENDER_PRODUCTION_PDF",{
+          newValue:{artworkId,revision:artwork.currentRevision,objectKey,sha256,fontAssetId:fontAsset.id},
+          reason:"Authoritative server-side embedded-font production PDF"
+        });
+        const filename=(`${artwork.sku||artworkId}_${artwork.currentRevision}_Production.pdf`).replace(/[^a-zA-Z0-9._-]+/g,"_");
+        return new Response(rendered.bytes,{
+          status:201,
+          headers:{
+            "content-type":"application/pdf",
+            "content-disposition":`attachment; filename="${filename}"`,
+            "cache-control":"no-store",
+            "x-cas-export-id":exportId,
+            "x-cas-artifact-sha256":sha256,
+            "x-cas-renderer":"embedded-truetype-1.7.0",
+            "x-cas-font-sha256":fontAsset.sha256
+          }
+        });
       }
 
       if (request.method === "GET" && url.pathname === "/api/templates") {
@@ -1394,6 +1620,22 @@ export default {
 
         const kind=(url.searchParams.get("kind")||"artifact").toUpperCase();
         let productionEvidence=null;
+        let authoritativePdf=null;
+        if(kind==="PRODUCTION_BUNDLE"){
+          const authoritativePdfExportId=String(request.headers.get("x-authoritative-pdf-export")||"").trim();
+          const authoritativePdfSha256=String(request.headers.get("x-authoritative-pdf-sha256")||"").trim().toLowerCase();
+          if(!authoritativePdfExportId||!authoritativePdfSha256){
+            return err(409,"AUTHORITATIVE_PDF_REQUIRED","Production Bundle must reference a server-rendered authoritative Production PDF.");
+          }
+          authoritativePdf=await env.DB.prepare(`
+            SELECT id,artwork_id AS artworkId,revision,kind,object_key AS objectKey,sha256,renderer_version AS rendererVersion
+            FROM exports
+            WHERE id=? AND artwork_id=? AND kind='PRODUCTION_PDF'
+          `).bind(authoritativePdfExportId,artworkId).first();
+          if(!authoritativePdf||String(authoritativePdf.sha256||"").toLowerCase()!==authoritativePdfSha256){
+            return err(409,"AUTHORITATIVE_PDF_MISMATCH","Referenced authoritative Production PDF export/hash is invalid.");
+          }
+        }
         if(kind.includes("PRODUCTION")){
           const {results:policyRows}=await env.DB.prepare(`
             SELECT code,display_name AS displayName,status,config_json AS configJson,
@@ -1401,12 +1643,17 @@ export default {
                    approved_by AS approvedBy,approved_at AS approvedAt,updated_at AS updatedAt
             FROM production_policies ORDER BY code
           `).all();
-          const readiness=summarizeProductionReadiness(policyRows);
+          const approvedAssets=await loadApprovedProductionAssets(env);
+          const readiness=summarizeProductionReadiness(policyRows,undefined,approvedAssets);
           if(!readiness.ready){
             return err(409,"PRODUCTION_READINESS_BLOCKED","Production export is blocked until all production policies are approved and valid.",readiness.gates);
           }
           productionEvidence={
             readiness,
+            assets:approvedAssets.map((a)=>({
+              id:a.id,assetType:a.assetType,code:a.code,version:a.version,sha256:a.sha256,
+              approvedBy:a.approvedBy,approvedAt:a.approvedAt,metadata:a.metadata
+            })),
             policies:policyRows.map((p)=>({
               code:p.code,displayName:p.displayName,status:p.status,
               config:p.configJson?JSON.parse(p.configJson):{},
@@ -1418,6 +1665,9 @@ export default {
         const revision=url.searchParams.get("revision")||artwork.current_revision||"R01";
         if(revision!==artwork.current_revision) {
           return err(409,"STALE_REVISION","Production artifact revision must match the current approved revision.");
+        }
+        if(authoritativePdf&&authoritativePdf.revision!==revision){
+          return err(409,"AUTHORITATIVE_PDF_REVISION_MISMATCH","Authoritative Production PDF must belong to the same current revision.");
         }
         const rev=await env.DB.prepare(
           "SELECT status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
@@ -1453,7 +1703,13 @@ export default {
           serverEvidence,
           persistedAt:new Date().toISOString(),
           persistedBy:identity.email,
-          artifactSha256:sha256
+          artifactSha256:sha256,
+          authoritativePdf:authoritativePdf?{
+            exportId:authoritativePdf.id,
+            sha256:authoritativePdf.sha256,
+            objectKey:authoritativePdf.objectKey,
+            rendererVersion:authoritativePdf.rendererVersion
+          }:null
         };
 
         const id=crypto.randomUUID();
@@ -1464,6 +1720,8 @@ export default {
         await audit(env, identity, "EXPORT", id, "UPLOAD", {
           newValue:{
             artworkId,revision,kind,objectKey,sha256,
+            authoritativePdfExportId:authoritativePdf?.id||null,
+            authoritativePdfSha256:authoritativePdf?.sha256||null,
             readiness:serverEvidence?.readiness?.ready===true,
             policies:serverEvidence?.policies?.map((p)=>({code:p.code,status:p.status,approvedBy:p.approvedBy}))||[]
           },

@@ -583,9 +583,11 @@
       const statusClass=a.status==="APPROVED"?"green":a.status==="SUBMITTED"?"blue":a.status==="REJECTED"?"red":a.status==="RETIRED"?"amber":"amber";
       const canSubmit=["DRAFT","REJECTED"].includes(a.status)&&permitted("productionAssetWrite");
       const canReview=a.status==="SUBMITTED"&&permitted("productionAssetApprove");
+      const canFontTest=a.assetType==="FONT"&&a.status==="APPROVED"&&Boolean(state.remoteArtworkId)&&permitted("productionAssetApprove");
       const actions=[
         canSubmit?`<button class="btn small" data-production-asset-action="submit" data-production-asset-id="${esc(a.id)}">Submit</button>`:"",
-        canReview?`<button class="btn small" data-production-asset-action="reject" data-production-asset-id="${esc(a.id)}">Reject</button><button class="btn success small" data-production-asset-action="approve" data-production-asset-id="${esc(a.id)}">Approve</button>`:""
+        canReview?`<button class="btn small" data-production-asset-action="reject" data-production-asset-id="${esc(a.id)}">Reject</button><button class="btn success small" data-production-asset-action="approve" data-production-asset-id="${esc(a.id)}">Approve</button>`:"",
+        canFontTest?`<button class="btn small" data-production-asset-action="font-test" data-production-asset-id="${esc(a.id)}">Embed Test PDF</button>`:""
       ].join(" ");
       return [
         `<span class="badge blue">${esc(a.assetType)}</span>`,
@@ -601,7 +603,7 @@
 
     const uploader=permitted("productionAssetWrite")?`
       <div class="card-body" style="border-bottom:1px solid #e5e9ee">
-        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传只建立受控资产与审批链，不代表 renderer 已具备字体嵌入/转曲或 PDF/X 能力。原始文件保存在 R2，本页不提供下载入口。</div>
+        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传建立受控资产与审批链。TrueType 字体嵌入已进入服务器 Renderer；文字转曲与 PDF/X 仍未实现。原始 Font / ICC 文件保存在 R2，本页不提供原文件下载入口。</div>
         <div class="row2">
           <div class="field"><label>Asset Type</label><select id="production-asset-type" class="input"><option value="FONT">FONT</option><option value="ICC_PROFILE">ICC_PROFILE</option></select></div>
           <div class="field"><label>Code</label><input id="production-asset-code" class="input mono" placeholder="ISUNOR_SANS_REGULAR"/></div>
@@ -671,7 +673,7 @@
             <div class="kpi"><div class="kpi-label">LAST R2 PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
           </div>
           <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
-            Staging 与 Production 是两套门禁。字体嵌入/转曲或 PDF/X 尚未真正实现时，Production 应继续显示 BLOCKED，而不能靠 Policy JSON 伪造通过。
+            Staging 与 Production 是两套门禁。TrueType 字体嵌入已由服务器 Renderer 实现；文字转曲与 PDF/X 尚未实现时，Production 仍应保持 BLOCKED，不能靠 Policy JSON 伪造通过。
           </div>
         </div>
         <div class="card-head"><h3>Staging Gates</h3></div>
@@ -1018,6 +1020,15 @@
     const asset=state.productionAssets.find(x=>x.id===id);
     if(!asset){toast("Production Asset not found.","error");return;}
     try{
+      if(action==="font-test"){
+        if(!state.remoteArtworkId){toast("请先从 Dashboard 打开一个 D1 Artwork。","error");return;}
+        if(!permitted("productionAssetApprove")){toast("需要 Production Asset Approve 权限。","error");return;}
+        const result=await api.renderFontEmbedValidation(state.remoteArtworkId,id);
+        downloadBlob(result.filename||"FontEmbedValidation.pdf",result.blob);
+        toast(`Server Font Embed Test 已生成 · PDF ${String(result.headers?.artifactSha256||"").slice(0,12)}… · Font ${String(result.headers?.fontSha256||"").slice(0,12)}…`,"success");
+        if(permitted("auditRead")) await loadAudit(false);
+        return;
+      }
       if(action==="submit"){
         if(!permitted("productionAssetWrite")){toast("需要 Production Asset Write 权限。","error");return;}
         await api.submitProductionAsset(id,{reason:"Submitted from Quality / Production Assets"});
@@ -1521,7 +1532,7 @@
       policies:state.productionPolicies
     },null,2);
 
-    const manifest=D.manifest(artwork,"vector-svg-pdf-1.3.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-1.7.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:qrModel.errorCorrectionLevel,version:qrModel.version,vector:true};
     manifest.barcode={symbology:barcodeSymbology,renderer:"Code128-B",vector:true};
     manifest.productionEvidence={
@@ -1552,60 +1563,95 @@
     if(!permitted("productionExport")||!state.apiOnline||!state.remoteArtworkId){toast("Production Export 需要 Cloudflare Access + Production Export 权限。","error");return;}
     if(state.artwork.status!=="approved"||s.blocking>0||!blockingCommentsResolved()){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
     try{
-      const [remote,readiness,policies]=await Promise.all([
+      const [remote,readiness,policies,assets]=await Promise.all([
         api.artwork(state.remoteArtworkId),
         api.productionReadiness(),
-        api.productionPolicies()
+        api.productionPolicies(),
+        api.productionAssets()
       ]);
       state.productionReadiness=readiness.data||{ready:false,gates:[]};
       state.productionPolicies=policies.data||[];
+      state.productionAssets=assets.data||[];
       if(!state.productionReadiness.ready){
         const blocked=(state.productionReadiness.gates||[]).filter(x=>!(x.approved&&x.valid)).map(x=>x.displayName||x.code).join(" / ");
         render();
         toast("Production Readiness 未通过："+(blocked||"policy gate"),"error");
         return;
       }
-      if(String(remote.data.artwork.status||"").toUpperCase()!=="APPROVED"||remote.data.artwork.current_revision!==state.artwork.revision){toast("服务器端当前 Revision 未批准或已过期，已阻止生产稿导出。","error");return;}
+      if(String(remote.data.artwork.status||"").toUpperCase()!=="APPROVED"||remote.data.artwork.current_revision!==state.artwork.revision){
+        toast("服务器端当前 Revision 未批准或已过期，已阻止生产稿导出。","error");return;
+      }
+      if(!state.apiBindings.r2){
+        toast("R2 未连接，正式 Production 不允许只在浏览器本地生成。","error");
+        return;
+      }
 
+      // Authoritative PDF is rendered and persisted by Worker using the approved, pinned font asset.
+      const serverPdf=await api.renderProductionPdf(state.remoteArtworkId);
       const evidence={
         capturedAt:new Date().toISOString(),
         readiness:state.productionReadiness,
+        authoritativePdf:{
+          exportId:serverPdf.headers?.exportId||"",
+          sha256:serverPdf.headers?.artifactSha256||"",
+          renderer:serverPdf.headers?.renderer||"",
+          fontSha256:serverPdf.headers?.fontSha256||""
+        },
+        assets:state.productionAssets.filter(a=>a.status==="APPROVED").map(a=>({
+          id:a.id,assetType:a.assetType,code:a.code,version:a.version,sha256:a.sha256,
+          approvedBy:a.approvedBy,approvedAt:a.approvedAt,metadata:a.metadata
+        })),
         policies:state.productionPolicies.map(p=>({
-          code:p.code,
-          displayName:p.displayName,
-          status:p.status,
-          config:p.config,
-          submittedBy:p.submittedBy,
-          submittedAt:p.submittedAt,
-          approvedBy:p.approvedBy,
-          approvedAt:p.approvedAt,
-          updatedAt:p.updatedAt
+          code:p.code,displayName:p.displayName,status:p.status,config:p.config,
+          submittedBy:p.submittedBy,submittedAt:p.submittedAt,
+          approvedBy:p.approvedBy,approvedAt:p.approvedAt,updatedAt:p.updatedAt
         }))
       };
 
       const built=await productionArtifactSet(state.artwork,"production",evidence);
-      built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nProduction policies: captured in ProductionReadiness.json and revalidated server-side at persistence time.\n"});
+      const pdfFile=built.files.find(x=>x.name==="Production.pdf");
+      if(pdfFile) pdfFile.data=serverPdf.blob;
+      const svgFile=built.files.find(x=>x.name==="Production.svg");
+      if(svgFile) svgFile.name="Reference.svg";
+      built.manifest.rendererVersion=serverPdf.headers?.renderer||"embedded-truetype-1.7.0";
+      built.manifest.authoritativePdf=evidence.authoritativePdf;
+      built.manifest.sha256.pdf=serverPdf.headers?.artifactSha256||await sha256(serverPdf.blob);
+      if(built.manifest.sha256.svg){
+        built.manifest.sha256.referenceSvg=built.manifest.sha256.svg;
+        delete built.manifest.sha256.svg;
+      }
+      const manifestFile=built.files.find(x=>x.name==="Manifest.json");
+      if(manifestFile) manifestFile.data=JSON.stringify(built.manifest,null,2);
+      built.files.push({
+        name:"README.txt",
+        data:
+          "Approved Production Bundle\n"+
+          "Template: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\n"+
+          "Revision: "+state.artwork.revision+"\n"+
+          "Production.pdf is the authoritative server-rendered artifact.\n"+
+          "Reference.svg is non-authoritative and provided for visual/reference use only.\n"+
+          "Font asset SHA-256 and server renderer evidence are pinned in Manifest.json.\n"
+      });
       const bundle=Z.createZipBlob(built.files);
       const filename=built.base+"_ProductionBundle.zip";
-
-      if(!state.apiBindings.r2){
-        toast("R2 未连接，生产稿不会只在浏览器本地生成；请先完成 Cloudflare staging/production binding。","error");
-        return;
-      }
 
       const persisted=await api.uploadExport(state.remoteArtworkId,bundle,{
         kind:"PRODUCTION_BUNDLE",
         revision:state.artwork.revision,
         filename,
-        renderer:"1.3.0",
+        renderer:serverPdf.headers?.renderer||"embedded-truetype-1.7.0",
         actor:"web",
-        manifest:built.manifest
+        manifest:built.manifest,
+        authoritativePdfExportId:serverPdf.headers?.exportId,
+        authoritativePdfSha256:serverPdf.headers?.artifactSha256
       });
       downloadBlob(filename,bundle);
-      toast(`Production Bundle 已通过服务器门禁、写入 R2 并下载 · SHA256 ${String(persisted.data?.sha256||"").slice(0,12)}…`,"success");
+      toast(`Production Bundle 已绑定服务器权威 PDF、写入 R2 并下载 · Bundle SHA256 ${String(persisted.data?.sha256||"").slice(0,12)}…`,"success");
       await loadAudit(false);
-    }catch(e){toast("Production Export 失败："+(e.message||e),"error");}
-    finally{render();}
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.map(x=>x.displayName?x.displayName+": "+(x.errors||[]).join(" / "):String(x)).join(" · ")}`:"";
+      toast("Production Export 失败："+(e.message||e)+detail,"error");
+    }finally{render();}
   }
 
   async function exportBatchProofs(){
@@ -1625,7 +1671,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.3.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.7.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");

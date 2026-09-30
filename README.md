@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.6.0
+## 当前版本：1.7.0
 
 ### 已实现
 
@@ -53,6 +53,83 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.7.0 关键工程进展
+
+### 1. TrueType Font Embedding 进入服务器 Renderer
+
+正式字体不再由浏览器依赖 Helvetica / system font。
+
+Worker 新增受控服务器渲染链：
+
+```text
+Approved Artwork Snapshot
+        +
+Approved FONT asset pinned by FONT_POLICY
+        ↓
+R2 read + SHA-256 verify
+        ↓
+TrueType cmap / metrics parse
+        ↓
+Type0 + CIDFontType2 + FontFile2
+        ↓
+ToUnicode CMap
+        ↓
+Authoritative Production PDF
+```
+
+缺少字符 glyph 时直接阻断，不允许静默替换字体。
+
+### 2. Font Policy 必须绑定精确资产版本
+
+FONT_POLICY 现在要求：
+
+- `font`
+- `assetCode`
+- `assetVersion`
+- `embedded=true` 或未来 `outlined=true`
+
+当前嵌入 Renderer 仅支持 **TrueType outlines**。OpenType/CFF 可以进入资产库，但不能通过当前 Font Production Gate。
+
+### 3. Embed Test PDF
+
+Quality > Assets 对 Approved FONT 增加 **Embed Test PDF**。
+
+测试稿：
+
+- 从私有 R2 读取字体；
+- 校验 SHA-256；
+- 使用当前 D1 Artwork；
+- 真正执行服务器端字体嵌入；
+- 输出 Proof / NOT FOR PRODUCTION；
+- 写入 Audit。
+
+不会暴露 Font 原始文件。
+
+### 4. Production PDF 改为服务器权威源
+
+当全部 Production Readiness Gate 最终通过后，生产流程将先调用 Worker 生成并持久化：
+
+`PRODUCTION_PDF`
+
+Production Bundle 只能引用同 Artwork / Revision 的服务器 PDF Export ID + SHA-256。没有权威 PDF 证据，Worker 拒绝持久化 Production Bundle。
+
+因此未来不能通过修改浏览器代码，把一个本地生成或替换过的 PDF 冒充正式生产稿。
+
+### 5. 当前仍保持的硬门禁
+
+已关闭：
+
+- TrueType font embedding
+
+仍未关闭：
+
+- Font outlining
+- PDF/X
+- OutputIntent / ICC 真正写入 PDF
+- 外部 PDF/X Validator
+
+因此现在 Production Export 仍保持 BLOCKED，这是预期行为。
 
 ## v1.6.0 关键工程进展
 
@@ -883,8 +960,8 @@ npm run check
 
 - 一维码最终 Symbology / Barcode payload 业务确认
 - QR payload / ECC 业务确认；当前模板默认 ECC M，Version 自动选择
-- Approved Font / ICC Asset Registry 已实现；仍需把批准资产真正接入 PDF Renderer 的 font embedding / outlining 与 OutputIntent
-- PDF/X Policy + ICC Asset 已有受控审批链；仍需确认目标 PDF/X profile，并实现 OutputIntent / PDF-X metadata / 外部验证
+- Approved Font / ICC Asset Registry 已实现；Approved TrueType Font 已接入服务器 PDF Renderer，仍需 outlining 与 ICC OutputIntent
+- PDF/X Policy + ICC Asset 已有受控审批链；下一步实现 OutputIntent / PDF-X metadata / page-box conformance / 外部验证
 - Excel style/number-format leading-zero 恢复已实现；仍需更多真实 Packing List 样本做兼容性回归
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Cloudflare Access / RBAC / Staging Readiness 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application、D1/R2 与 Access Service Token
