@@ -43,6 +43,9 @@
       async health() {
         return request("/api/health");
       },
+      async me() {
+        return request("/api/me");
+      },
       async factories() {
         return request("/api/factories");
       },
@@ -106,6 +109,23 @@
           body: JSON.stringify(payload)
         });
       },
+      async comments(id, revision) {
+        const q = new URLSearchParams();
+        if (revision) q.set("revision", revision);
+        return request(`/api/artworks/${encodeURIComponent(id)}/comments${q.size ? "?" + q : ""}`);
+      },
+      async addComment(id, payload) {
+        return request(`/api/artworks/${encodeURIComponent(id)}/comments`, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      },
+      async resolveComment(commentId) {
+        return request(`/api/comments/${encodeURIComponent(commentId)}/resolve`, {
+          method: "POST",
+          body: "{}"
+        });
+      },
       async decision(id, decision, payload = {}) {
         return request(`/api/artworks/${encodeURIComponent(id)}/approval`, {
           method: "POST",
@@ -137,6 +157,18 @@
         if (meta.manifest) headers.set("x-artwork-manifest", typeof meta.manifest === "string" ? meta.manifest : JSON.stringify(meta.manifest));
         return request(`/api/artworks/${encodeURIComponent(artworkId)}/exports?${q}`, {
           method:"POST", headers, body:blob
+        });
+      },
+      async adminUsers() {
+        return request("/api/admin/users");
+      },
+      async createUser(payload) {
+        return request("/api/admin/users", { method:"POST", body:JSON.stringify(payload) });
+      },
+      async setUserRoles(userId, roles) {
+        return request(`/api/admin/users/${encodeURIComponent(userId)}/roles`, {
+          method:"PUT",
+          body:JSON.stringify({roles})
         });
       },
       statusToApi,
