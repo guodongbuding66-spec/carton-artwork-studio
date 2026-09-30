@@ -55,7 +55,11 @@
     impact: null,
     referenceRecords: [],
     productionPolicies: [],
-    productionReadiness: { ready:false, gates:[] }
+    productionReadiness: { ready:false, gates:[] },
+    remoteRevisions: [],
+    compareFrom: null,
+    compareTo: null,
+    revisionCompare: null
   };
 
   const navItems = [
@@ -105,6 +109,16 @@
   function hasRole(role){return Boolean(state.identity?.roles?.includes(role));}
   function permitted(key){return Boolean(state.identity?.permissions?.[key]);}
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
+  function productionPolicy(code){return state.productionPolicies.find(x=>x.code===code)||null;}
+  function approvedQrEcc(){
+    const policy=productionPolicy("QR_POLICY");
+    const ecc=String(policy?.config?.ecc||"M").toUpperCase();
+    return ["L","M","Q","H"].includes(ecc)?ecc:"M";
+  }
+  function approvedBarcodeSymbology(){
+    const policy=productionPolicy("BARCODE_POLICY");
+    return String(policy?.config?.symbology||"Code128-B");
+  }
   function identityLabel(){
     if(state.identity) return `${state.identity.email} · ${state.identity.roles.join(", ")||"NO ROLE"}`;
     if(state.apiChecked&&state.authError) return "Access required";
@@ -185,7 +199,7 @@
 
   function renderArtwork() {
     const s = summary();
-    const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && Boolean(state.remoteArtworkId) && Boolean(state.productionReadiness?.ready);
+    const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && state.apiBindings.r2 && Boolean(state.remoteArtworkId) && Boolean(state.productionReadiness?.ready);
     return `
       <div class="artwork-header">
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
@@ -476,6 +490,42 @@
       ${cards||'<div class="card-body"><div class="notice">D1 尚无 Production Policy 数据。</div></div>'}`;
   }
 
+  function compareValue(value){
+    if(value===undefined) return "—";
+    if(value===null) return "null";
+    if(typeof value==="object") return JSON.stringify(value);
+    return String(value);
+  }
+
+  function renderRevisionCompare(){
+    if(!state.remoteArtworkId){
+      return '<div class="card-body"><div class="notice">先从 Dashboard 打开一个 D1 Artwork，才能比较历史 Revision。</div></div>';
+    }
+    const revisions=state.remoteRevisions||[];
+    if(revisions.length<2){
+      return '<div class="card-body"><div class="notice">当前 Artwork 少于 2 个持久化 Revision，暂无可比较版本。</div></div>';
+    }
+    const optionHtml=(selected)=>revisions.map(r=>`<option value="${esc(r.revision)}" ${r.revision===selected?"selected":""}>${esc(r.revision)} · ${esc(r.status||"")}</option>`).join("");
+    const compare=state.revisionCompare;
+    const rows=(compare?.changes||[]).map(x=>[
+      `<span class="mono">${esc(x.path)}</span>`,
+      `<span class="mono subtle">${esc(compareValue(x.from))}</span>`,
+      `<span class="mono subtle">${esc(compareValue(x.to))}</span>`,
+      `<span class="badge ${x.change==="ADDED"?"green":x.change==="REMOVED"?"red":"amber"}">${esc(x.change)}</span>`
+    ]);
+    return `
+      <div class="card-body">
+        <div class="row2">
+          <div class="field"><label>From Revision</label><select id="compare-from" class="input">${optionHtml(state.compareFrom)}</select></div>
+          <div class="field"><label>To Revision</label><select id="compare-to" class="input">${optionHtml(state.compareTo)}</select></div>
+        </div>
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="run-compare">Compare Canonical Data</button></div>
+        ${compare?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL CHANGES</div><div class="kpi-value">${compare.total}</div></div><div class="kpi"><div class="kpi-label">CHANGED</div><div class="kpi-value">${compare.changed}</div></div><div class="kpi"><div class="kpi-label">ADDED</div><div class="kpi-value">${compare.added}</div></div><div class="kpi"><div class="kpi-label">REMOVED</div><div class="kpi-value">${compare.removed}</div></div></div>`:""}
+      </div>
+      ${compare?(rows.length?table(["Canonical Path","From","To","Change"],rows,true):'<div class="card-body"><div class="notice">两个 Revision 的 Canonical Data 完全一致。</div></div>'):'<div class="card-body"><div class="notice">选择两个 Revision 后执行 Compare。比较基于冻结的 Canonical Snapshot，不使用演示结果。</div></div>'}
+    `;
+  }
+
   function renderQuality(){
     const tabs=["profiles","reports","readiness","compare"];
     let body="";
@@ -488,7 +538,7 @@
       body=`<div class="card-body"><div class="kpis" style="margin:0"><div class="kpi"><div class="kpi-label">Current Errors</div><div class="kpi-value" style="color:#bc2f3b">${s.error}</div></div><div class="kpi"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:#a86b00">${s.warning}</div></div><div class="kpi"><div class="kpi-label">Passed</div><div class="kpi-value" style="color:#16835d">${s.pass}</div></div></div></div>${recent.length?table(["Actor","Time","Action","Preflight","Reason"],recent):`<div class="card-body"><div class="notice">暂无可读取的持久化 Preflight Audit 记录。当前工作稿检查结果显示在上方。</div></div>`}`;
     }
     if(state.qualityTab==="readiness") body=renderPolicyReadiness();
-    if(state.qualityTab==="compare") body=`<div class="card-body"><div class="notice">Version Compare roadmap: Text / Graphics / Code / Dieline · Side-by-side / Overlay / Difference / Flicker。当前不显示虚构比对结果。</div></div>`;
+    if(state.qualityTab==="compare") body=renderRevisionCompare();
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
   }
 
@@ -536,7 +586,7 @@
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=async()=>{state.contentTab=b.dataset.contentTab;render();if(state.contentTab!=="factories")await loadReferenceMasters();});
-    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();});
+    document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();if(state.qualityTab==="compare"&&state.remoteArtworkId&&!state.remoteRevisions.length)await refreshRemoteRevisionMetadata();});
     document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
     document.querySelectorAll("[data-art]").forEach(el=>{
       el.oninput=el.onchange=()=>{
@@ -586,6 +636,7 @@
     if(action==="close-template-editor"){state.templateEditor=null;render();return;}
     if(action==="refresh-dashboard") return loadRemoteArtworks();
     if(action==="refresh-audit") return loadAudit();
+    if(action==="run-compare") return loadRevisionCompare();
     if(action==="save-factory") return saveFactoryMaster();
     if(action==="proof") return exportProof();
     if(action==="production") return exportProduction();
@@ -833,6 +884,55 @@
     if(renderAfter) render();
   }
 
+  function syncRevisionCompareDefaults(){
+    const revisions=state.remoteRevisions||[];
+    const current=state.artwork?.revision;
+    if(!revisions.length){
+      state.compareFrom=null;
+      state.compareTo=null;
+      state.revisionCompare=null;
+      return;
+    }
+    const to=revisions.find(x=>x.revision===current)?.revision||revisions[0]?.revision||null;
+    const from=revisions.find(x=>x.revision!==to)?.revision||to;
+    if(!state.compareTo||!revisions.some(x=>x.revision===state.compareTo)) state.compareTo=to;
+    if(!state.compareFrom||!revisions.some(x=>x.revision===state.compareFrom)) state.compareFrom=from;
+  }
+
+  async function refreshRemoteRevisionMetadata(renderAfter=true){
+    if(!state.apiOnline||!state.remoteArtworkId){
+      state.remoteRevisions=[];
+      state.revisionCompare=null;
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const remote=await api.artwork(state.remoteArtworkId);
+      state.remoteRevisions=remote.data?.revisions||[];
+      syncRevisionCompareDefaults();
+    }catch(e){
+      state.remoteRevisions=[];
+      state.revisionCompare=null;
+      toast(e.message||String(e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  async function loadRevisionCompare(){
+    if(!state.apiOnline||!state.remoteArtworkId){toast("需要已连接的 D1 Artwork。","error");return;}
+    const from=document.getElementById("compare-from")?.value||state.compareFrom;
+    const to=document.getElementById("compare-to")?.value||state.compareTo;
+    if(!from||!to){toast("请选择两个 Revision。","error");return;}
+    if(from===to){toast("请选择两个不同的 Revision。","error");return;}
+    try{
+      const response=await api.compareArtwork(state.remoteArtworkId,from,to);
+      state.compareFrom=from;
+      state.compareTo=to;
+      state.revisionCompare=response.data||null;
+      render();
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
   async function loadRemoteArtworks(q=""){
     if(!state.apiOnline||!state.identity?.roles?.length){
       state.remoteArtworks=[];render();return;
@@ -865,6 +965,9 @@
       });
       state.remoteArtworkId=id;
       state.remoteRevision=state.artwork.revision;
+      state.remoteRevisions=remote.data?.revisions||[];
+      state.revisionCompare=null;
+      syncRevisionCompareDefaults();
       state.comments=[];
       localStorage.setItem("cas:remoteArtworkId",id);
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
@@ -1084,6 +1187,7 @@
       state.remoteRevision=response.data.revision;
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
       await loadComments();
+      await refreshRemoteRevisionMetadata(false);
       toast(`${response.data.revision} 已提交审核`,"success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
@@ -1102,6 +1206,7 @@
       state.artwork.status=response.data.status.toLowerCase();
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
       await loadComments();
+      await refreshRemoteRevisionMetadata(false);
       toast(decision==="APPROVE"?"Revision 已批准":"Revision 已退回","success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
@@ -1120,7 +1225,9 @@
       state.artwork.revision=response.data.revision;
       state.artwork.status="draft";
       state.comments=[];
+      state.revisionCompare=null;
       localStorage.setItem("cas:draft",JSON.stringify(state.artwork));
+      await refreshRemoteRevisionMetadata(false);
       toast(`${response.data.revision} Draft 已创建`,"success");
     }catch(e){toast(e.message||String(e),"error");}
     finally{state.apiBusy=false;render();}
@@ -1132,23 +1239,44 @@
     downloadBlob(fileBase()+"_Proof.pdf",blob); toast("已生成 1:1 mm Vector Proof PDF（Code128 + QR 均为矢量）","success");
   }
 
-  async function productionArtifactSet(artwork, mode="production"){
+  async function productionArtifactSet(artwork, mode="production", evidence=null){
     const g=D.sideSealGeometry(artwork), comp=D.computed(artwork,state.factories);
+    const barcodePolicy=(evidence?.policies||state.productionPolicies||[]).find(x=>x.code==="BARCODE_POLICY");
+    const qrPolicy=(evidence?.policies||state.productionPolicies||[]).find(x=>x.code==="QR_POLICY");
+    const barcodeSymbology=String(barcodePolicy?.config?.symbology||approvedBarcodeSymbology()||"Code128-B");
+    const qrEcc=String(qrPolicy?.config?.ecc||approvedQrEcc()||"M").toUpperCase();
+
+    if(!/code\s*[-_ ]?128\s*[-_ ]?b/i.test(barcodeSymbology.replace(/CODE128/i,"Code 128"))) {
+      throw new Error(`Production renderer currently supports Code128-B only; policy requested ${barcodeSymbology}.`);
+    }
+
     const code=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
-    const qr=C.qrMatrix(artwork.qr,"M").matrix;
-    const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode});
+    const qrModel=C.qrMatrix(artwork.qr,qrEcc);
+    const pdfBytes=P.createPdfBytes({artwork,geometry:g,computed:comp,codeModel:code,qrMatrix:qrModel.matrix,mode});
     const svg=`<?xml version="1.0" encoding="UTF-8"?>\n${dielineSvg(mode,artwork)}`;
     const snapshot=JSON.stringify(D.canonicalData(artwork,state.factories),null,2);
     const pfGroups=checksFor(artwork), pfSummary=D.preflightSummary(pfGroups);
     const preflight=JSON.stringify({summary:pfSummary,groups:pfGroups,generatedAt:new Date().toISOString()},null,2);
-    const manifest=D.manifest(artwork,"vector-svg-pdf-1.0.0");
-    manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:"M",vector:true};
-    manifest.barcode={symbology:"Code 128-B PoC",vector:true};
+    const readinessEvidence=JSON.stringify(evidence||{
+      capturedAt:new Date().toISOString(),
+      readiness:state.productionReadiness,
+      policies:state.productionPolicies
+    },null,2);
+
+    const manifest=D.manifest(artwork,"vector-svg-pdf-1.2.0");
+    manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:qrModel.errorCorrectionLevel,version:qrModel.version,vector:true};
+    manifest.barcode={symbology:barcodeSymbology,renderer:"Code128-B",vector:true};
+    manifest.productionEvidence={
+      readiness:Boolean(evidence?.readiness?.ready??state.productionReadiness?.ready),
+      capturedAt:evidence?.capturedAt||null,
+      policyCodes:(evidence?.policies||state.productionPolicies||[]).map(x=>x.code)
+    };
     manifest.sha256={
       pdf:await sha256(pdfBytes),
       svg:await sha256(svg),
       snapshot:await sha256(snapshot),
-      preflight:await sha256(preflight)
+      preflight:await sha256(preflight),
+      readinessEvidence:await sha256(readinessEvidence)
     };
     const base=B.safeBase(artwork);
     return {base,manifest,files:[
@@ -1156,6 +1284,7 @@
       {name:"Production.svg",data:svg},
       {name:"DataSnapshot.json",data:snapshot},
       {name:"PreflightReport.json",data:preflight},
+      {name:"ProductionReadiness.json",data:readinessEvidence},
       {name:"Manifest.json",data:JSON.stringify(manifest,null,2)}
     ]};
   }
@@ -1165,11 +1294,13 @@
     if(!permitted("productionExport")||!state.apiOnline||!state.remoteArtworkId){toast("Production Export 需要 Cloudflare Access + Production Export 权限。","error");return;}
     if(state.artwork.status!=="approved"||s.blocking>0||!blockingCommentsResolved()){toast("Production Export 被审核状态、阻断错误或未解决评论锁定","error");return;}
     try{
-      const [remote,readiness]=await Promise.all([
+      const [remote,readiness,policies]=await Promise.all([
         api.artwork(state.remoteArtworkId),
-        api.productionReadiness()
+        api.productionReadiness(),
+        api.productionPolicies()
       ]);
       state.productionReadiness=readiness.data||{ready:false,gates:[]};
+      state.productionPolicies=policies.data||[];
       if(!state.productionReadiness.ready){
         const blocked=(state.productionReadiness.gates||[]).filter(x=>!(x.approved&&x.valid)).map(x=>x.displayName||x.code).join(" / ");
         render();
@@ -1177,18 +1308,46 @@
         return;
       }
       if(String(remote.data.artwork.status||"").toUpperCase()!=="APPROVED"||remote.data.artwork.current_revision!==state.artwork.revision){toast("服务器端当前 Revision 未批准或已过期，已阻止生产稿导出。","error");return;}
-    }catch(e){toast("无法验证服务器端批准/生产就绪状态："+(e.message||e),"error");return;}
-    const built=await productionArtifactSet(state.artwork,"production");
-    built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nProduction policies: server-approved at export time.\n"});
-    const bundle=Z.createZipBlob(built.files);
-    const filename=built.base+"_ProductionBundle.zip";
-    downloadBlob(filename,bundle);
-    if(state.apiOnline&&state.apiBindings.r2&&state.remoteArtworkId){
-      try{
-        await api.uploadExport(state.remoteArtworkId,bundle,{kind:"PRODUCTION_BUNDLE",revision:state.artwork.revision,filename,renderer:"1.0.0",actor:"web",manifest:built.manifest});
-        toast("Production Bundle 已下载并同步到 R2","success");
-      }catch(e){toast("本地 Bundle 已生成，但 R2 同步失败："+(e.message||e),"error");}
-    }else toast("Production Bundle ZIP 已生成；R2 尚未连接","success");
+
+      const evidence={
+        capturedAt:new Date().toISOString(),
+        readiness:state.productionReadiness,
+        policies:state.productionPolicies.map(p=>({
+          code:p.code,
+          displayName:p.displayName,
+          status:p.status,
+          config:p.config,
+          submittedBy:p.submittedBy,
+          submittedAt:p.submittedAt,
+          approvedBy:p.approvedBy,
+          approvedAt:p.approvedAt,
+          updatedAt:p.updatedAt
+        }))
+      };
+
+      const built=await productionArtifactSet(state.artwork,"production",evidence);
+      built.files.push({name:"README.txt",data:"Approved Production Bundle\nTemplate: "+state.artwork.templateCode+" "+state.artwork.templateVersion+"\nRevision: "+state.artwork.revision+"\nProduction policies: captured in ProductionReadiness.json and revalidated server-side at persistence time.\n"});
+      const bundle=Z.createZipBlob(built.files);
+      const filename=built.base+"_ProductionBundle.zip";
+
+      if(!state.apiBindings.r2){
+        toast("R2 未连接，生产稿不会只在浏览器本地生成；请先完成 Cloudflare staging/production binding。","error");
+        return;
+      }
+
+      const persisted=await api.uploadExport(state.remoteArtworkId,bundle,{
+        kind:"PRODUCTION_BUNDLE",
+        revision:state.artwork.revision,
+        filename,
+        renderer:"1.2.0",
+        actor:"web",
+        manifest:built.manifest
+      });
+      downloadBlob(filename,bundle);
+      toast(`Production Bundle 已通过服务器门禁、写入 R2 并下载 · SHA256 ${String(persisted.data?.sha256||"").slice(0,12)}…`,"success");
+      await loadAudit(false);
+    }catch(e){toast("Production Export 失败："+(e.message||e),"error");}
+    finally{render();}
   }
 
   async function exportBatchProofs(){
@@ -1208,7 +1367,7 @@
         index.push({row:row.row,sku:art.sku,path:prefix,status:"PASS"});
       }
       const stats=B.summarize(state.batchReview);
-      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.0.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
+      files.push({name:"BatchManifest.json",data:JSON.stringify({version:"1.2.0",source:state.batchSource,summary:stats,generatedAt:new Date().toISOString(),items:index},null,2)});
       if(stats.failed) files.push({name:"failed_rows.csv",data:B.failedRowsCsv(state.batchReview)});
       downloadBlob(`BatchProofs_${new Date().toISOString().slice(0,10)}.zip`,Z.createZipBlob(files));
       state.batchStep=4;toast(`已生成 ${stats.passed} 条通过记录的 Proof Bundle`,"success");
@@ -1336,6 +1495,9 @@
               revision:row.current_revision
             });
             state.remoteRevision=state.artwork.revision;
+            state.remoteRevisions=remote.data?.revisions||[];
+            state.revisionCompare=null;
+            syncRevisionCompareDefaults();
             const comments=await api.comments(state.remoteArtworkId,state.artwork.revision);
             state.comments=comments.data||[];
           }catch(e){

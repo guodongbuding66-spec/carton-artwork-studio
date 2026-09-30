@@ -131,6 +131,10 @@
       async artwork(id) {
         return request(`/api/artworks/${encodeURIComponent(id)}`);
       },
+      async compareArtwork(id, fromRevision, toRevision) {
+        const q = new URLSearchParams({ from:fromRevision, to:toRevision });
+        return request(`/api/artworks/${encodeURIComponent(id)}/compare?${q}`);
+      },
       async createArtwork(artwork, canonicalData, actor = "web") {
         return request("/api/artworks", {
           method: "POST",

@@ -6,7 +6,7 @@
 
 > Canonical Data → Rule Engine → Parametric mm Geometry → Vector Renderer → Preflight → Review → Production
 
-## 当前版本：1.1.0
+## 当前版本：1.2.0
 
 ### 已实现
 
@@ -51,6 +51,70 @@
 - R2 Artwork Export 上传 / 下载 API + SHA-256 + server-side approval gate
 - Cloudflare Assets / D1 / R2 部署路线
 - CI 自动执行 Domain / Code / XLSX / Batch / PDF / ZIP 测试
+
+## v1.2.0 关键工程进展
+
+### 1. Artwork Revision Compare 进入真实 D1 工作流
+
+Quality > Compare 不再显示 roadmap 占位。
+
+系统从 `artwork_revisions.data_snapshot_json` 读取两个冻结 Revision，按 Canonical Path 计算：
+
+- CHANGED
+- ADDED
+- REMOVED
+- From / To value
+
+比较结果来自真实 Revision Snapshot，不生成虚构差异。
+
+### 2. Production Evidence 写入服务器 Manifest
+
+R2 Production Export 现在由 Worker 在持久化时追加服务器证据：
+
+- Artifact SHA-256
+- persistedBy / persistedAt
+- Production Readiness 结果
+- Barcode / QR / Font / PDF/X policy status
+- policy submitter / approver / approval timestamp
+- approved policy config snapshot
+
+浏览器提供的 Manifest 不能覆盖这些服务器端证据。
+
+### 3. Production 下载顺序加固
+
+Production Bundle 不再先下载到本地、再尝试同步 R2。
+
+新顺序：
+
+```text
+Browser validates current approval/readiness
+        ↓
+Build deterministic bundle
+        ↓
+Worker revalidates approval/readiness
+        ↓
+Persist R2 + D1 export record + server evidence
+        ↓
+Only then allow browser download
+```
+
+R2 不可用时正式 Production Download 保持阻断。
+
+### 4. Production Policy 与真实 renderer capability 绑定
+
+政策审批不能再“声明一个实际上不存在的能力”。
+
+当前 renderer capability 明确为：
+
+- Barcode: Code128-B
+- QR ECC: L / M / Q / H
+- Font embedding: **not implemented**
+- Font outlining: **not implemented**
+- PDF/X profiles: **none implemented**
+
+所以即使有人把 Font Policy 写成 `embedded: true`，或把 PDF/X Policy 写成 `PDF/X-4`，服务器仍会判定 **not implemented** 并禁止提交/生产。
+
+这意味着当前系统继续允许 Proof 工作流，但 Production Export 会正确保持锁定，直到真正实现字体嵌入/转曲和 PDF/X 输出，而不是用配置掩盖技术缺口。
 
 ## v1.1.0 关键工程进展
 
@@ -606,8 +670,8 @@ npm run check
 - Batch 生成目前为 **Proof Bundle**；Production 仍需逐 Artwork 审批
 - Cloudflare Access / RBAC 代码已实现；仍需在 Cloudflare 控制台创建正式 Access Application 与 D1/R2 资源
 - D1/R2 API 与前端 Persistence Bridge 已实现，但仍需绑定正式 staging / production resources
-- immutable approval workflow 已进入后端；仍需 staging 双身份验收
-- Production renderer snapshot regression 已实现；Template Designer 视觉差分仍待扩展
+- immutable approval workflow 与 four-eyes 已进入后端；仍需 staging 双身份验收
+- Production renderer snapshot regression 已实现；Canonical Revision Compare 已实现，图形像素/矢量叠加差分仍待扩展
 - external print preflight adapter
 - 实物 Barcode Verifier 数据接入
 
