@@ -90,7 +90,7 @@ export default {
       return json({
         ok: true,
         service: "carton-artwork-studio",
-        version: "1.3.0",
+        version: "1.4.0",
         runtime: "cloudflare-workers",
         auth: {
           provider: "cloudflare-access",
