@@ -256,3 +256,16 @@ assert.match(app,/D\.artworkFromCanonical\(snapshot\)/);
 assert.match(app,/draftArtworkNo:row\.artworkNo\|\|""/);
 assert.match(app,/pendingDrafts=state\.batchReview\.filter/);
 assert.match(app,/Create Remaining Drafts/);
+
+
+assert.match(app,/batchProcessBusy:\s*false/);
+assert.match(app,/batchProcessResult:\s*null/);
+assert.match(app,/data-action="batch-server-preflight"/);
+assert.match(app,/data-action="batch-preflight-submit"/);
+assert.match(app,/data-action="batch-retry-failed"/);
+assert.match(app,/async function processBatchDrafts\(\{submitPassed=false,retryFailed=false\}=\{\}\)/);
+assert.match(app,/api\.processImportDrafts\(jobId/);
+assert.match(app,/serverPreflightStatus:row\.batchPreflightStatus\|\|""/);
+assert.match(app,/batchProcessError:row\.batchProcessError\|\|""/);
+assert.match(app,/artworkStatus:row\.artworkStatus\|\|""/);
+assert.match(app,/Server Batch Processing/);
