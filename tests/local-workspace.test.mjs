@@ -117,3 +117,19 @@ console.log("Local workspace usability regression tests passed.");
   assert.match(deployWorkflow,/FALLBACK_NOT_CONFIGURED/);
   assert.match(deployWorkflow,/if: always\(\)/);
 }
+
+
+assert.match(app,/const OPPOSITE_PANEL_MAP=Object\.freeze/);
+assert.match(app,/function panelRelativePosition\(element,panel\)/);
+assert.match(app,/function cloneSelectionToPanel\(targetPanelId\)/);
+assert.match(app,/function cloneSelectionToOppositePanel\(\)/);
+assert.match(app,/data-action="copy-selection-panel"/);
+assert.match(app,/data-action="copy-opposite-panel"/);
+assert.match(app,/function smartSnapElementPosition\(e,x,y,excludeIds=\[\]\)/);
+assert.match(app,/data-snap-guide-x/);
+assert.match(app,/data-snap-guide-y/);
+assert.match(app,/function selectionMoveLimits\(items\)/);
+assert.match(app,/function moveSelectionBy\(items,dx,dy\)/);
+assert.match(app,/const alreadySelected=isElementSelected\(id\)/);
+assert.match(app,/const dragItems=selectedArtworkElements\(\)\.filter/);
+assert.match(app,/updateSnapGuides\(svg,snapped\.guides\)/);
