@@ -650,6 +650,7 @@
         <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
         <span class="mono subtle">${esc(e.panelId||"—")}</span>
+        ${e.groupId?'<span class="badge blue">GROUP</span>':""}
         ${e.visible===false?'<span class="badge gray">HIDE</span>':e.locked?'<span class="badge amber">LOCK</span>':""}
       </button>`;
     }).join("");
@@ -664,8 +665,9 @@
         ${selectionSourcePanel?`
           <div class="row2">
             <select class="select" id="copy-panel-target">${copyPanelOptions}</select>
-            <button class="btn small" data-action="copy-selection-panel">复制到指定面板</button>
+            <button class="btn small" data-action="copy-selection-panel">复制所选</button>
           </div>
+          <button class="btn small" style="width:100%;margin-top:6px" data-action="copy-panel-layout">复制当前面板全部元素 → 目标面板</button>
           <button class="btn small" style="width:100%;margin-top:6px" data-action="copy-opposite-panel" ${OPPOSITE_PANEL_MAP[selectionSourcePanel]?"":"disabled"}>
             复制到对称面 ${OPPOSITE_PANEL_MAP[selectionSourcePanel]?"→ "+OPPOSITE_PANEL_MAP[selectionSourcePanel]:""}
           </button>
@@ -680,9 +682,16 @@
           <button class="tool" data-action="distribute-horizontal" ${selectedMany.length<3?"disabled":""}>水平等距</button>
           <button class="tool" data-action="distribute-vertical" ${selectedMany.length<3?"disabled":""}>垂直等距</button>
         </div>
-        <div class="toolbar" style="justify-content:flex-end;margin-top:8px"><button class="btn danger small" data-action="delete-selection">删除所选</button></div>
+        <div class="toolbar" style="justify-content:flex-end;margin-top:8px">
+          <button class="btn small" data-action="group-selection" ${sameSelectionPanel(selectedMany)?"":"disabled"}>Group 组合</button>
+          <button class="btn small" data-action="ungroup-selection" ${selectedMany.some(e=>e.groupId)?"":"disabled"}>Ungroup</button>
+          <button class="btn danger small" data-action="delete-selection">删除所选</button>
+        </div>
       </div>`:"";
     const bindingOptions=(D.artworkBindings||[]).map(b=>`<option value="${esc(b.key)}" ${selected?.bindingKey===b.key?"selected":""}>${esc(b.label)}</option>`).join("");
+    const selectedTextFit=selected?.type==="text"
+      ? D.textFitMetrics(selected,D.resolvedElementText(selected,state.artwork,state.factories))
+      : null;
     const props=selected?`
       <div class="element-properties">
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
@@ -692,14 +701,26 @@
           <label class="toggle-line"><input type="checkbox" data-element-lock ${selected.locked?"checked":""}/> Lock</label>
         </div>
         <label class="toggle-line"><input type="checkbox" data-element-constrain ${selected.constrainToPanel!==false?"checked":""}/> 限制在所属面板内</label>
+        <label class="toggle-line"><input type="checkbox" data-element-safe-exempt ${selected.safeAreaExempt?"checked":""}/> 允许超出 Safe Margin（显式豁免）</label>
         ${selected.type==="text"?`
           <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
           ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementText(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
           <div class="field"><label>Text 文本</label><textarea class="input" rows="3" data-element-prop="text" ${selected.bindingKey?"disabled":""}>${esc(selected.text||"")}</textarea></div>
           <div class="row3">
-            <div class="field"><label>pt</label><input class="input mono" type="number" min="5" step="0.5" data-element-prop="fontSizePt" value="${esc(selected.fontSizePt||12)}"/></div>
+            <div class="field"><label>pt</label><input class="input mono" type="number" min="1" step="0.25" data-element-prop="fontSizePt" value="${esc(selected.fontSizePt||12)}"/></div>
             <div class="field"><label>Weight</label><select class="select" data-element-prop="fontWeight"><option value="normal" ${selected.fontWeight!=="bold"?"selected":""}>Normal</option><option value="bold" ${selected.fontWeight==="bold"?"selected":""}>Bold</option></select></div>
             <div class="field"><label>Align</label><select class="select" data-element-prop="textAlign"><option value="left" ${selected.textAlign==="left"?"selected":""}>Left</option><option value="center" ${selected.textAlign==="center"?"selected":""}>Center</option><option value="right" ${selected.textAlign==="right"?"selected":""}>Right</option></select></div>
+          </div>
+          <div class="row2">
+            <label class="toggle-line"><input type="checkbox" data-element-autofit ${selected.autoFitText?"checked":""}/> Auto Fit 自动缩小</label>
+            <div class="field"><label>Minimum pt</label><input class="input mono" type="number" min="1" step="0.25" data-element-prop="minFontSizePt" value="${esc(Number(selected.minFontSizePt||7))}"/></div>
+          </div>
+          <button class="btn small" style="width:100%" data-action="fit-text-element">Fit Text Now</button>
+          <div class="notice ${selectedTextFit?.fits?"success":"warn"}">
+            <strong>Text Box Check</strong><br>
+            ${selectedTextFit?.fits
+              ? `预计文字 ${D.round(selectedTextFit.widthMm,1)}×${D.round(selectedTextFit.heightMm,1)} mm，可放入 ${D.round(selectedTextFit.boxWidthMm,1)}×${D.round(selectedTextFit.boxHeightMm,1)} mm。`
+              : `文字预计需要 ${D.round(selectedTextFit?.widthMm||0,1)}×${D.round(selectedTextFit?.heightMm||0,1)} mm，当前文本框 ${D.round(selectedTextFit?.boxWidthMm||0,1)}×${D.round(selectedTextFit?.boxHeightMm||0,1)} mm；Preflight 会 BLOCK。`}
           </div>`:""}
         ${selected.type==="qr-generated"?`
           <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
@@ -2244,7 +2265,17 @@
       if(target) return cloneSelectionToPanel(target);
       return;
     }
+    if(action==="copy-panel-layout"){
+      const items=selectedArtworkElements();
+      const source=items.length&&sameSelectionPanel(items)?String(items[0].panelId||""):"";
+      const target=document.getElementById("copy-panel-target")?.value||"";
+      if(source&&target) return clonePanelLayout(source,target);
+      return;
+    }
     if(action==="copy-opposite-panel") return cloneSelectionToOppositePanel();
+    if(action==="group-selection") return groupSelectedElements();
+    if(action==="ungroup-selection") return ungroupSelectedElements();
+    if(action==="fit-text-element") return fitSelectedTextElement();
     if(action==="layer-front") return reorderSelectedElement("front");
     if(action==="layer-back") return reorderSelectedElement("back");
     if(action==="layer-up") return reorderSelectedElement("up");
