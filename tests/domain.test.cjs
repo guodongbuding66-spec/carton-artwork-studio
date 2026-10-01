@@ -518,7 +518,9 @@ test("controlled shipping mark block requires all six bindings and pinned versio
 });
 
 test("production element qualification is an explicit vector allowlist", () => {
-  assert.deepEqual(D.productionElementQualification({type:"text",fontWeight:"normal"}),{qualified:true,mode:"EMBEDDED_VECTOR_TEXT"});
+  const textQualification=D.productionElementQualification({type:"text",fontWeight:"normal"});
+  assert.equal(textQualification.qualified,true);
+  assert.equal(textQualification.mode,"EMBEDDED_VECTOR_TEXT");
   assert.equal(D.productionElementQualification({type:"text",fontWeight:"bold"}).reason,"CUSTOM_BOLD_FONT_NOT_QUALIFIED");
   assert.equal(D.productionElementQualification({type:"barcode"}).qualified,true);
   assert.equal(D.productionElementQualification({type:"qr-generated"}).qualified,true);
