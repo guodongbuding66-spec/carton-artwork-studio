@@ -561,7 +561,7 @@ test("Shipping Mark 1.1 definition is versioned and canonical", () => {
   const def=D.controlledBlockDefinition("SHIPPING_MARK_STANDARD");
   assert.equal(def.version,"1.1.0");
   assert.equal(def.currentVersion,"1.1.0");
-  assert.deepEqual(def.slots.map(x=>x.id),["ITEM","CONTRACT","WEIGHT","MEAS","CRN","ORIGIN"]);
+  assert.equal(Array.from(def.slots,x=>x.id).join(","),"ITEM,CONTRACT,WEIGHT,MEAS,CRN,ORIGIN");
   assert.equal(def.slots.length,6);
   assert.ok(def.supportedVersions.includes("1.0.0"));
   assert.ok(def.supportedVersions.includes("1.1.0"));
