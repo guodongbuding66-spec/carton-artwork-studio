@@ -82,7 +82,7 @@ async function loadApprovedProductionAssets(env) {
 
 
 async function readVerifiedProductionAsset(env, asset) {
-  if(!env.ARTWORK_FILES) throw new Error("R2_NOT_BOUND");
+  if(!env.ARTWORK_FILES) throw new Error("ARTIFACT_STORE_NOT_BOUND");
   const object=await env.ARTWORK_FILES.get(asset.objectKey||asset.object_key);
   if(!object) throw new Error("ASSET_OBJECT_MISSING");
   const bytes=new Uint8Array(await object.arrayBuffer());
@@ -218,7 +218,7 @@ async function collectSystemReadiness(env, identity) {
 }
 
 async function runArtifactStoreDeepProbe(env) {
-  if(!env.ARTWORK_FILES) return {status:"FAIL",ok:false,error:"ARTWORK_FILES binding is missing.",write:false,read:false,delete:false};
+  if(!env.ARTWORK_FILES) return {status:"FAIL",ok:false,error:"Artifact Store binding is missing.",write:false,read:false,delete:false};
   const token=crypto.randomUUID();
   const key=`_system-readiness/${token}.txt`;
   const payload=`carton-artwork-studio:artifact-store-probe:${env.ARTIFACT_STORE_KIND||"UNKNOWN"}:${token}`;
@@ -227,10 +227,10 @@ async function runArtifactStoreDeepProbe(env) {
     await env.ARTWORK_FILES.put(key,payload,{httpMetadata:{contentType:"text/plain; charset=utf-8"}});
     wrote=true;
     const object=await env.ARTWORK_FILES.get(key);
-    if(!object) throw new Error("R2 object could not be read back.");
+    if(!object) throw new Error("Artifact Store object could not be read back.");
     const bytes=new Uint8Array(await object.arrayBuffer());
     const actual=new TextDecoder().decode(bytes);
-    if(actual!==payload) throw new Error("R2 read-back payload mismatch.");
+    if(actual!==payload) throw new Error("Artifact Store read-back payload mismatch.");
     read=true;
     await env.ARTWORK_FILES.delete(key);
     deleted=true;
@@ -411,7 +411,7 @@ export default {
       }
 
       if(request.method==="POST"&&url.pathname==="/api/pdfx/promotion/evidence/upload"){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const type=normalizePromotionEvidenceType(url.searchParams.get("type"));
         if(!type)return err(400,"INVALID_EVIDENCE_TYPE","type must be SECONDARY_VALIDATION, RIP_QUALIFICATION or PRODUCTION_TRIAL.");
         const filename=sanitizeEvidenceFilename(url.searchParams.get("filename")||"evidence.bin");
@@ -470,7 +470,7 @@ export default {
 
       const promotionEvidenceFileMatch=/^\/api\/pdfx\/promotion\/evidence\/([^/]+)\/file$/.exec(url.pathname);
       if(request.method==="GET"&&promotionEvidenceFileMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const id=promotionEvidenceFileMatch[1];
         const evidence=await env.DB.prepare(
           "SELECT filename,object_key,evidence_sha256,media_type FROM pdfx_promotion_evidence WHERE id=?"
@@ -497,7 +497,7 @@ export default {
 
       const promotionEvidenceSubmitMatch=/^\/api\/pdfx\/promotion\/evidence\/([^/]+)\/submit$/.exec(url.pathname);
       if(request.method==="POST"&&promotionEvidenceSubmitMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const id=promotionEvidenceSubmitMatch[1],b=await bodyJson(request);
         const evidence=await env.DB.prepare("SELECT * FROM pdfx_promotion_evidence WHERE id=?").bind(id).first();
         if(!evidence)return err(404,"NOT_FOUND","Promotion evidence not found.");
@@ -529,7 +529,7 @@ export default {
 
       const promotionEvidenceApprovalMatch=/^\/api\/pdfx\/promotion\/evidence\/([^/]+)\/approval$/.exec(url.pathname);
       if(request.method==="POST"&&promotionEvidenceApprovalMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const id=promotionEvidenceApprovalMatch[1],b=await bodyJson(request);
         const evidence=await env.DB.prepare("SELECT * FROM pdfx_promotion_evidence WHERE id=?").bind(id).first();
         if(!evidence)return err(404,"NOT_FOUND","Promotion evidence not found.");
@@ -914,7 +914,7 @@ export default {
       }
 
       if(request.method==="POST"&&url.pathname==="/api/production-assets/upload"){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const type=String(url.searchParams.get("type")||"").toUpperCase();
         if(!["FONT","ICC_PROFILE"].includes(type))return err(400,"INVALID_ASSET_TYPE","type must be FONT or ICC_PROFILE.");
         const code=safeAssetCode(url.searchParams.get("code"));
@@ -983,7 +983,7 @@ export default {
         if(!String(assetMetadata.license||"").trim()){
           return err(409,"ASSET_LICENSE_REQUIRED","License / source metadata is required before a production asset can be submitted.");
         }
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const object=await env.ARTWORK_FILES.head(asset.object_key);
         if(!object)return err(409,"ASSET_OBJECT_MISSING","Production asset object is missing from R2.");
         await env.DB.prepare(`
@@ -1014,7 +1014,7 @@ export default {
         const decision=String(b.decision||"").toUpperCase();
         if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
         if(decision==="APPROVE"){
-          if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+          if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
           const object=await env.ARTWORK_FILES.get(asset.object_key);
           if(!object)return err(409,"ASSET_OBJECT_MISSING","Production asset object is missing from R2.");
           const bytes=new Uint8Array(await object.arrayBuffer());
@@ -1061,7 +1061,7 @@ export default {
 
       const fontValidationMatch=/^\/api\/artworks\/([^/]+)\/font-embed-validation$/.exec(url.pathname);
       if(request.method==="POST"&&fontValidationMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const artworkId=fontValidationMatch[1];
         const assetId=String(url.searchParams.get("assetId")||"").trim();
         if(!assetId)return err(400,"ASSET_ID_REQUIRED","assetId is required.");
@@ -1131,7 +1131,7 @@ export default {
 
       const pdfxCandidateMatch=/^\/api\/artworks\/([^/]+)\/pdfx4-candidate-validation$/.exec(url.pathname);
       if(request.method==="POST"&&pdfxCandidateMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const artworkId=pdfxCandidateMatch[1];
         const fontAssetId=String(url.searchParams.get("fontAssetId")||"").trim();
         const iccAssetId=String(url.searchParams.get("iccAssetId")||"").trim();
@@ -1235,7 +1235,7 @@ export default {
 
       const externalPdfxValidationMatch=/^\/api\/artworks\/([^/]+)\/pdfx4-external-validation$/.exec(url.pathname);
       if(request.method==="POST"&&externalPdfxValidationMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const validatorConfig=validateValidatorConfig(env);
         if(!validatorConfig.ok)return err(503,"PDFX_VALIDATOR_NOT_CONFIGURED","External PDF/X validator is not configured.",validatorConfig.errors);
 
@@ -1412,7 +1412,10 @@ export default {
 
       const productionRenderMatch=/^\/api\/artworks\/([^/]+)\/render-production-pdf$/.exec(url.pathname);
       if(request.method==="POST"&&productionRenderMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
+        if(env.ARTIFACT_STORE_KIND!=="R2"){
+          return err(409,"PRODUCTION_R2_REQUIRED","Authoritative Production PDF is disabled unless the artifact store is R2. KV is staging-only.");
+        }
         const artworkId=productionRenderMatch[1];
         const artwork=await env.DB.prepare(`
           SELECT id,sku,contract_no AS contractNo,factory_id AS factoryId,status,current_revision AS currentRevision,
@@ -2160,7 +2163,7 @@ export default {
 
       const exportMatch=/^\/api\/artworks\/([^/]+)\/exports$/.exec(url.pathname);
       if(request.method==="POST"&&exportMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const artworkId=exportMatch[1];
         const artwork=await env.DB.prepare("SELECT id,status,current_revision FROM artworks WHERE id=?").bind(artworkId).first();
         if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
@@ -2169,6 +2172,9 @@ export default {
         }
 
         const kind=(url.searchParams.get("kind")||"artifact").toUpperCase();
+        if(kind.includes("PRODUCTION")&&env.ARTIFACT_STORE_KIND!=="R2"){
+          return err(409,"PRODUCTION_R2_REQUIRED","Production artifacts cannot be persisted to the staging-only KV artifact store.");
+        }
         let productionEvidence=null;
         let authoritativePdf=null;
         if(kind==="PRODUCTION_BUNDLE"){
@@ -2275,18 +2281,18 @@ export default {
             readiness:serverEvidence?.readiness?.ready===true,
             policies:serverEvidence?.policies?.map((p)=>({code:p.code,status:p.status,approvedBy:p.approvedBy}))||[]
           },
-          reason:"Artifact persisted to R2 with server-side production evidence"
+          reason:`Artifact persisted to ${env.ARTIFACT_STORE_KIND||"UNKNOWN"} with server-side production evidence`
         });
         return json({data:{id,objectKey,sha256,size:bytes.length,contentType,serverEvidence}},{status:201});
       }
 
       const exportDownloadMatch=/^\/api\/exports\/([^/]+)$/.exec(url.pathname);
       if(request.method==="GET"&&exportDownloadMatch){
-        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        if(!env.ARTWORK_FILES)return err(503,"ARTIFACT_STORE_NOT_BOUND","Cloudflare Artifact Store binding is not configured.");
         const rec=await env.DB.prepare("SELECT * FROM exports WHERE id=?").bind(exportDownloadMatch[1]).first();
         if(!rec)return err(404,"NOT_FOUND","Export artifact not found.");
         const object=await env.ARTWORK_FILES.get(rec.object_key);
-        if(!object)return err(404,"R2_OBJECT_NOT_FOUND","Export metadata exists but R2 object is missing.");
+        if(!object)return err(404,"ARTIFACT_OBJECT_NOT_FOUND","Export metadata exists but Artifact Store object is missing.");
         const headers=new Headers();
         object.writeHttpMetadata(headers);
         headers.set("etag",object.httpEtag);
