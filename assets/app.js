@@ -4098,7 +4098,7 @@
           warnings,
           controlledPreset:block?{type:block.blockType,version:block.blockVersion,panelId:block.panelId,groupId:block.groupId}:null,
           draftArtworkId:row.artworkId||null,
-          draftArtworkNo:""
+          draftArtworkNo:row.artworkNo||""
         };
       });
       state.batchRows=state.batchReview.slice(0,100);
