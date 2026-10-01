@@ -1884,7 +1884,7 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="batch")await loadBatchJobs();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();await loadSystemReadiness();await loadPromotionEvidence();}});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="batch")await loadBatchJobs();if(state.page==="reviewer")await loadReviewerJobs();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();await loadSystemReadiness();await loadPromotionEvidence();}});
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=async()=>{state.contentTab=b.dataset.contentTab;render();if(state.contentTab!=="factories")await loadReferenceMasters();});
@@ -1932,6 +1932,9 @@
     bindArtworkElements();
     bindEditorKeyboard();
     document.querySelectorAll("[data-open-import-job]").forEach(b=>b.onclick=()=>resumeImportJob(b.dataset.openImportJob));
+    document.querySelectorAll("[data-reviewer-artwork]").forEach(b=>b.onclick=()=>loadReviewerDetail(b.dataset.reviewerArtwork));
+    const reviewerJobSelect=document.getElementById("reviewer-job-select");
+    if(reviewerJobSelect) reviewerJobSelect.onchange=()=>loadReviewerQueue(reviewerJobSelect.value);
     const artImageFile=document.getElementById("art-image-file");
     const artQrImageFile=document.getElementById("art-qr-image-file");
     const artSymbolFile=document.getElementById("art-symbol-file");
@@ -3033,6 +3036,10 @@
     if(action==="batch-preflight-submit") return processBatchDrafts({submitPassed:true,retryFailed:false});
     if(action==="batch-retry-failed") return processBatchDrafts({submitPassed:false,retryFailed:true});
     if(action==="refresh-batch-jobs") return loadBatchJobs();
+    if(action==="reviewer-refresh") return loadReviewerJobs();
+    if(action==="reviewer-open-artwork"){const selected=reviewerSelected();if(selected)return openRemoteArtwork(selected.artworkId);return;}
+    if(action==="reviewer-approve") return reviewerDecision("APPROVE");
+    if(action==="reviewer-reject") return reviewerDecision("REJECT");
     if(action==="save-mapping") return saveMappingProfile();
     if(action==="close-dialog"){state.dialog=null;state.impact=null;render();}
   }
