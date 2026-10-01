@@ -9,7 +9,7 @@
     "check": "node --check scripts/verify-local-d1.mjs && node --check scripts/smoke-staging.mjs && node --check assets/domain.js && node --check assets/vendor/qrcode-generator.js && node --check assets/codes.js && node --check assets/pdf.js && node --check assets/xlsx-lite.js && node --check assets/batch.js && node --check assets/zip.js && node --check assets/api.js && node --check assets/app.js && node --check worker/auth.js && node --check worker/template.js && node --check worker/readiness.js && node --check worker/diff.js && node --check worker/system-readiness.js && node --check worker/artifact-store.js && node --check worker/production-assets.js && node --check worker/pdfx-promotion-policy.js && node --check worker/pdfx-promotion-evidence.js && node --check worker/pdfx-promotion-readiness.js && node --check worker/pdfx-validator.js && node --check worker/production-renderer.js && node --check worker/index.js && node --check scripts/render-wrangler.mjs && npm test",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "deploy:staging": "npm run check && npx wrangler d1 migrations apply DB --remote --config wrangler.staging.jsonc && npx wrangler deploy --config wrangler.staging.jsonc",
+    "deploy:staging": "npm run check && npx wrangler d1 migrations apply DB --remote --config wrangler.staging.jsonc && npx wrangler deploy --config wrangler.staging.jsonc && CLOUDFLARE_STAGING_URL=https://carton-artwork-studio-staging.guodongbuding66.workers.dev node scripts/smoke-staging.mjs",
     "preview:staging": "npx wrangler versions upload --config wrangler.staging.jsonc"
   },
   "devDependencies": {
