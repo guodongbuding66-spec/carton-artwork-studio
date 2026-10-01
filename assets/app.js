@@ -66,7 +66,10 @@
     readinessProbeBusy: false,
     productionAssets: [],
     productionAssetBusy: false,
-    pdfxValidationRuns: []
+    pdfxValidationRuns: [],
+    pdfxPromotionReadiness: null,
+    pdfxPromotionEvidence: [],
+    promotionEvidenceBusy: false
   };
 
   const navItems = [
@@ -667,6 +670,89 @@
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
   }
 
+  function renderPromotionEvidenceRegistry(){
+    const p=state.pdfxPromotionReadiness||state.systemReadiness?.pdfxPromotionReadiness||{};
+    const counts=p.evidenceCounts||{};
+    const evidence=state.pdfxPromotionEvidence||[];
+    const statusColor=(s)=>String(s||"").toUpperCase()==="APPROVED"?"green":String(s||"").toUpperCase()==="SUBMITTED"?"blue":String(s||"").toUpperCase()==="REJECTED"?"red":"amber";
+    const detail=(x)=>{
+      if(x.evidenceType==="SECONDARY_VALIDATION") return `${x.validatorName||"—"} ${x.validatorVersion||""}`;
+      if(x.evidenceType==="RIP_QUALIFICATION") return `${x.printServiceProvider||"—"} · ${x.ripProduct||"—"} ${x.ripVersion||""} · ${x.outputDevice||"—"}`;
+      return `${x.printServiceProvider||"—"} · ${x.ripProduct||"—"} ${x.ripVersion||""} · no repair: ${x.noPdfRepair?"yes":"no"}`;
+    };
+    const rows=evidence.map(x=>{
+      const actions=[
+        `<button class="btn small" data-promotion-evidence-action="download" data-promotion-evidence-id="${esc(x.id)}">Download</button>`
+      ];
+      if(["DRAFT","REJECTED"].includes(String(x.status||"").toUpperCase())&&permitted("productionPolicyWrite")){
+        actions.push(`<button class="btn small" data-promotion-evidence-action="submit" data-promotion-evidence-id="${esc(x.id)}">Submit</button>`);
+      }
+      if(String(x.status||"").toUpperCase()==="SUBMITTED"&&permitted("productionPolicyApprove")){
+        actions.push(`<button class="btn primary small" data-promotion-evidence-action="approve" data-promotion-evidence-id="${esc(x.id)}">Approve</button>`);
+        actions.push(`<button class="btn small danger" data-promotion-evidence-action="reject" data-promotion-evidence-id="${esc(x.id)}">Reject</button>`);
+      }
+      return [
+        esc(x.evidenceType||"—"),
+        `<span class="badge ${statusColor(x.status)}">${esc(x.status||"—")}</span>`,
+        x.artifactSha256?`<span class="mono">${esc(String(x.artifactSha256).slice(0,14))}…</span>`:"—",
+        esc(detail(x)),
+        x.testedAt?esc(x.testedAt):"—",
+        `<span class="mono">${esc(String(x.evidenceSha256||"").slice(0,14))}…</span>`,
+        actions.join(" ")
+      ];
+    });
+    const upload=permitted("productionPolicyWrite")?`
+      <div class="card-body">
+        <div class="notice">
+          Evidence file bytes are hashed by the Worker and stored in private R2. Upload metadata is policy-validated; approval re-downloads the object and verifies the SHA again.
+        </div>
+        <div class="row2" style="margin-top:12px">
+          <div class="field"><label>Evidence Type</label><select id="promotion-evidence-type" class="input"><option>SECONDARY_VALIDATION</option><option>RIP_QUALIFICATION</option><option>PRODUCTION_TRIAL</option></select></div>
+          <div class="field"><label>Artifact SHA-256 <span class="subtle">Secondary / Trial</span></label><input id="promotion-artifact-sha" class="input mono" placeholder="64 hex"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Print Service Provider <span class="subtle">RIP / Trial</span></label><input id="promotion-provider" class="input" placeholder="Factory / print house"/></div>
+          <div class="field"><label>RIP / DFE Product</label><input id="promotion-rip-product" class="input" placeholder="RIP product"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>RIP / DFE Version</label><input id="promotion-rip-version" class="input" placeholder="Exact version"/></div>
+          <div class="field"><label>Output Device</label><input id="promotion-output-device" class="input" placeholder="Press / proofer / device"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Tested At <span class="subtle">RIP / Trial</span></label><input id="promotion-tested-at" class="input" type="datetime-local"/></div>
+          <div class="field"><label>Evidence File</label><input id="promotion-evidence-file" class="input" type="file"/></div>
+        </div>
+        <div class="toolbar" style="justify-content:space-between">
+          <div>
+            <label style="margin-right:14px"><input id="promotion-actual-workflow" type="checkbox" checked/> Actual production workflow</label>
+            <label><input id="promotion-no-repair" type="checkbox" checked/> No PDF repair / rewrite</label>
+          </div>
+          <button class="btn primary" data-action="upload-promotion-evidence" ${state.promotionEvidenceBusy?"disabled":""}>${state.promotionEvidenceBusy?"Uploading…":"Upload Evidence"}</button>
+        </div>
+      </div>`:"";
+    return `
+      <section class="card" style="margin-top:12px">
+        <div class="card-head">
+          <h3>PDF/X Production Promotion Evidence</h3>
+          <span class="badge ${p.ok?"green":"amber"}">${p.ok?"QUALIFIED":"INCOMPLETE"}</span>
+          <span class="spacer"></span>
+          <button class="btn small" data-action="refresh-promotion-evidence">Refresh</button>
+        </div>
+        <div class="card-body">
+          <div class="kpis" style="margin:0">
+            <div class="kpi"><div class="kpi-label">SAME-BYTE REGRESSION</div><div class="kpi-value">${p.sharedRegressionArtifacts||0}/${p.policy?.minimumUniqueArtifacts||5}</div></div>
+            <div class="kpi"><div class="kpi-label">PRIMARY PASS</div><div class="kpi-value">${counts.trustedPrimaryRuns||0}</div></div>
+            <div class="kpi"><div class="kpi-label">SECONDARY APPROVED</div><div class="kpi-value">${counts.approvedSecondaryValidation||0}</div></div>
+            <div class="kpi"><div class="kpi-label">RIP / TRIAL</div><div class="kpi-value">${p.ripOk?"PASS":"—"} / ${p.productionTrialOk?"PASS":"—"}</div></div>
+          </div>
+          ${(p.errors||[]).length?`<div class="notice warn" style="margin-top:12px">${(p.errors||[]).map(esc).join(" · ")}</div>`:`<div class="notice" style="margin-top:12px">Promotion evidence satisfies policy ${esc(p.policyVersion||"2.0.0")}. PDF/X-4 capability still requires a separate code-reviewed promotion change.</div>`}
+        </div>
+        ${upload}
+        ${rows.length?table(["Type","State","Artifact SHA","Qualification Detail","Tested At","Evidence SHA","Actions"],rows,true):'<div class="card-body"><div class="notice">No controlled promotion evidence has been uploaded yet.</div></div>'}
+      </section>
+    `;
+  }
+
   function renderSystemReadiness(){
     const r=state.systemReadiness;
     if(!r) return `<section class="card"><div class="card-head"><h3>Staging Readiness Center</h3><span class="spacer"></span><button class="btn small" data-action="refresh-system-readiness">Refresh</button></div><div class="card-body"><div class="notice">尚未读取服务器 Readiness 状态。</div></div></section>`;
@@ -683,6 +769,7 @@
     ]);
     const diag=r.diagnostics||{};
     const lastProbe=diag.lastR2Probe?.createdAt||"Never";
+    state.pdfxPromotionReadiness=r.pdfxPromotionReadiness||state.pdfxPromotionReadiness;
     return `
       <section class="card">
         <div class="card-head">
@@ -701,7 +788,7 @@
             <div class="kpi"><div class="kpi-label">LAST R2 PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
           </div>
           <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
-            Staging 与 Production 是两套门禁。TrueType 字体嵌入已实现，PDF/X-4 Candidate 也可内部生成；但在外部 PDF/X conformance 验证未接入前，Production 仍保持 BLOCKED，不能靠 Policy JSON 或内部结构检查伪造通过。
+            Staging 与 Production 是独立门禁。PDF/X-4 Production 需要 trusted primary validator、同 SHA 的独立 secondary validator、真实 RIP qualification 和无修复 production trial；证据齐全后仍需单独代码审查才能把 PDF/X-4 加入 production capability。
           </div>
         </div>
         <div class="card-head"><h3>Staging Gates</h3></div>
@@ -709,6 +796,7 @@
         <div class="card-head"><h3>Production Gates</h3></div>
         ${table(["Gate","Result","Detail"],productionRows,true)}
       </section>
+      ${renderPromotionEvidenceRegistry()}
     `;
   }
 
@@ -753,7 +841,7 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();await loadSystemReadiness();}});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();await loadSystemReadiness();await loadPromotionEvidence();}});
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=async()=>{state.contentTab=b.dataset.contentTab;render();if(state.contentTab!=="factories")await loadReferenceMasters();});
@@ -784,6 +872,7 @@
     document.querySelectorAll("[data-edit-template-version]").forEach(b=>b.onclick=()=>openTemplateVersion(b.dataset.editTemplateVersion));
     document.querySelectorAll("[data-policy-action]").forEach(b=>b.onclick=()=>handlePolicyAction(b.dataset.policyAction,b.dataset.policyCode));
     document.querySelectorAll("[data-production-asset-action]").forEach(b=>b.onclick=()=>handleProductionAssetAction(b.dataset.productionAssetAction,b.dataset.productionAssetId));
+    document.querySelectorAll("[data-promotion-evidence-action]").forEach(b=>b.onclick=()=>handlePromotionEvidenceAction(b.dataset.promotionEvidenceAction,b.dataset.promotionEvidenceId));
     document.querySelectorAll("[data-compare-mode]").forEach(b=>b.onclick=()=>{state.compareMode=b.dataset.compareMode;render();});
     const compareOpacity=document.getElementById("compare-opacity");
     if(compareOpacity) compareOpacity.oninput=()=>{state.compareOpacity=Number(compareOpacity.value);const top=document.getElementById("compare-overlay-top");if(top)top.style.opacity=String(state.compareOpacity);};
@@ -814,6 +903,8 @@
     if(action==="refresh-audit") return loadAudit();
     if(action==="refresh-system-readiness") return loadSystemReadiness();
     if(action==="run-readiness-probe") return runSystemReadinessProbe();
+    if(action==="refresh-promotion-evidence") return loadPromotionEvidence();
+    if(action==="upload-promotion-evidence") return uploadPromotionEvidence();
     if(action==="upload-production-asset") return uploadProductionAsset();
     if(action==="pdfx4-candidate") return renderPdfX4Candidate();
     if(action==="pdfx4-external-validate") return runExternalPdfXValidation();
@@ -1889,6 +1980,8 @@
         if(state.page==="admin"&&permitted("admin")){
           try{state.adminUsers=(await api.adminUsers()).data||[];}catch{}
           try{state.systemReadiness=(await api.systemReadiness()).data||null;}catch{}
+          try{state.pdfxPromotionReadiness=(await api.pdfxPromotionReadiness()).data||null;}catch{}
+          try{state.pdfxPromotionEvidence=(await api.pdfxPromotionEvidence()).data||[];}catch{}
         }
       }
     }catch(e){
