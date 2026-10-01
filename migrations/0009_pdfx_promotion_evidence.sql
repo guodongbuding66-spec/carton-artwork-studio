@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS pdfx_promotion_evidence (
   id TEXT PRIMARY KEY,
   evidence_type TEXT NOT NULL CHECK(evidence_type IN ('SECONDARY_VALIDATION','RIP_QUALIFICATION','PRODUCTION_TRIAL')),
   profile TEXT NOT NULL DEFAULT 'PDF/X-4',
+  policy_version TEXT NOT NULL,
   artifact_sha256 TEXT,
   validator_name TEXT,
   validator_version TEXT,
