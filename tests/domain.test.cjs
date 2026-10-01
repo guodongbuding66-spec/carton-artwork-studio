@@ -570,8 +570,8 @@ test("Shipping Mark 1.1 definition is versioned and canonical", () => {
 test("Shipping Mark 1.1 reflows long data and remains inside the safe area", () => {
   const artwork={
     ...D.defaultArtwork,
-    sku:"VERY-LONG-COMMERCIAL-SKU-IDENTIFIER-2026-EXPORT-US-WEST-COAST-001",
-    contractNo:"CONTRACT-2026-VERY-LONG-CUSTOMER-PURCHASE-ORDER-REFERENCE-888888",
+    sku:"VERY-LONG-COMMERCIAL-SKU-IDENTIFIER-2026-EXPORT-US-WEST-COAST-001-VERY-LONG-COMMERCIAL-SKU-IDENTIFIER-SECONDARY-PACKAGE-REFERENCE-EXTRA-LONG",
+    contractNo:"CONTRACT-2026-VERY-LONG-CUSTOMER-PURCHASE-ORDER-REFERENCE-888888-ADDITIONAL-DISTRIBUTION-CENTER-REFERENCE-AND-CUSTOMER-CODE-999999",
     safeMarginMm:22
   };
   const panel=D.sideSealGeometry(artwork).panels.find(x=>x.id==="TOP_FACE");
