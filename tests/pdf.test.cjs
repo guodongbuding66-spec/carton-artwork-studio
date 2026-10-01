@@ -140,4 +140,29 @@ assert.ok(wrappedTextProofText.includes("(LINE ONE) Tj"),"Wrapped custom text sh
 assert.ok(wrappedTextProofText.includes("(LINE TWO) Tj"),"Wrapped custom text should emit the second deterministic line");
 assert.ok((wrappedTextProofText.match(/\nq\n/g)||[]).length>=1,"Rotated multiline text should use a local graphics-state transform");
 
+const batchArt={...D.defaultArtwork,sku:"BATCH-PDF-001",contractNo:"PO-BATCH-009"};
+const batchPanel=D.sideSealGeometry(batchArt).panels.find(x=>x.id==="TOP_FACE");
+const batchBlock=D.createShippingMarkBlockElements(batchArt,batchPanel,D.factories,{
+  version:"1.1.0",groupId:"batch-pdf",locked:true,
+  idFactory:(slot)=>"pdf-"+slot.id.toLowerCase()
+});
+assert.equal(batchBlock.ok,true);
+const batchCustom=batchBlock.elements.map(e=>{
+  const resolved=D.resolvedElementText(e,batchArt,D.factories);
+  const layout=D.textLayout(e,resolved);
+  return {...e,text:resolved,renderLines:layout.lines,renderLineWidthsMm:layout.widthsMm};
+});
+const batchG=D.sideSealGeometry(batchArt);
+const batchComp=D.computed(batchArt,D.factories);
+const batchCode=C.code128Bars(batchArt.barcode,{moduleMm:.42,heightMm:25});
+const batchQr=C.qrMatrix(batchArt.qr,"M").matrix;
+const batchProof=P.createPdfBytes({
+  artwork:batchArt,geometry:batchG,computed:batchComp,codeModel:batchCode,qrMatrix:batchQr,
+  customElements:batchCustom,mode:"proof"
+});
+const batchProofText=Buffer.from(batchProof).toString("latin1");
+assert.ok(batchProofText.includes("(ITEM NO. BATCH-PDF-001) Tj"),"Batch controlled Shipping Mark ITEM should be emitted into Proof PDF");
+assert.ok(batchProofText.includes("(CONTRACT NO. PO-BATCH-009) Tj"),"Batch controlled Shipping Mark contract should be emitted into Proof PDF");
+assert.ok(batchProofText.includes("(CRN 3203960FM4) Tj"),"Batch controlled Shipping Mark CRN should be emitted into Proof PDF");
+
 console.log("PDF tests passed.");
