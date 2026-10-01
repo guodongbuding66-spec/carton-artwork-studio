@@ -195,6 +195,9 @@
       async pdfxValidations(artworkId) {
         return request(`/api/artworks/${encodeURIComponent(artworkId)}/pdfx-validations`);
       },
+      async productionQualification(artworkId) {
+        return request(`/api/artworks/${encodeURIComponent(artworkId)}/production-qualification`);
+      },
       async renderProductionPdf(artworkId) {
         return requestBlob(`/api/artworks/${encodeURIComponent(artworkId)}/render-production-pdf`, {
           method:"POST", body:"{}"
