@@ -561,7 +561,7 @@
     const panelOptions=geometry().panels.map(p=>`<option value="${p.id}" ${selected?.panelId===p.id?"selected":""}>${p.id}</option>`).join("");
     const multiTools=selectedMany.length>1?`
       <div class="multi-selection-tools">
-        <div class="notice"><strong>${selectedMany.length} 个元素已多选</strong><br>Shift+点击继续增减选择；对齐/分布会以当前选择整体为参考。</div>
+        <div class="notice"><strong>${selectedMany.length} 个元素已多选</strong><br>Shift+点击继续增减选择；拖动任一已选对象可整体移动。元素会吸附同面板对象与面板的边/中心参考线。</div>
         <div class="align-grid">
           ${[["multi-align-left","左对齐"],["multi-align-hcenter","水平居中"],["multi-align-right","右对齐"],["multi-align-top","顶对齐"],["multi-align-vcenter","垂直居中"],["multi-align-bottom","底对齐"]].map(([a,n])=>`<button class="tool" data-action="${a}">${n}</button>`).join("")}
           <button class="tool" data-action="distribute-horizontal" ${selectedMany.length<3?"disabled":""}>水平等距</button>
