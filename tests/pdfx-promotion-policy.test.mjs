@@ -99,6 +99,16 @@ const repairedTrial=summarizePdfxPromotionEvidence({
 assert.equal(repairedTrial.ok,false);
 assert.ok(repairedTrial.errors.some((x)=>/production trial/i.test(x)));
 
+const mismatchedWorkflow=summarizePdfxPromotionEvidence({
+  primaryRuns:shas.map(primary),
+  secondaryRuns:shas.map(secondary),
+  ripEvidenceRuns:[rip],
+  productionTrials:[{...trial(shas[0]),printServiceProvider:"Different Printer"}],
+  nowMs:now
+});
+assert.equal(mismatchedWorkflow.ok,false);
+assert.ok(mismatchedWorkflow.errors.some((x)=>/exact print-provider\/RIP\/device workflow/i.test(x)));
+
 const wrongTrialSha=summarizePdfxPromotionEvidence({
   primaryRuns:shas.map(primary),
   secondaryRuns:shas.map(secondary),
