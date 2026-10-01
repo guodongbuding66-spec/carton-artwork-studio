@@ -1,11 +1,11 @@
 export const EXPECTED_LATEST_MIGRATION = "0009_pdfx_promotion_evidence.sql";
-export const R2_PROBE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const ARTIFACT_PROBE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function gate(id, label, ok, detail, category="STAGING", blocking=true) {
   return { id, label, ok:Boolean(ok), status:ok?"PASS":"FAIL", detail, category, blocking };
 }
 
-function isFreshProbe(probe, nowMs=Date.now(), maxAgeMs=R2_PROBE_MAX_AGE_MS) {
+function isFreshProbe(probe, nowMs=Date.now(), maxAgeMs=ARTIFACT_PROBE_MAX_AGE_MS) {
   if (!probe || String(probe.status||"").toUpperCase() !== "PASS" || !probe.createdAt) return false;
   const t = Date.parse(probe.createdAt);
   return Number.isFinite(t) && nowMs - t >= 0 && nowMs - t <= maxAgeMs;
@@ -32,12 +32,14 @@ export function buildSystemReadiness(input = {}) {
     gate("SCHEMA_CURRENT","D1 migration/schema current",
       input.latestMigration===EXPECTED_LATEST_MIGRATION && input.schemaOk===true,
       `Latest migration: ${input.latestMigration||"unknown"}; expected: ${EXPECTED_LATEST_MIGRATION}.`),
-    gate("R2_BOUND","R2 binding",input.bindings?.r2===true,
-      input.bindings?.r2?"ARTWORK_FILES binding is available.":"ARTWORK_FILES binding is missing."),
-    gate("R2_DEEP_PROBE","R2 write/read/delete probe",isFreshProbe(input.lastR2Probe,input.nowMs),
-      isFreshProbe(input.lastR2Probe,input.nowMs)
-        ? `Last successful probe: ${input.lastR2Probe.createdAt}.`
-        : "No successful R2 deep probe within the last 24 hours."),
+    gate("ARTIFACT_STORE_BOUND","Artifact store binding",input.bindings?.artifactStore===true,
+      input.bindings?.artifactStore
+        ? `Artifact store is available via ${input.bindings?.artifactStoreKind||"unknown"}.`
+        : "No Artifact Store binding is available."),
+    gate("ARTIFACT_STORE_DEEP_PROBE","Artifact Store write/read/delete probe",isFreshProbe(input.lastArtifactProbe||input.lastR2Probe,input.nowMs),
+      isFreshProbe(input.lastArtifactProbe||input.lastR2Probe,input.nowMs)
+        ? `Last successful probe: ${(input.lastArtifactProbe||input.lastR2Probe).createdAt}.`
+        : "No successful Artifact Store deep probe within the last 24 hours."),
     gate("ASSETS_BOUND","Static assets binding",input.bindings?.assets===true,
       input.bindings?.assets?"ASSETS binding is available.":"ASSETS binding is missing."),
     gate("BOOTSTRAP_REMOVED","Bootstrap admin removed",!input.bootstrapAdminConfigured,
@@ -61,6 +63,11 @@ export function buildSystemReadiness(input = {}) {
   const productionChecks=[
     gate("STAGING_READY","Staging release gate",stagingReady,
       stagingReady?"All staging gates pass.":"One or more staging gates are blocked.","PRODUCTION"),
+    gate("PRODUCTION_ARTIFACT_STORE","Production artifact store is R2",input.bindings?.artifactStoreKind==="R2",
+      input.bindings?.artifactStoreKind==="R2"
+        ? "Production artifacts are backed by R2."
+        : `Current artifact store is ${input.bindings?.artifactStoreKind||"NONE"}; KV is staging-only and cannot satisfy Production.`,
+      "PRODUCTION"),
     gate("APPROVED_FONT_ASSET","Approved font asset",Number(counts.approvedFonts||0)>0,
       `${Number(counts.approvedFonts||0)} approved FONT asset(s).`,"PRODUCTION"),
     gate("APPROVED_ICC_ASSET","Approved ICC output profile",Number(counts.approvedIccProfiles||0)>0,
