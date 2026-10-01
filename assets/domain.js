@@ -297,6 +297,41 @@
     };
   }
 
+  function visualBoundsFitContainer(element, bounds, tolerance = 0.01) {
+    const v=elementVisualBounds(element);
+    return v.left>=Number(bounds.x||0)-tolerance &&
+      v.top>=Number(bounds.y||0)-tolerance &&
+      v.right<=Number(bounds.x||0)+Number(bounds.w||0)+tolerance &&
+      v.bottom<=Number(bounds.y||0)+Number(bounds.h||0)+tolerance;
+  }
+
+  function constrainElementResize(element, bounds, desiredW, desiredH, minSize = 5) {
+    const startW=Math.max(minSize,Number(element?.w||minSize));
+    const startH=Math.max(minSize,Number(element?.h||minSize));
+    const targetW=Math.max(minSize,Number(desiredW||minSize));
+    const targetH=Math.max(minSize,Number(desiredH||minSize));
+    const candidate=(w,h)=>({...element,w,h});
+    if(visualBoundsFitContainer(candidate(targetW,targetH),bounds)){
+      return {w:targetW,h:targetH,limited:false};
+    }
+    if(!visualBoundsFitContainer(candidate(startW,startH),bounds)){
+      return {w:startW,h:startH,limited:true};
+    }
+    let lo=0,hi=1;
+    for(let i=0;i<32;i+=1){
+      const mid=(lo+hi)/2;
+      const w=startW+(targetW-startW)*mid;
+      const h=startH+(targetH-startH)*mid;
+      if(visualBoundsFitContainer(candidate(w,h),bounds)) lo=mid;
+      else hi=mid;
+    }
+    return {
+      w:startW+(targetW-startW)*lo,
+      h:startH+(targetH-startH)*lo,
+      limited:true
+    };
+  }
+
   function calibrationMetrics() {
     const measuredMm = sourceCalibration.reference200mm.measuredMm;
     return {
@@ -924,6 +959,8 @@
     artworkFromCanonical,
     sideSealGeometry,
     elementVisualBounds,
+    visualBoundsFitContainer,
+    constrainElementResize,
     calibrationMetrics,
     codeBlockDimensions,
     estimateTextBox,
