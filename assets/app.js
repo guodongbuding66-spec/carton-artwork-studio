@@ -1041,21 +1041,17 @@
     const height=Math.max(1,Math.round((img.naturalHeight||1)*scale));
     const canvas=document.createElement("canvas");
     canvas.width=width;canvas.height=height;
-    const ctx=canvas.getContext("2d",{alpha:true});
-    ctx.clearRect(0,0,width,height);
+    const ctx=canvas.getContext("2d",{alpha:false});
+    ctx.fillStyle="#fff";ctx.fillRect(0,0,width,height);
     ctx.drawImage(img,0,0,width,height);
-    let dataUrl=canvas.toDataURL("image/png");
-    let mimeType="image/png";
-    if(dataUrl.length>900000){
-      const white=document.createElement("canvas");
-      white.width=width;white.height=height;
-      const wctx=white.getContext("2d");
-      wctx.fillStyle="#fff";wctx.fillRect(0,0,width,height);wctx.drawImage(canvas,0,0);
-      dataUrl=white.toDataURL("image/jpeg",0.88);
-      mimeType="image/jpeg";
+    let quality=.94;
+    let dataUrl=canvas.toDataURL("image/jpeg",quality);
+    while(dataUrl.length>900000&&quality>.72){
+      quality-=.06;
+      dataUrl=canvas.toDataURL("image/jpeg",quality);
     }
     if(dataUrl.length>1200000) throw new Error("图片归一化后仍然过大，请使用更简单的 Logo/图标或降低图片尺寸。");
-    return {dataUrl,mimeType,pixelWidth:width,pixelHeight:height};
+    return {dataUrl,mimeType:"image/jpeg",pixelWidth:width,pixelHeight:height};
   }
 
   async function addUploadedArtworkElement(file,type="image"){
@@ -2116,9 +2112,19 @@
     finally{state.apiBusy=false;render();}
   }
 
+  function proofPdfElements(artwork=state.artwork){
+    return (Array.isArray(artwork.elements)?artwork.elements:[]).map((e)=>{
+      if(e.type==="qr-generated"){
+        try{return {...e,matrix:C.qrMatrix(e.payload||"",e.ecc||"M").matrix};}
+        catch{return {...e,matrix:[]};}
+      }
+      return {...e};
+    });
+  }
+
   function exportProof(){
     const g=geometry(), c=computed(), code=C.code128Bars(state.artwork.barcode,{moduleMm:.42,heightMm:25}), qr=C.qrMatrix(state.artwork.qr,"M").matrix;
-    const blob=P.createPdfBlob({artwork:state.artwork,geometry:g,computed:c,codeModel:code,qrMatrix:qr,mode:"proof"});
+    const blob=P.createPdfBlob({artwork:state.artwork,geometry:g,computed:c,codeModel:code,qrMatrix:qr,customElements:proofPdfElements(state.artwork),mode:"proof"});
     downloadBlob(fileBase()+"_Proof.pdf",blob); toast("已生成 1:1 mm Vector Proof PDF（Code128 + QR 均为矢量）","success");
   }
 
