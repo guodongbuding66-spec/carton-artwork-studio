@@ -56,6 +56,24 @@
 
 ## v2.0.0 关键工程进展
 
+### Workers KV Staging Artifact Store
+
+为避免工程 staging 因 R2 账单激活而阻塞，文件层已抽象为 Artifact Store：
+
+```text
+STAGING    → Workers KV
+PRODUCTION → R2
+```
+
+- D1 / Worker / RBAC / Approval / PDF/X 代码保持不变；
+- KV 兼容 `put/get/head/delete`；
+- Staging Readiness 接受 KV；
+- Production Readiness 新增强制 R2 Gate；
+- server-side Production PDF / Production Bundle 在 KV 环境直接拒绝；
+- KV 单对象内部上限固定为 24 MiB。
+
+
+
 ### 1. Production Promotion Policy
 
 PDF/X-4 不再继续堆 Candidate 功能，而是进入正式晋升治理：
@@ -1169,7 +1187,8 @@ npm run check
 - **Workers**：API / auth gateway / business services
 - **Assets**：Web frontend
 - **D1**：Template / Artwork / Revision / Preflight / Approval / Audit metadata
-- **R2**：PDF / SVG / Proof / Production Bundle / source templates
+- **KV（staging）**：Font / ICC / Candidate / Evidence / staging artifacts
+- **R2（production）**：正式 PDF / SVG / Production Bundle / source templates
 - **Queues（后续）**：Excel batch / render jobs
 
 详见 `docs/CLOUDFLARE_DEPLOYMENT.md`。

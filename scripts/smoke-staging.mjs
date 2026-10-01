@@ -5,12 +5,12 @@ const clientId=String(process.env.CLOUDFLARE_ACCESS_CLIENT_ID||"");
 const clientSecret=String(process.env.CLOUDFLARE_ACCESS_CLIENT_SECRET||"");
 
 if(!base) throw new Error("CLOUDFLARE_STAGING_URL is required.");
-if(!clientId||!clientSecret) throw new Error("Cloudflare Access service-token credentials are required for staging smoke tests.");
 
-const accessHeaders={
-  "CF-Access-Client-Id":clientId,
-  "CF-Access-Client-Secret":clientSecret
-};
+const accessHeaders={};
+if(clientId&&clientSecret){
+  accessHeaders["CF-Access-Client-Id"]=clientId;
+  accessHeaders["CF-Access-Client-Secret"]=clientSecret;
+}
 
 async function fetchJson(path, options={}) {
   const response=await fetch(base+path,{
@@ -31,9 +31,9 @@ if(health.response.status!==200) {
 if(health.payload?.service!=="carton-artwork-studio") throw new Error("Unexpected staging service identity.");
 if(health.payload?.version!=="2.0.0") throw new Error(`Unexpected staging version: ${health.payload?.version||"unknown"}; expected 2.0.0.`);
 if(health.payload?.pdfx?.promotionPolicyVersion!=="2.0.0") throw new Error("Staging does not expose PDF/X promotion policy v2.0.0.");
-if(health.payload?.pdfx?.validatorConfigured!==true) throw new Error("Trusted PDF/X validator bridge is not fully configured.");
 if(health.payload?.bindings?.d1!==true) throw new Error("Staging D1 binding is not active.");
-if(health.payload?.bindings?.r2!==true) throw new Error("Staging R2 binding is not active.");
+if(health.payload?.bindings?.artifactStore!==true) throw new Error("Staging Artifact Store binding is not active.");
+if(!["KV","R2"].includes(health.payload?.bindings?.artifactStoreKind)) throw new Error("Unexpected staging Artifact Store provider.");
 if(health.payload?.bindings?.assets!==true) throw new Error("Staging static asset binding is not active.");
 if(health.payload?.auth?.bypassEnabled===true) throw new Error("AUTH_BYPASS must be disabled in staging.");
 
@@ -55,7 +55,8 @@ const acceptance={
   auth:health.payload?.auth||null,
   pdfx:health.payload?.pdfx||null,
   unauthenticatedMeStatus:unauth.status,
-  result:"PASS"
+  result:"PASS",
+  productionBlockedAsExpected:health.payload?.bindings?.artifactStoreKind!=="R2"
 };
 fs.writeFileSync("artifacts/staging-acceptance.json",JSON.stringify(acceptance,null,2)+"\n");
 

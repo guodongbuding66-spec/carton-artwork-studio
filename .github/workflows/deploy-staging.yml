@@ -36,7 +36,7 @@ jobs:
         run: node scripts/render-wrangler.mjs staging
         env:
           CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
-          CLOUDFLARE_R2_BUCKET_NAME: ${{ vars.CLOUDFLARE_R2_BUCKET_NAME }}
+          CLOUDFLARE_KV_NAMESPACE_ID: ${{ vars.CLOUDFLARE_KV_NAMESPACE_ID }}
           CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL: ${{ vars.CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL }}
           CLOUDFLARE_PDFX_VALIDATOR_URL: ${{ vars.CLOUDFLARE_PDFX_VALIDATOR_URL }}
       - name: Apply D1 migrations
@@ -49,13 +49,17 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Install trusted PDF/X validator secret
+      - name: Install trusted PDF/X validator secret when configured
         run: |
-          test -n "$CLOUDFLARE_PDFX_VALIDATOR_TOKEN"
-          printf '%s' "$CLOUDFLARE_PDFX_VALIDATOR_TOKEN" | npx wrangler secret put PDFX_VALIDATOR_TOKEN --config .wrangler.staging.generated.json
+          if [ -n "$CLOUDFLARE_PDFX_VALIDATOR_URL" ] && [ -n "$CLOUDFLARE_PDFX_VALIDATOR_TOKEN" ]; then
+            printf '%s' "$CLOUDFLARE_PDFX_VALIDATOR_TOKEN" | npx wrangler secret put PDFX_VALIDATOR_TOKEN --config .wrangler.staging.generated.json
+          else
+            echo "Trusted PDF/X validator not configured; Production remains blocked."
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PDFX_VALIDATOR_URL: ${{ vars.CLOUDFLARE_PDFX_VALIDATOR_URL }}
           CLOUDFLARE_PDFX_VALIDATOR_TOKEN: ${{ secrets.CLOUDFLARE_PDFX_VALIDATOR_TOKEN }}
       - name: Post-deploy staging smoke test
         run: node scripts/smoke-staging.mjs

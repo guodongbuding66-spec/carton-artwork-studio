@@ -39,7 +39,7 @@
     remoteArtworkId: localStorage.getItem("cas:remoteArtworkId") || null,
     remoteRevision: null,
     remoteImportJobId: null,
-    apiBindings: { d1:false, r2:false, assets:false },
+    apiBindings: { d1:false, artifactStore:false, artifactStoreKind:"NONE", kv:false, r2:false, assets:false },
     identity: null,
     authError: null,
     comments: [],
@@ -607,7 +607,7 @@
 
     const uploader=permitted("productionAssetWrite")?`
       <div class="card-body" style="border-bottom:1px solid #e5e9ee">
-        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传建立受控资产与审批链。TrueType 字体嵌入已进入服务器 Renderer；PDF/X-4 Candidate 已支持 ICC OutputIntent + XMP/Box 结构检查，但外部 PDF/X conformance 尚未关闭。原始 Font / ICC 文件保存在 R2，本页不提供原文件下载入口。</div>
+        <div class="notice warn" style="margin-bottom:10px">Production Asset 上传建立受控资产与审批链。TrueType 字体嵌入已进入服务器 Renderer；PDF/X-4 Candidate 已支持 ICC OutputIntent + XMP/Box 结构检查，但外部 PDF/X conformance 尚未关闭。原始 Font / ICC 文件保存在受控 Artifact Store；staging 可使用 KV，Production 仍要求 R2。本页不提供原文件下载入口。</div>
         <div class="row2">
           <div class="field"><label>Asset Type</label><select id="production-asset-type" class="input"><option value="FONT">FONT</option><option value="ICC_PROFILE">ICC_PROFILE</option></select></div>
           <div class="field"><label>Code</label><input id="production-asset-code" class="input mono" placeholder="ISUNOR_SANS_REGULAR"/></div>
@@ -704,7 +704,7 @@
     const upload=permitted("productionPolicyWrite")?`
       <div class="card-body">
         <div class="notice">
-          Evidence file bytes are hashed by the Worker and stored in private R2. Upload metadata is policy-validated; approval re-downloads the object and verifies the SHA again.
+          Evidence file bytes are hashed by the Worker and stored in the private Artifact Store. Staging may use KV; Production still requires R2. Approval re-downloads the object and verifies the SHA again.
         </div>
         <div class="row2" style="margin-top:12px">
           <div class="field"><label>Evidence Type</label><select id="promotion-evidence-type" class="input"><option>SECONDARY_VALIDATION</option><option>RIP_QUALIFICATION</option><option>PRODUCTION_TRIAL</option></select></div>
@@ -768,7 +768,7 @@
       esc(x.detail)
     ]);
     const diag=r.diagnostics||{};
-    const lastProbe=diag.lastR2Probe?.createdAt||"Never";
+    const lastProbe=diag.lastArtifactProbe?.createdAt||"Never";
     state.pdfxPromotionReadiness=r.pdfxPromotionReadiness||state.pdfxPromotionReadiness;
     return `
       <section class="card">
@@ -778,14 +778,14 @@
           <span class="badge ${r.productionReady?"green":"amber"}">${esc(r.productionStatus)}</span>
           <span class="spacer"></span>
           <button class="btn small" data-action="refresh-system-readiness">Refresh</button>
-          <button class="btn primary small" data-action="run-readiness-probe" ${state.readinessProbeBusy?"disabled":""}>${state.readinessProbeBusy?"Probing…":"Run R2 Deep Probe"}</button>
+          <button class="btn primary small" data-action="run-readiness-probe" ${state.readinessProbeBusy?"disabled":""}>${state.readinessProbeBusy?"Probing…":"Run Artifact Store Probe"}</button>
         </div>
         <div class="card-body">
           <div class="kpis" style="margin:0">
             <div class="kpi"><div class="kpi-label">STAGING GATES</div><div class="kpi-value">${r.summary?.stagingPassed||0}/${r.summary?.stagingTotal||0}</div></div>
             <div class="kpi"><div class="kpi-label">PRODUCTION GATES</div><div class="kpi-value">${r.summary?.productionPassed||0}/${r.summary?.productionTotal||0}</div></div>
             <div class="kpi"><div class="kpi-label">LATEST MIGRATION</div><div class="kpi-value mono" style="font-size:13px">${esc(diag.latestMigration||"unknown")}</div></div>
-            <div class="kpi"><div class="kpi-label">LAST R2 PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
+            <div class="kpi"><div class="kpi-label">LAST STORE PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
           </div>
           <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
             Staging 与 Production 是独立门禁。PDF/X-4 Production 需要 trusted primary validator、同 SHA 的独立 secondary validator、真实 RIP qualification 和无修复 production trial；证据齐全后仍需单独代码审查才能把 PDF/X-4 加入 production capability。
@@ -1615,10 +1615,10 @@
       const response=await api.runSystemReadinessProbe();
       state.systemReadiness=response.data?.readiness||null;
       const probe=response.data?.probe;
-      toast(probe?.ok?"R2 write/read/delete probe passed":"R2 probe failed: "+(probe?.error||"unknown"),probe?.ok?"success":"error");
+      toast(probe?.ok?"Artifact Store write/read/delete probe passed":"Artifact Store probe failed: "+(probe?.error||"unknown"),probe?.ok?"success":"error");
       if(permitted("auditRead")) await loadAudit(false);
     }catch(e){
-      toast("R2 readiness probe failed: "+(e.message||e),"error");
+      toast("Artifact Store readiness probe failed: "+(e.message||e),"error");
     }finally{
       state.readinessProbeBusy=false;
       render();

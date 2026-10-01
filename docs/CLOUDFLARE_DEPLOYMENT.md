@@ -12,14 +12,16 @@ Worker + Static Assets
 
 ## 1. Create resources
 
-Create a staging D1 database and R2 bucket:
+Create a staging D1 database and Workers KV namespace:
 
 ```bash
 npx wrangler d1 create carton-artwork-studio-staging
-npx wrangler r2 bucket create carton-artwork-studio-staging-files
+npx wrangler kv namespace create carton-artwork-studio-staging-artifacts
 ```
 
-Record the D1 database UUID.
+Record the D1 database UUID and KV namespace ID.
+
+Staging deliberately uses Workers KV so R2 billing activation is not required. Production still requires R2.
 
 ## 2. GitHub configuration
 
@@ -37,7 +39,7 @@ Repository **Variables**:
 
 ```text
 CLOUDFLARE_D1_DATABASE_ID
-CLOUDFLARE_R2_BUCKET_NAME=carton-artwork-studio-staging-files
+CLOUDFLARE_KV_NAMESPACE_ID=<workers-kv-namespace-id>
 CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL
 CLOUDFLARE_STAGING_URL=https://<staging-hostname>
 CLOUDFLARE_PDFX_VALIDATOR_URL=https://<trusted-validator-endpoint>   # required for v2 final staging acceptance
@@ -54,7 +56,7 @@ The staging workflow `.github/workflows/deploy-staging.yml` can be started manua
 1. runs `npm run check`;
 2. generates a staging Wrangler config;
 3. applies D1 migrations remotely;
-4. deploys the Worker/assets;
+4. deploys the Worker/assets with D1 + KV Artifact Store;
 5. installs the trusted validator bearer token as the Worker `PDFX_VALIDATOR_TOKEN` secret;
 6. runs an Access-authenticated post-deploy smoke test for service identity, version, D1, R2, Assets, auth-bypass state, and trusted-validator configuration;
 7. uploads `staging-acceptance.json` as a GitHub Actions artifact.
@@ -91,8 +93,9 @@ Do not promote staging until these gates pass:
 - Access enforced;
 - four-eyes approval verified with two identities;
 - Staging Readiness Center = `STAGING_READY`;
-- R2 deep probe passed within 24 hours;
-- R2 export hash verified;
+- Artifact Store deep probe passed within 24 hours;
+- Artifact hash verified;
+- Production Artifact Store is R2;
 - backup/rollback procedure exercised;
 - barcode business symbology confirmed;
 - font embedding/outlining gate closed;
@@ -132,3 +135,13 @@ This is not sufficient by itself to enable PDF/X-4 Production. Independent PitSt
 See:
 
 `docs/PRODUCTION_PROMOTION_POLICY.md`
+
+
+### Staging storage policy
+
+```text
+STAGING    = Workers + D1 + KV
+PRODUCTION = Workers + D1 + R2
+```
+
+KV does not satisfy the Production Artifact Store gate. Production PDF and Production Bundle endpoints reject KV-backed environments server-side.
