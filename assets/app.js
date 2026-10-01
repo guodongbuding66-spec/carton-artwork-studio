@@ -56,6 +56,8 @@
     referenceRecords: [],
     productionPolicies: [],
     productionReadiness: { ready:false, gates:[] },
+    productionQualification: null,
+    productionQualificationBusy: false,
     remoteRevisions: [],
     compareFrom: null,
     compareTo: null,
@@ -1095,8 +1097,43 @@
 
   function renderPreflight(){
     const groups=checks(),s=summary();
+    const q=state.productionQualification;
+    const qReport=q?.qualification||null;
+    const serverGates=q?.gates||[];
+    const serverCard=state.remoteArtworkId?`
+      <section class="pf-group server-qualification">
+        <div class="pf-group-title" style="display:flex;align-items:center;gap:6px">
+          Server Production Qualification
+          <span class="spacer"></span>
+          ${q?`<span class="badge ${qReport?.ok?"green":"red"}">${qReport?.ok?"ARTWORK QUALIFIED":"ARTWORK BLOCKED"}</span>`:""}
+        </div>
+        <div style="padding:8px 10px;border-bottom:1px solid #edf1f4">
+          <button class="btn small" style="width:100%" data-action="server-production-qualification" ${state.productionQualificationBusy?"disabled":""}>
+            ${state.productionQualificationBusy?"Checking server…":"Refresh Server Qualification"}
+          </button>
+        </div>
+        ${q?`
+          <div class="pf-item">
+            <i class="pf-dot ${q.finalRenderReady?"pass":"warning"}"></i>
+            <div>
+              <div class="pf-title">Final Render ${q.finalRenderReady?"READY":"NOT READY"}</div>
+              <div class="pf-detail">Renderer ${esc(q.rendererVersion||"—")} · Revision ${esc(q.revision||"—")}</div>
+            </div>
+          </div>
+          ${serverGates.map(g=>`<div class="pf-item">
+            <i class="pf-dot ${g.ok?"pass":"error"}"></i>
+            <div><div class="pf-title">${esc(g.label)}</div><div class="pf-detail">${esc(g.detail)}</div></div>
+          </div>`).join("")}
+          ${(qReport?.customElements?.items||[]).filter(x=>!x.qualified).map(x=>`<div class="pf-item">
+            <i class="pf-dot error"></i>
+            <div><div class="pf-title">${esc(x.name||x.type)} <span class="badge red">SERVER BLOCK</span></div><div class="pf-detail">${esc(x.reason||x.errorCode||"Not production qualified")}</div></div>
+          </div>`).join("")}
+        `:'<div class="pf-item"><div><div class="pf-title">Not checked yet</div><div class="pf-detail">Run Server Qualification after synchronizing the Artwork.</div></div></div>'}
+      </section>
+    `:`<section class="pf-group"><div class="pf-group-title">Server Production Qualification</div><div class="pf-item"><div><div class="pf-title">Cloud Artwork required</div><div class="pf-detail">保存/同步到 D1 后可运行服务器权威资格检查。</div></div></div></section>`;
     return `<div class="preflight-summary"><div class="pf-stat"><div class="pf-num" style="color:#bc2f3b">${s.error}</div><div class="pf-label">Errors</div></div><div class="pf-stat"><div class="pf-num" style="color:#a86b00">${s.warning}</div><div class="pf-label">Warnings</div></div><div class="pf-stat"><div class="pf-num" style="color:#16835d">${s.pass}</div><div class="pf-label">Passed</div></div></div>
       <div style="padding:10px;border-bottom:1px solid #e8edf2"><button class="btn primary" style="width:100%" data-action="preflight" ${state.pfBusy?"disabled":""}>${state.pfBusy?"Checking…":"Run Preflight"}</button></div>
+      ${serverCard}
       ${Object.entries(groups).map(([name,items])=>`<section class="pf-group"><div class="pf-group-title">${name}</div>${items.map(i=>`<div class="pf-item"><i class="pf-dot ${i.status}"></i><div><div class="pf-title">${esc(i.title)} ${i.blocking&&i.status==="error"?'<span class="badge red">BLOCKING</span>':""}</div><div class="pf-detail">${esc(i.detail)}</div></div></div>`).join("")}</section>`).join("")}`;
   }
 
@@ -2632,6 +2669,7 @@
     if(action==="refresh-dashboard") return loadRemoteArtworks();
     if(action==="refresh-audit") return loadAudit();
     if(action==="refresh-system-readiness") return loadSystemReadiness();
+    if(action==="server-production-qualification") return loadProductionQualification();
     if(action==="run-readiness-probe") return runSystemReadinessProbe();
     if(action==="refresh-promotion-evidence") return loadPromotionEvidence();
     if(action==="upload-promotion-evidence") return uploadPromotionEvidence();
@@ -2942,6 +2980,29 @@
     }catch(e){toast(e.message||String(e),"error");}
   }
 
+  async function loadProductionQualification(renderAfter=true,{silent=false}={}){
+    if(!state.apiOnline||!state.identity||!state.remoteArtworkId){
+      state.productionQualification=null;
+      state.productionQualificationBusy=false;
+      if(renderAfter) render();
+      return null;
+    }
+    state.productionQualificationBusy=true;
+    if(renderAfter) render();
+    try{
+      const response=await api.productionQualification(state.remoteArtworkId);
+      state.productionQualification=response.data||null;
+      return state.productionQualification;
+    }catch(e){
+      state.productionQualification=null;
+      if(!silent) toast("Server Production Qualification failed: "+(e.message||e),"error");
+      return null;
+    }finally{
+      state.productionQualificationBusy=false;
+      if(renderAfter) render();
+    }
+  }
+
   async function loadProductionReadiness(renderAfter=true){
     if(!state.apiOnline||!state.identity){
       state.productionPolicies=[];
@@ -3109,6 +3170,7 @@
       state.page="artwork";
       state.tab="artwork";
       await loadComments();
+      await loadProductionQualification(false,{silent:true});
       render();
     }catch(e){toast(e.message||String(e),"error");}
   }
@@ -3447,6 +3509,7 @@
     state.apiBusy=true;render();
     try{
       const remote=await ensureRemoteArtwork();
+      if(state.remoteArtworkId) await loadProductionQualification(false,{silent:true});
       toast(remote?"草稿已同步到 D1":"本地草稿已保存","success");
     }catch(e){
       toast("云端同步失败，本地草稿已保留："+(e.message||String(e)),"error");
@@ -3473,6 +3536,7 @@
       if(cloudArtworkWritable()){
         if(!state.remoteArtworkId) await ensureRemoteArtwork();
         await persistPreflight();
+        await loadProductionQualification(false,{silent:true});
       }
       await new Promise(r=>setTimeout(r,180));
       const s=summary();
