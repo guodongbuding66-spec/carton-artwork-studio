@@ -88,4 +88,11 @@ assert.match(app,/ITF-14 Review Profile/);
 assert.match(app,/GS1-128 Logistics Review Profile/);
 assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*persistLocalDraft\(\);/);
 
+assert.ok(app.includes("function barcodeModelForElement(element"));
+assert.ok(app.includes("function barcodePhysicalSize(element"));
+assert.ok(app.includes("function syncBarcodeElementSize(element"));
+assert.ok(app.includes('selected.type==="barcode"?"readonly":""'));
+assert.ok(app.includes('e.type!=="barcode"'));
+assert.ok(app.includes("no fit-to-box scaling"));
+
 console.log("Local workspace usability regression tests passed.");
