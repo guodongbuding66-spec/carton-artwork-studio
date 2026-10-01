@@ -524,13 +524,28 @@
     }
     if(type==="barcode") return {qualified:true,mode:"VECTOR_BARCODE"};
     if(type==="qr-generated") return {qualified:true,mode:"VECTOR_QR"};
-    return {
-      qualified:false,
-      mode:"BLOCKED",
-      reason:type==="image"||type==="qr-image"||type==="symbol-image"
-        ? "UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED"
-        : "CUSTOM_ELEMENT_TYPE_NOT_PRODUCTION_QUALIFIED"
-    };
+    if(type==="image"){
+      const sourceMime=String(element?.sourceMimeType||element?.mimeType||"").toLowerCase();
+      const vector=Boolean(element?.vectorDataUrl)&&sourceMime==="image/svg+xml";
+      if(vector){
+        return {qualified:true,mode:"CONTROLLED_K_ONLY_SVG",requiresServerVectorValidation:true};
+      }
+      const dpi=effectiveImageDpi(element);
+      if(!dpi.isVector&&Number(dpi.minDpi||0)<150){
+        return {qualified:false,mode:"BLOCKED",reason:"RASTER_GRAPHIC_BELOW_MINIMUM_PPI"};
+      }
+      if(!dpi.isVector&&Number(dpi.minDpi||0)<300){
+        return {qualified:false,mode:"BLOCKED",reason:"RASTER_GRAPHIC_BELOW_PRODUCTION_PPI"};
+      }
+      return {qualified:false,mode:"BLOCKED",reason:"RASTER_GRAPHIC_COLOR_PIPELINE_NOT_QUALIFIED"};
+    }
+    if(type==="qr-image"){
+      return {qualified:false,mode:"BLOCKED",reason:"UPLOADED_QR_NOT_CONTROLLED_PRODUCTION_ASSET"};
+    }
+    if(type==="symbol-image"){
+      return {qualified:false,mode:"BLOCKED",reason:"UPLOADED_SYMBOL_NOT_APPROVED_MASTER"};
+    }
+    return {qualified:false,mode:"BLOCKED",reason:"CUSTOM_ELEMENT_TYPE_NOT_PRODUCTION_QUALIFIED"};
   }
 
   function check(id, title, status, detail, category, blocking = false) {
@@ -927,8 +942,8 @@
           assetChecks.push(check(
             `asset-vector-source-${element.id||name}`,
             `${name} vector source preserved`,
-            "warning",
-            "Sanitized SVG source is preserved. Browser preview uses the vector source; current Proof PDF uses a raster fallback. Uploaded graphics remain blocked from authoritative Production until the vector asset path is qualified.",
+            "pass",
+            "SVG source is preserved as vector data. Authoritative Production re-validates a restricted K-only SVG subset server-side before converting it to native PDF vector operators.",
             "Assets"
           ));
         }else{

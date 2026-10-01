@@ -2,6 +2,7 @@ import "../assets/vendor/qrcode-generator.js";
 import "../assets/domain.js";
 import "../assets/codes.js";
 import "../assets/pdf.js";
+import { parseControlledSvgDataUrl } from "./controlled-svg.js";
 
 const D=globalThis.CartonDomain;
 const C=globalThis.CartonCodes;
@@ -77,6 +78,22 @@ export function prepareProductionCustomElements(artwork,factories=[]){
         throw error;
       }
       return {...element,text,renderLines:layout.lines,renderLineWidthsMm:layout.widthsMm};
+    }
+    if(element.type==="image"&&String(element.sourceMimeType||element.mimeType||"").toLowerCase()==="image/svg+xml"){
+      try{
+        const vectorModel=parseControlledSvgDataUrl(element.vectorDataUrl);
+        return {...element,vectorModel};
+      }catch(e){
+        const error=new Error("PRODUCTION_SVG_NOT_QUALIFIED");
+        error.code="PRODUCTION_SVG_NOT_QUALIFIED";
+        error.detail={
+          id:element.id||"",
+          name:element.name||"",
+          parserCode:String(e?.code||e?.message||"SVG_PARSE_FAILED"),
+          parserDetail:e?.detail??null
+        };
+        throw error;
+      }
     }
     if(element.type==="barcode"){
       const payload=D.resolvedElementPayload(element,artwork,factories);
@@ -179,7 +196,7 @@ export function qualifyProductionArtwork({snapshot,metadata={}}){
     ok:unqualified.length===0&&preflightSummary.blocking===0,
     report:{
       ok:unqualified.length===0&&preflightSummary.blocking===0,
-      rendererVersion:"pdfx4-embedded-truetype-2.1.0",
+      rendererVersion:"pdfx4-embedded-truetype-2.2.0",
       revision:String(productionArtwork.revision||""),
       customElements:{
         visible:visible.length,
@@ -216,7 +233,7 @@ export function renderEmbeddedArtworkPdf({
   const unqualified=qualification.elementQualifications.filter(x=>!x.qualified);
   if(unqualified.length){
     const customPolicyFailures=unqualified.filter(x=>
-      ["UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED","CUSTOM_ELEMENT_TYPE_NOT_PRODUCTION_QUALIFIED","CUSTOM_BOLD_FONT_NOT_QUALIFIED"].includes(x.reason)
+      ["UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED","CUSTOM_ELEMENT_TYPE_NOT_PRODUCTION_QUALIFIED","CUSTOM_BOLD_FONT_NOT_QUALIFIED","PRODUCTION_SVG_NOT_QUALIFIED"].includes(x.reason)
     );
     const first=unqualified[0];
     const code=customPolicyFailures.length
