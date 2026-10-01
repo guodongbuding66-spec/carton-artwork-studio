@@ -99,6 +99,45 @@ assert.ok(app.includes('selected.type==="barcode"?"readonly":""'));
 assert.ok(app.includes('e.type!=="barcode"'));
 assert.ok(app.includes("no fit-to-box scaling"));
 
+
+{
+  const workerSource=fs.readFileSync("worker/index.js","utf8");
+  const authSource=fs.readFileSync("worker/auth.js","utf8");
+  const apiSource=fs.readFileSync("assets/api.js","utf8");
+  const cssSource=fs.readFileSync("assets/app.css","utf8");
+
+  assert.match(app,/reviewerJobs:\s*\[\]/);
+  assert.match(app,/reviewerQueue:\s*\[\]/);
+  assert.match(app,/\["reviewer",\s*"◎",\s*"审核中心",\s*"Reviewer"\]/);
+  assert.match(app,/function renderReviewer\(\)/);
+  assert.match(app,/async function loadReviewerJobs\(renderAfter=true\)/);
+  assert.match(app,/async function loadReviewerQueue\(jobId=state\.reviewerJobId,renderAfter=true\)/);
+  assert.match(app,/async function loadReviewerDetail\(artworkId,renderAfter=true\)/);
+  assert.match(app,/async function reviewerDecision\(decision\)/);
+  assert.match(app,/data-action="reviewer-approve"/);
+  assert.match(app,/data-action="reviewer-reject"/);
+  assert.match(app,/dielineSvg\("proof",model\.artwork/);
+  assert.match(app,/api\.compareArtwork\(artworkId,selected\.previousRevision,revision\)/);
+  assert.match(app,/Reject 必须填写明确的退回原因/);
+  assert.match(app,/selected\.fourEyesBlocked/);
+  assert.doesNotMatch(app,/data-action="reviewer-approve-all"/);
+  assert.doesNotMatch(app,/bulkApproveReviewer/);
+
+  assert.match(apiSource,/async reviewerQueue\(jobId\)/);
+  assert.match(apiSource,/reviewer-queue/);
+  assert.match(authSource,/reviewer-queue\$\/\.test\(p\).*return "REVIEW"/);
+  assert.match(workerSource,/importReviewerQueueMatch/);
+  assert.match(workerSource,/a\.status='IN_REVIEW'/);
+  assert.match(workerSource,/fourEyesBlocked/);
+  assert.match(workerSource,/unresolvedBlockingComments/);
+  assert.match(workerSource,/canApprove:preflightReady&&unresolvedBlockingComments===0&&!fourEyesBlocked/);
+
+  assert.match(cssSource,/\.reviewer-layout\{/);
+  assert.match(cssSource,/\.reviewer-preview\{/);
+  assert.match(cssSource,/\.reviewer-gates\{/);
+}
+
+
 console.log("Local workspace usability regression tests passed.");
 
 

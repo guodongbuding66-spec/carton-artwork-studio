@@ -358,6 +358,9 @@
       async importJob(jobId) {
         return request(`/api/import-jobs/${encodeURIComponent(jobId)}`);
       },
+      async reviewerQueue(jobId) {
+        return request(`/api/import-jobs/${encodeURIComponent(jobId)}/reviewer-queue`);
+      },
       async createImportJob(job) {
         return request("/api/import-jobs", { method:"POST", body:JSON.stringify(job) });
       },
