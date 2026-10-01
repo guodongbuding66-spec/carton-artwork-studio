@@ -2229,7 +2229,9 @@ export default {
         if(!job)return err(404,"NOT_FOUND","Import job not found.");
         const {results:rows}=await env.DB.prepare(`
           SELECT id,row_no AS rowNo,sku,status,canonical_data_json AS canonicalDataJson,
-                 issues_json AS issuesJson,created_at AS createdAt
+                 issues_json AS issuesJson,artwork_id AS artworkId,
+                 draft_created_by AS draftCreatedBy,draft_created_at AS draftCreatedAt,
+                 created_at AS createdAt
           FROM import_rows WHERE job_id=? ORDER BY row_no LIMIT 1000
         `).bind(id).all();
         return json({data:{job,rows}});
@@ -2261,6 +2263,135 @@ export default {
           UPDATE import_jobs SET total_rows=?,passed_rows=?,failed_rows=?,status='REVIEWED',updated_at=CURRENT_TIMESTAMP WHERE id=?
         `).bind(Number(counts?.total||0),Number(counts?.passed||0),Number(counts?.failed||0),jobId).run();
         return json({data:{jobId,total:Number(counts?.total||0),passed:Number(counts?.passed||0),failed:Number(counts?.failed||0)}},{status:201});
+      }
+
+      const importDraftsMatch=/^\/api\/import-jobs\/([^/]+)\/create-drafts$/.exec(url.pathname);
+      if(request.method==="POST"&&importDraftsMatch){
+        if(!can(identity,"BATCH_WRITE")){
+          return err(403,"BATCH_WRITE_REQUIRED","Batch Write permission is also required to create drafts from an Import Job.");
+        }
+        const jobId=importDraftsMatch[1];
+        const job=await env.DB.prepare(
+          "SELECT id,status,source_name AS sourceName FROM import_jobs WHERE id=?"
+        ).bind(jobId).first();
+        if(!job)return err(404,"NOT_FOUND","Import job not found.");
+
+        const {results:sourceRows}=await env.DB.prepare(`
+          SELECT r.id,r.row_no AS rowNo,r.sku,r.status,r.canonical_data_json AS canonicalDataJson,
+                 r.artwork_id AS artworkId,a.id AS existingArtworkId
+          FROM import_rows r
+          LEFT JOIN artworks a ON a.id=r.artwork_id
+          WHERE r.job_id=? AND r.status='PASS'
+          ORDER BY r.row_no
+          LIMIT 500
+        `).bind(jobId).all();
+
+        const created=[],skipped=[],failed=[];
+        for(const row of sourceRows||[]){
+          if(row.artworkId&&row.existingArtworkId){
+            skipped.push({rowNo:row.rowNo,sku:row.sku,artworkId:row.artworkId,reason:"ALREADY_CREATED"});
+            continue;
+          }
+          if(row.artworkId&&!row.existingArtworkId){
+            await env.DB.prepare(`
+              UPDATE import_rows
+              SET artwork_id=NULL,draft_created_by=NULL,draft_created_at=NULL
+              WHERE id=? AND artwork_id=?
+            `).bind(row.id,row.artworkId).run();
+          }
+
+          const artworkId=crypto.randomUUID();
+          const reserve=await env.DB.prepare(`
+            UPDATE import_rows
+            SET artwork_id=?,draft_created_by=?,draft_created_at=CURRENT_TIMESTAMP
+            WHERE id=? AND job_id=? AND status='PASS' AND artwork_id IS NULL
+          `).bind(artworkId,identity.email,row.id,jobId).run();
+          if(Number(reserve?.meta?.changes||0)!==1){
+            const linked=await env.DB.prepare(
+              "SELECT artwork_id AS artworkId FROM import_rows WHERE id=?"
+            ).bind(row.id).first();
+            skipped.push({rowNo:row.rowNo,sku:row.sku,artworkId:linked?.artworkId||null,reason:"CONCURRENTLY_CLAIMED"});
+            continue;
+          }
+
+          try{
+            let snapshot={};
+            try{snapshot=JSON.parse(row.canonicalDataJson||"{}");}
+            catch{throw new Error("INVALID_CANONICAL_DATA_JSON");}
+            const sku=String(snapshot?.product?.sku||row.sku||"").trim();
+            const contractNo=String(snapshot?.order?.contractNo||"").trim();
+            const factoryId=snapshot?.factory?.id||null;
+            const packageCount=Math.max(1,Number(snapshot?.package?.total||1));
+            const currentPackage=Math.max(1,Number(snapshot?.package?.index||1));
+            const revision=String(snapshot?.artwork?.revision||"R01");
+            const artworkNo=`ART-BATCH-${jobId.slice(0,8).toUpperCase()}-${String(row.rowNo).padStart(4,"0")}`;
+            const revisionId=crypto.randomUUID();
+
+            await env.DB.batch([
+              env.DB.prepare(`
+                INSERT INTO artworks(
+                  id,artwork_no,sku,contract_no,template_id,factory_id,status,
+                  package_count,current_package,current_revision,canonical_data_json,
+                  created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,'DRAFT',?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+              `).bind(
+                artworkId,artworkNo,sku,contractNo,"tpl-us-side-seal",factoryId,
+                packageCount,currentPackage,revision,JSON.stringify(snapshot)
+              ),
+              env.DB.prepare(`
+                INSERT INTO artwork_revisions(
+                  id,artwork_id,revision,status,data_snapshot_json,template_version_id,
+                  preflight_profile_version,created_by,created_at
+                ) VALUES(?,?,?,'DRAFT',?,NULL,?,?,CURRENT_TIMESTAMP)
+              `).bind(
+                revisionId,artworkId,revision,JSON.stringify(snapshot),
+                "US_SIDE_SEAL_K_ONLY_V1@1",identity.email
+              )
+            ]);
+
+            await audit(env,identity,"ARTWORK",artworkId,"CREATE_FROM_BATCH",{
+              newValue:{artworkNo,sku,contractNo,revision,importJobId:jobId,rowNo:row.rowNo},
+              reason:"Created Draft from passed Import Job row"
+            });
+            created.push({rowNo:row.rowNo,sku,artworkId,artworkNo,revision});
+          }catch(e){
+            await env.DB.prepare(`
+              UPDATE import_rows
+              SET artwork_id=NULL,draft_created_by=NULL,draft_created_at=NULL
+              WHERE id=? AND artwork_id=?
+            `).bind(row.id,artworkId).run();
+            failed.push({rowNo:row.rowNo,sku:row.sku,error:e?.message||String(e)});
+          }
+        }
+
+        const counts=await env.DB.prepare(`
+          SELECT
+            SUM(CASE WHEN status='PASS' THEN 1 ELSE 0 END) AS passed,
+            SUM(CASE WHEN status='PASS' AND artwork_id IS NOT NULL THEN 1 ELSE 0 END) AS linked
+          FROM import_rows WHERE job_id=?
+        `).bind(jobId).first();
+        const allPassedLinked=Number(counts?.passed||0)>0&&Number(counts?.passed||0)===Number(counts?.linked||0);
+        if(allPassedLinked){
+          await env.DB.prepare(
+            "UPDATE import_jobs SET status='DRAFTS_CREATED',updated_at=CURRENT_TIMESTAMP WHERE id=?"
+          ).bind(jobId).run();
+        }
+
+        await audit(env,identity,"IMPORT_JOB",jobId,"CREATE_DRAFTS",{
+          newValue:{created:created.length,skipped:skipped.length,failed:failed.length,allPassedLinked},
+          reason:"Promoted passed Batch rows to independent Artwork Drafts"
+        });
+        return json({data:{
+          jobId,
+          created,
+          skipped,
+          failed,
+          counts:{
+            passed:Number(counts?.passed||0),
+            linked:Number(counts?.linked||0)
+          },
+          status:allPassedLinked?"DRAFTS_CREATED":"PARTIAL"
+        }},{status:failed.length?207:201});
       }
 
       const exportMatch=/^\/api\/artworks\/([^/]+)\/exports$/.exec(url.pathname);

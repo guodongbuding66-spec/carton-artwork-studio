@@ -360,6 +360,11 @@
           method:"POST", body:JSON.stringify({ rows })
         });
       },
+      async createImportDrafts(jobId) {
+        return request(`/api/import-jobs/${encodeURIComponent(jobId)}/create-drafts`, {
+          method:"POST", body:"{}"
+        });
+      },
       async uploadExport(artworkId, blob, meta = {}) {
         const q = new URLSearchParams();
         q.set("kind", meta.kind || "PRODUCTION_BUNDLE");

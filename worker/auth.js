@@ -91,6 +91,8 @@ export function permissionForRequest(method, pathname) {
 
   if (/^\/api\/artworks\/[^/]+\/exports$/.test(p)) return "EXPORT_PRODUCTION";
 
+  if (/^\/api\/import-jobs\/[^/]+\/create-drafts$/.test(p)) return "ARTWORK_WRITE";
+
   if (p === "/api/mapping-profiles" || p === "/api/import-jobs" || /^\/api\/import-jobs\/[^/]+\/rows$/.test(p)) {
     return "BATCH_WRITE";
   }

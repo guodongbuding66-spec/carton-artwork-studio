@@ -59,7 +59,19 @@ const missing=required.filter((name)=>!names.has(name));
 if(missing.length) throw new Error("Missing D1 tables after migrations: "+missing.join(", "));
 
 const migrations=rows(query("SELECT name FROM d1_migrations ORDER BY id;"));
-if(migrations.at(-1)?.name!=="0009_pdfx_promotion_evidence.sql") throw new Error(`Latest migration must be 0009_pdfx_promotion_evidence.sql, got ${migrations.at(-1)?.name||"none"}.`);
+if(migrations.at(-1)?.name!=="0010_batch_draft_links.sql") throw new Error(`Latest migration must be 0010_batch_draft_links.sql, got ${migrations.at(-1)?.name||"none"}.`);
+
+const importRowColumns=rows(query("PRAGMA table_info(import_rows);"));
+const importRowColumnNames=new Set(importRowColumns.map((x)=>x.name));
+const requiredImportRowColumns=["artwork_id","draft_created_by","draft_created_at"];
+const missingImportRowColumns=requiredImportRowColumns.filter((name)=>!importRowColumnNames.has(name));
+if(missingImportRowColumns.length) throw new Error("Missing Batch draft-link columns: "+missingImportRowColumns.join(", "));
+
+const importRowIndexes=rows(query("PRAGMA index_list(import_rows);"));
+const importRowIndexNames=new Set(importRowIndexes.map((x)=>x.name));
+for(const name of ["idx_import_rows_artwork_id","idx_import_rows_job_status_artwork"]){
+  if(!importRowIndexNames.has(name)) throw new Error(`Missing Batch draft-link index: ${name}`);
+}
 
 const policies=rows(query("SELECT code,status FROM production_policies ORDER BY code;"));
 if(policies.length!==4) throw new Error(`Expected 4 production policy seeds, got ${policies.length}.`);
