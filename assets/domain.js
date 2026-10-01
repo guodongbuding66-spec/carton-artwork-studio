@@ -134,6 +134,12 @@
           bindingKey:String(e.bindingKey||""),
           symbology:String(e.symbology||""),
           humanReadable:e.humanReadable!==false,
+          moduleMm:Number(e.moduleMm||0),
+          barHeightMm:Number(e.barHeightMm||0),
+          quietModules:Number(e.quietModules||0),
+          wideRatio:Number(e.wideRatio||0),
+          bearerBars:e.bearerBars!==false,
+          bearerBarThicknessMm:Number(e.bearerBarThicknessMm||0),
           symbolKey:String(e.symbolKey||""),
           payload:e.payload||"",
           ecc:e.ecc||"M",
@@ -496,6 +502,84 @@
           "Assets",
           true
         ));
+
+        const sym=String(element.symbology||"").toUpperCase();
+        if(sym==="ITF14"){
+          const x=Number(element.moduleMm||1.016);
+          const height=Number(element.barHeightMm||32);
+          const quiet=Number(element.quietModules||10);
+          const ratio=Number(element.wideRatio||2.5);
+          const bearer=element.bearerBars!==false;
+          assetChecks.push(check(
+            `barcode-itf-x-${element.id||name}`,
+            `${name} ITF-14 X-dimension`,
+            x>0?"pass":"error",
+            `${round(x,3)} mm narrow element. Application-specific X-dimension; general-distribution review target is 1.016 mm.`,
+            "Assets",
+            x<=0
+          ));
+          assetChecks.push(check(
+            `barcode-itf-height-${element.id||name}`,
+            `${name} ITF-14 bar height`,
+            height>=32?"pass":"error",
+            `${round(height,2)} mm; review minimum is 32 mm.`,
+            "Assets",
+            height<32
+          ));
+          assetChecks.push(check(
+            `barcode-itf-ratio-${element.id||name}`,
+            `${name} ITF-14 wide:narrow ratio`,
+            ratio>=2.25&&ratio<=3?"pass":"error",
+            `${round(ratio,2)}:1; GS1 range is 2.25:1–3.0:1.`,
+            "Assets",
+            !(ratio>=2.25&&ratio<=3)
+          ));
+          assetChecks.push(check(
+            `barcode-itf-quiet-${element.id||name}`,
+            `${name} ITF-14 Quiet Zone`,
+            quiet>=10?"pass":"error",
+            `${round(quiet,1)}X on each side; minimum is 10X.`,
+            "Assets",
+            quiet<10
+          ));
+          assetChecks.push(check(
+            `barcode-itf-bearer-${element.id||name}`,
+            `${name} ITF-14 bearer bars`,
+            bearer?"pass":"warning",
+            bearer?"Top/bottom bearer bars enabled.":"Bearer bars disabled; print reliability may be reduced.",
+            "Assets"
+          ));
+        }
+        if(sym==="GS1_128"){
+          const x=Number(element.moduleMm||0.495);
+          const height=Number(element.barHeightMm||31.75);
+          const quiet=Number(element.quietModules||10);
+          const xOk=x>=0.495&&x<=0.94;
+          assetChecks.push(check(
+            `barcode-gs1128-x-${element.id||name}`,
+            `${name} GS1-128 X-dimension`,
+            xOk?"pass":"error",
+            `${round(x,3)} mm; logistics review profile range is 0.495–0.940 mm.`,
+            "Assets",
+            !xOk
+          ));
+          assetChecks.push(check(
+            `barcode-gs1128-height-${element.id||name}`,
+            `${name} GS1-128 bar height`,
+            height>=31.75?"pass":"error",
+            `${round(height,2)} mm; logistics review profile minimum is 31.75 mm.`,
+            "Assets",
+            height<31.75
+          ));
+          assetChecks.push(check(
+            `barcode-gs1128-quiet-${element.id||name}`,
+            `${name} GS1-128 Quiet Zone`,
+            quiet>=10?"pass":"error",
+            `${round(quiet,1)}X on each side; review minimum is 10X.`,
+            "Assets",
+            quiet<10
+          ));
+        }
       }
       if(element.type==="symbol"){
         assetChecks.push(check(
@@ -664,6 +748,12 @@
         bindingKey:String(e.bindingKey||""),
         symbology:String(e.symbology||""),
         humanReadable:e.humanReadable!==false,
+        moduleMm:Number(e.moduleMm||0),
+        barHeightMm:Number(e.barHeightMm||0),
+        quietModules:Number(e.quietModules||0),
+        wideRatio:Number(e.wideRatio||0),
+        bearerBars:e.bearerBars!==false,
+        bearerBarThicknessMm:Number(e.bearerBarThicknessMm||0),
         symbolKey:String(e.symbolKey||""),
         payload:String(e.payload||""),
         ecc:["L","M","Q","H"].includes(String(e.ecc||"M").toUpperCase())?String(e.ecc||"M").toUpperCase():"M",

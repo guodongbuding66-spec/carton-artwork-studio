@@ -51,7 +51,13 @@
     const wideRatio=Number(options.wideRatio??2.5);
     const heightMm=Number(options.heightMm??32);
     const quietModules=Number(options.quietModules??10);
+    const bearerBars=options.bearerBars!==false;
+    const bearerBarThicknessMm=Number(options.bearerBarThicknessMm??Math.max(moduleMm*2,2.032));
     if(!Number.isFinite(moduleMm)||moduleMm<=0) throw new Error("ITF-14 module width must be positive.");
+    if(!Number.isFinite(wideRatio)||wideRatio<2.25||wideRatio>3) throw new Error("ITF-14 wide:narrow ratio must be between 2.25:1 and 3.0:1.");
+    if(!Number.isFinite(heightMm)||heightMm<=0) throw new Error("ITF-14 bar height must be positive.");
+    if(!Number.isFinite(quietModules)||quietModules<10) throw new Error("ITF-14 quiet zones must be at least 10X.");
+    if(bearerBars&&(!Number.isFinite(bearerBarThicknessMm)||bearerBarThicknessMm<moduleMm*2)) throw new Error("ITF-14 top/bottom bearer bars must be at least 2X for the non-plate review profile.");
     const widthFor=(kind)=>kind==="w"?moduleMm*wideRatio:moduleMm;
     let x=quietModules*moduleMm;
     const bars=[];
@@ -83,6 +89,12 @@
       quietModules,
       moduleMm,
       wideRatio,
+      bearerBars,
+      bearerBarThicknessMm,
+      bearerRects:bearerBars?[
+        {x:0,y:-bearerBarThicknessMm,w:widthMm,h:bearerBarThicknessMm},
+        {x:0,y:heightMm,w:widthMm,h:bearerBarThicknessMm}
+      ]:[],
       checkDigit:payload.at(-1)
     };
   }
@@ -92,14 +104,19 @@
     const hri=options.hri!==false;
     const fontSizeMm=Number(options.fontSizeMm??4);
     const totalH=model.heightMm+(hri?fontSizeMm*1.8:0);
-    const bars=model.bars.map((b)=>`<rect x="${b.x.toFixed(3)}" y="0" width="${b.w.toFixed(3)}" height="${b.h.toFixed(3)}" fill="#000"/>`).join("");
+    const topOffset=model.bearerBars?model.bearerBarThicknessMm:0;
+    const bars=model.bars.map((b)=>`<rect x="${b.x.toFixed(3)}" y="${topOffset.toFixed(3)}" width="${b.w.toFixed(3)}" height="${b.h.toFixed(3)}" fill="#000"/>`).join("");
+    const bearers=model.bearerBars
+      ? `<rect x="0" y="0" width="${model.widthMm}" height="${model.bearerBarThicknessMm}" fill="#000"/><rect x="0" y="${(topOffset+model.heightMm).toFixed(3)}" width="${model.widthMm}" height="${model.bearerBarThicknessMm}" fill="#000"/>`
+      : "";
+    const symbolH=model.heightMm+topOffset*2;
     const hriText=hri
-      ? `<text x="${(model.widthMm/2).toFixed(3)}" y="${(model.heightMm+fontSizeMm*1.25).toFixed(3)}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${fontSizeMm}mm" fill="#000">${model.payload}</text>`
+      ? `<text x="${(model.widthMm/2).toFixed(3)}" y="${(symbolH+fontSizeMm*1.25).toFixed(3)}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${fontSizeMm}mm" fill="#000">${model.payload}</text>`
       : "";
     return {
       ...model,
-      totalHeightMm:totalH,
-      svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${model.widthMm} ${totalH}" width="${model.widthMm}mm" height="${totalH}mm">${bars}${hriText}</svg>`
+      totalHeightMm:symbolH+(hri?fontSizeMm*1.8:0),
+      svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${model.widthMm} ${symbolH+(hri?fontSizeMm*1.8:0)}" width="${model.widthMm}mm" height="${symbolH+(hri?fontSizeMm*1.8:0)}mm">${bearers}${bars}${hriText}</svg>`
     };
   }
 
@@ -204,9 +221,17 @@
 
   function gs1_128Bars(text, options={}) {
     const model=gs1Code128Values(text);
+    const resolved={
+      moduleMm:Number(options.moduleMm??0.495),
+      heightMm:Number(options.heightMm??31.75),
+      quietModules:Number(options.quietModules??10)
+    };
+    if(resolved.moduleMm<0.495||resolved.moduleMm>0.94) throw new Error("GS1-128 logistics profile X-dimension must be 0.495–0.940 mm.");
+    if(resolved.heightMm<31.75) throw new Error("GS1-128 logistics profile bar height must be at least 31.75 mm.");
+    if(resolved.quietModules<10) throw new Error("GS1-128 quiet zones must be at least 10X.");
     return {
       symbology:"GS1-128",
-      ...code128BarsFromValues(model.values,options),
+      ...code128BarsFromValues(model.values,resolved),
       values:model.values,
       elements:model.elements,
       payload:model.hri,

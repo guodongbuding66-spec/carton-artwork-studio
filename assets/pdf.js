@@ -338,17 +338,23 @@
         const hri=element.humanReadable!==false;
         const boxW=Math.max(1,Number(element.w||1)),boxH=Math.max(1,Number(element.h||1));
         const hriH=hri?Math.min(8,boxH*.22):0;
+        const bearer= model.bearerBars ? Number(model.bearerBarThicknessMm||0) : 0;
+        const physicalH=Math.max(1,Number(model.heightMm||1)+bearer*2);
         const maxW=Math.max(1,boxW-4),maxH=Math.max(1,boxH-hriH-3);
         const sx=maxW/Math.max(1,Number(model.widthMm||1));
-        const sy=maxH/Math.max(1,Number(model.heightMm||1));
+        const sy=maxH/physicalH;
         ops.push("q");
         ops.push(`${m.co.toFixed(8)} ${m.si.toFixed(8)} ${(-m.si).toFixed(8)} ${m.co.toFixed(8)} ${m.e.toFixed(3)} ${m.f.toFixed(3)} cm`);
         ops.push("0 g");
+        if(model.bearerBars&&bearer>0){
+          ops.push(rectOp(2,hriH+2,maxW,Math.max(.12,bearer*sy),true));
+          ops.push(rectOp(2,hriH+2+(bearer+Number(model.heightMm||1))*sy,maxW,Math.max(.12,bearer*sy),true));
+        }
         for(const b of model.bars){
-          ops.push(rectOp(2+Number(b.x||0)*sx,hriH+2,Math.max(.12,Number(b.w||0)*sx),Math.max(.5,Number(b.h||0)*sy),true));
+          ops.push(rectOp(2+Number(b.x||0)*sx,hriH+2+bearer*sy,Math.max(.12,Number(b.w||0)*sx),Math.max(.5,Number(b.h||0)*sy),true));
         }
         if(hri){
-          const label=String(model.payload||element.payload||"");
+          const label=String(model.hri||model.payload||element.payload||"");
           ops.push(writeText(2,2,7,label,0));
         }
         ops.push("Q");
