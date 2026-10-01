@@ -14,6 +14,17 @@ assert.equal(normalizePromotionEvidenceType("secondary_validation"),"SECONDARY_V
 assert.equal(normalizePromotionEvidenceType("unknown"),"");
 assert.equal(sanitizeEvidenceFilename("../PitStop report 01.pdf"),".._PitStop_report_01.pdf");
 
+const stale=validatePromotionEvidence("SECONDARY_VALIDATION",{
+  result:"PASS",
+  policyVersion:"1.9.0",
+  profile:"PDF/X-4",
+  artifactSha256:sha,
+  validator:"Enfocus PitStop Pro",
+  version:"26.07"
+},evidenceSha,now);
+assert.equal(stale.ok,false);
+assert.ok(stale.errors.some((x)=>/stale/i.test(x)));
+
 const secondary=validatePromotionEvidence("SECONDARY_VALIDATION",{
   result:"PASS",
   profile:"PDF/X-4",
