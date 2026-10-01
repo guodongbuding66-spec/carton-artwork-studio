@@ -96,3 +96,7 @@ button{cursor:pointer}.app{min-height:100vh;display:grid;grid-template-columns:2
 .multi-selection-tools{border:1px solid #cfdbe6;background:#f7fbff;border-radius:8px;padding:9px;margin:10px 0}
 .multi-selection-tools .align-grid{margin-top:8px}
 .element-row.active{outline:1px solid rgba(57,120,184,.18)}
+
+
+.panel-copy-tools{border:1px solid #d9e2ea;background:#fbfcfe;border-radius:8px;padding:9px;margin:10px 0}
+.panel-copy-tools .section-mini-title{margin-top:0}
