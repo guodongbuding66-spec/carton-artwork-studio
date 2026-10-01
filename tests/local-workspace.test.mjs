@@ -154,3 +154,12 @@ assert.match(app,/data-marquee-surface/);
 assert.match(app,/data-marquee-box/);
 assert.match(app,/selectionUnitIds\(item\.id\)/);
 assert.match(app,/updateSpacingOverlay\(svg\)/);
+
+
+assert.match(app,/function clampElementToBounds\(e\)[\s\S]*D\.elementVisualBounds\(e\)/);
+assert.match(app,/function smartSnapElementPosition\(e,x,y,excludeIds=\[\]\)[\s\S]*D\.elementVisualBounds/);
+assert.match(app,/function selectionBounds\(elements=selectedArtworkElements\(\)\)[\s\S]*D\.elementVisualBounds/);
+assert.match(app,/function selectionMoveLimits\(items\)[\s\S]*D\.elementVisualBounds/);
+assert.match(app,/function alignSelectedElements\(mode\)[\s\S]*D\.elementVisualBounds\(e\)/);
+assert.match(app,/function distributeSelectedElements\(axis\)[\s\S]*D\.elementVisualBounds/);
+assert.match(app,/const v=D\.elementVisualBounds\(item\);\s*const hit=v\.left<right&&v\.right>left&&v\.top<bottom&&v\.bottom>top/);
