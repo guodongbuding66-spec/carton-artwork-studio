@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import assert from "node:assert/strict";
 import { EXPECTED_LATEST_MIGRATION, buildSystemReadiness } from "../worker/system-readiness.js";
 
