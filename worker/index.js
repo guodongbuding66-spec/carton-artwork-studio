@@ -2536,27 +2536,51 @@ export default {
             continue;
           }
 
-          await env.DB.batch([
-            env.DB.prepare(`
-              UPDATE artwork_revisions
-              SET status='SUBMITTED',data_snapshot_json=?,preflight_profile_version=?,created_by=?
-              WHERE id=? AND status='DRAFT'
-            `).bind(
-              JSON.stringify(snapshot),"US_SIDE_SEAL_K_ONLY_V1@server-qualification-1",
-              identity.email,revisionRow.id
-            ),
-            env.DB.prepare(`
-              UPDATE artworks
-              SET status='IN_REVIEW',canonical_data_json=?,updated_at=CURRENT_TIMESTAMP
-              WHERE id=? AND status='DRAFT'
-            `).bind(JSON.stringify(snapshot),row.artworkId),
-            env.DB.prepare(`
-              UPDATE import_rows
-              SET batch_submit_status='SUBMITTED',batch_submitted_at=CURRENT_TIMESTAMP,
-                  batch_process_error=NULL
-              WHERE id=?
-            `).bind(row.id)
-          ]);
+          const claim=await env.DB.prepare(`
+            UPDATE artworks
+            SET status='IN_REVIEW',canonical_data_json=?,updated_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='DRAFT' AND current_revision=?
+          `).bind(JSON.stringify(snapshot),row.artworkId,row.currentRevision).run();
+          if(Number(claim?.meta?.changes||0)!==1){
+            const latest=await env.DB.prepare(
+              "SELECT status,current_revision AS currentRevision FROM artworks WHERE id=?"
+            ).bind(row.artworkId).first();
+            const reason=latest
+              ? `CONCURRENT_STATE_${String(latest.status||"UNKNOWN")}_${String(latest.currentRevision||"")}`
+              : "ARTWORK_DISAPPEARED";
+            await env.DB.prepare(`
+              UPDATE import_rows SET batch_submit_status='SKIPPED',batch_process_error=? WHERE id=?
+            `).bind(reason,row.id).run();
+            skipped.push({rowNo:row.rowNo,artworkId:row.artworkId,artworkNo:row.artworkNo,reason});
+            continue;
+          }
+
+          const revisionClaim=await env.DB.prepare(`
+            UPDATE artwork_revisions
+            SET status='SUBMITTED',data_snapshot_json=?,preflight_profile_version=?,created_by=?
+            WHERE id=? AND status='DRAFT'
+          `).bind(
+            JSON.stringify(snapshot),"US_SIDE_SEAL_K_ONLY_V1@server-qualification-1",
+            identity.email,revisionRow.id
+          ).run();
+          if(Number(revisionClaim?.meta?.changes||0)!==1){
+            await env.DB.prepare(
+              "UPDATE artworks SET status='DRAFT',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='IN_REVIEW' AND current_revision=?"
+            ).bind(row.artworkId,row.currentRevision).run();
+            const reason="REVISION_CONCURRENT_STATE";
+            await env.DB.prepare(
+              "UPDATE import_rows SET batch_submit_status='SKIPPED',batch_process_error=? WHERE id=?"
+            ).bind(reason,row.id).run();
+            skipped.push({rowNo:row.rowNo,artworkId:row.artworkId,artworkNo:row.artworkNo,reason});
+            continue;
+          }
+
+          await env.DB.prepare(`
+            UPDATE import_rows
+            SET batch_submit_status='SUBMITTED',batch_submitted_at=CURRENT_TIMESTAMP,
+                batch_process_error=NULL
+            WHERE id=?
+          `).bind(row.id).run();
           await audit(env,identity,"ARTWORK",row.artworkId,"BATCH_SUBMIT_REVIEW",{
             newValue:{revision:row.currentRevision,status:"IN_REVIEW",jobId,rowNo:row.rowNo,preflightRunId},
             reason:b.reason||"Batch server preflight passed; submitted for review"
