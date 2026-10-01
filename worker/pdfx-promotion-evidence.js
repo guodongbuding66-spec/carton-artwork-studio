@@ -68,12 +68,16 @@ export function validatePromotionEvidence(type, metadata={}, evidenceSha256="", 
   const t=normalizePromotionEvidenceType(type);
   if(!t) return {ok:false,errors:["Evidence type is invalid."],data:null};
   const data=normalizePromotionEvidence(t,metadata,evidenceSha256);
+  const policyErrors=[];
+  if(data.policyVersion!==PDFX_PRODUCTION_PROMOTION_POLICY.version){
+    policyErrors.push(`Evidence policy version ${data.policyVersion||"missing"} is stale; current policy is ${PDFX_PRODUCTION_PROMOTION_POLICY.version}.`);
+  }
   let result;
   if(t==="SECONDARY_VALIDATION") result=validateSecondaryValidatorEvidence(data);
   else if(t==="RIP_QUALIFICATION") result=validateRipQualificationEvidence(data,nowMs);
   else result=validateProductionTrialEvidence(data,nowMs);
 
-  const errors=[...(result.errors||[])];
+  const errors=[...policyErrors,...(result.errors||[])];
   if(!/^[0-9a-f]{64}$/.test(data.evidenceSha256)){
     errors.push("Evidence file SHA-256 is required and must be 64 lowercase hex characters.");
   }
