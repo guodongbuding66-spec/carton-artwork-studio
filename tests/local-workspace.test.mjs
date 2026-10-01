@@ -89,7 +89,7 @@ assert.match(app,/data-element-prop="wideRatio"/);
 assert.match(app,/data-element-bearer/);
 assert.match(app,/ITF-14 Review Profile/);
 assert.match(app,/GS1-128 Logistics Review Profile/);
-assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*refreshAutoFitTextElements\(\);\s*persistLocalDraft\(\);/);
+assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*refreshControlledShippingBlocks\(\);\s*refreshAutoFitTextElements\(\);\s*persistLocalDraft\(\);/);
 
 assert.ok(app.includes("function barcodeModelForElement(element"));
 assert.ok(app.includes("function barcodePhysicalSize(element"));
