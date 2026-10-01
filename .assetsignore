@@ -1,0 +1,18 @@
+# Only web-client files should be published as Workers Static Assets.
+node_modules/
+worker/
+migrations/
+tests/
+scripts/
+docs/
+config/
+.github/
+.git/
+.wrangler/
+
+*.md
+package.json
+package-lock.json
+wrangler*.jsonc
+.dev.vars*
+.gitignore
