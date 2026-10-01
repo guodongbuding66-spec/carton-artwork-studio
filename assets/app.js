@@ -1015,13 +1015,17 @@
     const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118,a.codeBlockProfile,a,{qrEcc});
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
     const custom=renderCustomElements(a,mode,factoryList);
-    const guideLayer=mode==="editor"?`<g data-snap-guides pointer-events="none">
+    const guideLayer=mode==="editor"?`<defs><marker id="gap-arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto"><path d="M6 0 L0 3 L6 6" fill="none" stroke="#b4235a" stroke-width="1"/></marker></defs>
+    <g data-snap-guides pointer-events="none">
       <line data-snap-guide-x x1="0" y1="0" x2="0" y2="${g.totalHeight}" stroke="#e13b6b" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity="0"/>
       <line data-snap-guide-y x1="0" y1="0" x2="${g.totalWidth}" y2="0" stroke="#e13b6b" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity="0"/>
+      <g data-spacing-overlay>${selectionSpacingSvg()}</g>
+      <rect data-marquee-box x="0" y="0" width="0" height="0" fill="#3978b8" fill-opacity=".08" stroke="#3978b8" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity="0"/>
     </g>`:"";
     const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
+    const marqueeAttr=mode==="editor"?'data-marquee-surface style="cursor:crosshair"':"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
-      <rect x="-50" y="-50" width="${g.totalWidth+100}" height="${g.totalHeight+100}" fill="#fff"/>
+      <rect ${marqueeAttr} x="-50" y="-50" width="${g.totalWidth+100}" height="${g.totalHeight+100}" fill="#fff"/>
       ${cut}${crease}${safeBox}${labels}
       <g fill="#000" font-family="Arial,Helvetica,sans-serif">
         <text x="${bx}" y="${by}" font-size="22" font-weight="700">${esc(a.sku)}</text>
@@ -1944,6 +1948,44 @@
     return {left,top,right,bottom,width:right-left,height:bottom-top};
   }
 
+  function selectionSpacingSvg(elements=selectedArtworkElements()){
+    const items=elements.filter(e=>e.visible!==false);
+    if(!items.length) return "";
+    const b=selectionBounds(items);
+    const label=(x,y,text,anchor="middle")=>`<text x="${x}" y="${y}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#b4235a" stroke="#fff" stroke-width="4" paint-order="stroke" vector-effect="non-scaling-stroke">${esc(text)}</text>`;
+    let out=label(b.left,b.top-7,`Selection ${D.round(b.width,1)} × ${D.round(b.height,1)} mm`,"start");
+    if(items.length!==2||!sameSelectionPanel(items)) return out;
+    const [a,bx]=items;
+    const ax=Number(a.x||0),ay=Number(a.y||0),aw=Number(a.w||0),ah=Number(a.h||0);
+    const bx0=Number(bx.x||0),by0=Number(bx.y||0),bw=Number(bx.w||0),bh=Number(bx.h||0);
+    const ar=ax+aw,ab=ay+ah,br=bx0+bw,bb=by0+bh;
+
+    let x1=null,x2=null;
+    if(ar<=bx0){x1=ar;x2=bx0;}
+    else if(br<=ax){x1=br;x2=ax;}
+    if(x1!==null){
+      const y=(Math.max(ay,by0)+Math.min(ab,bb))/2;
+      const yy=Number.isFinite(y)?y:(ay+ah/2+by0+bh/2)/2;
+      out+=`<line x1="${x1}" y1="${yy}" x2="${x2}" y2="${yy}" stroke="#b4235a" stroke-width="1" marker-start="url(#gap-arrow)" marker-end="url(#gap-arrow)" vector-effect="non-scaling-stroke"/>`;
+      out+=label((x1+x2)/2,yy-5,`${D.round(x2-x1,1)} mm`);
+    }
+
+    let y1=null,y2=null;
+    if(ab<=by0){y1=ab;y2=by0;}
+    else if(bb<=ay){y1=bb;y2=ay;}
+    if(y1!==null){
+      const x=(Math.max(ax,bx0)+Math.min(ar,br))/2;
+      const xx=Number.isFinite(x)?x:(ax+aw/2+bx0+bw/2)/2;
+      out+=`<line x1="${xx}" y1="${y1}" x2="${xx}" y2="${y2}" stroke="#b4235a" stroke-width="1" marker-start="url(#gap-arrow)" marker-end="url(#gap-arrow)" vector-effect="non-scaling-stroke"/>`;
+      out+=label(xx+6,(y1+y2)/2,`${D.round(y2-y1,1)} mm`,"start");
+    }
+    return out;
+  }
+  function updateSpacingOverlay(svg){
+    const layer=svg?.querySelector("[data-spacing-overlay]");
+    if(layer) layer.innerHTML=selectionSpacingSvg();
+  }
+
   function sameSelectionPanel(elements=selectedArtworkElements()){
     const panels=new Set(elements.map(e=>String(e.panelId||"")));
     return panels.size<=1;
@@ -2221,6 +2263,56 @@
       };
     });
 
+    const marqueeSurface=document.querySelector("[data-marquee-surface]");
+    if(marqueeSurface){
+      marqueeSurface.onpointerdown=(ev)=>{
+        if(!localArtworkEditable()) return;
+        const svg=marqueeSurface.ownerSVGElement;
+        const box=svg?.querySelector("[data-marquee-box]");
+        if(!svg?.createSVGPoint||!box) return;
+        ev.preventDefault();
+        const point=(event)=>{
+          const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;
+          return p.matrixTransform(svg.getScreenCTM().inverse());
+        };
+        const start=point(ev);
+        const baseIds=ev.shiftKey?new Set(state.selectedElementIds||[]):new Set();
+        let current=start;
+        try{marqueeSurface.setPointerCapture(ev.pointerId);}catch{}
+        const draw=()=>{
+          const x=Math.min(start.x,current.x),y=Math.min(start.y,current.y);
+          const w=Math.abs(current.x-start.x),h=Math.abs(current.y-start.y);
+          box.setAttribute("x",String(x));box.setAttribute("y",String(y));
+          box.setAttribute("width",String(w));box.setAttribute("height",String(h));
+          box.setAttribute("opacity",w>1||h>1?"1":"0");
+        };
+        marqueeSurface.onpointermove=(move)=>{
+          if(move.pointerId!==ev.pointerId) return;
+          current=point(move);draw();
+        };
+        const finish=()=>{
+          marqueeSurface.onpointermove=null;marqueeSurface.onpointerup=null;marqueeSurface.onpointercancel=null;
+          const left=Math.min(start.x,current.x),right=Math.max(start.x,current.x);
+          const top=Math.min(start.y,current.y),bottom=Math.max(start.y,current.y);
+          const moved=(right-left)>2||(bottom-top)>2;
+          const ids=new Set(baseIds);
+          if(moved){
+            for(const item of artworkElements()){
+              if(item.visible===false) continue;
+              const x=Number(item.x||0),y=Number(item.y||0),w=Number(item.w||0),h=Number(item.h||0);
+              const hit=x<right&&(x+w)>left&&y<bottom&&(y+h)>top;
+              if(hit) for(const unitId of selectionUnitIds(item.id)) ids.add(unitId);
+            }
+          }
+          state.selectedElementIds=[...ids];
+          state.selectedElementId=state.selectedElementIds.at(-1)||null;
+          box.setAttribute("opacity","0");
+          render();
+        };
+        marqueeSurface.onpointerup=finish;marqueeSurface.onpointercancel=finish;
+      };
+    }
+
     document.querySelectorAll("[data-art-element]").forEach((group)=>{
       group.onpointerdown=(ev)=>{
         const id=group.dataset.artElement;
@@ -2281,6 +2373,7 @@
             if(node) node.setAttribute("transform",elementTransform(item));
           }
           updateSnapGuides(svg,snapped.guides);
+          updateSpacingOverlay(svg);
         };
         const finish=()=>{
           group.onpointermove=null;group.onpointerup=null;group.onpointercancel=null;
