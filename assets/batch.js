@@ -60,7 +60,9 @@
       templateCode: defaults.templateCode || "US_SIDE_SEAL",
       templateVersion: defaults.templateVersion || "2026.05.20",
       templateName: defaults.templateName || "美线侧封箱",
-      market: defaults.market || "US"
+      market: defaults.market || "US",
+      safeMarginMm: Number(defaults.safeMarginMm ?? 22),
+      elements: []
     };
   }
 
@@ -111,7 +113,7 @@
     return { row, cell: cell || "", field, message, severity, source };
   }
 
-  function validateArtworkRow(artwork, record, domain, optionsCodes) {
+  function validateArtworkRow(artwork, record, domain, optionsCodes, factories = []) {
     const out = [];
     const row = record._row;
     const cells = record._cells || {};
@@ -148,7 +150,7 @@
     }
 
     if (domain?.runPreflight) {
-      const groups = domain.runPreflight(artwork);
+      const groups = domain.runPreflight(artwork,factories);
       for (const check of Object.values(groups).flat()) {
         if (check.status === "error") {
           out.push(issue(row, "", check.id, check.detail || check.title, "error", "preflight"));
@@ -197,7 +199,7 @@
       const issues = dedupeIssues([
         ...(byRow.get(record._row) || []),
         ...presetIssues,
-        ...validateArtworkRow(artwork, record, domain, options.codes)
+        ...validateArtworkRow(artwork, record, domain, options.codes, options.factories||[])
       ]);
       const errors = issues.filter((i) => i.severity !== "warning");
       const warnings = issues.filter((i) => i.severity === "warning");
