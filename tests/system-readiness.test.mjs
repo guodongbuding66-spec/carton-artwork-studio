@@ -75,3 +75,7 @@ assert.match(workerSource,/CREATE_FROM_BATCH/);
 assert.match(workerSource,/status='DRAFT'/);
 assert.match(workerSource,/DRAFTS_CREATED/);
 assert.match(workerSource,/artwork_id IS NULL/);
+
+
+assert.match(workerSource,/LEFT JOIN artworks a ON a\.id=r\.artwork_id/);
+assert.match(workerSource,/a\.artwork_no AS artworkNo/);
