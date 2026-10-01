@@ -407,4 +407,123 @@ test("resize solver preserves current size if starting visual bounds are already
   assert.equal(result.h,40);
 });
 
+test("wrapped text layout shares deterministic line breaking", () => {
+  const text="THIS IS A LONG SHIPPING MARK LINE";
+  const nowrap=D.textLayout({w:45,h:30,fontSizePt:12,fontWeight:"normal",wrapText:false,lineHeight:1.2},text);
+  const wrapped=D.textLayout({w:45,h:30,fontSizePt:12,fontWeight:"normal",wrapText:true,lineHeight:1.2},text);
+  assert.equal(nowrap.fits,false);
+  assert.ok(wrapped.lines.length>1);
+  assert.equal(wrapped.fits,true);
+  assert.ok(wrapped.lines.every(line=>D.measureTextLineMm(line,12,"normal")<=45.01));
+  assert.deepEqual(D.wrapTextLines("A\nB",100,12,"normal"),["A","B"]);
+});
+
+test("line height participates in text fit metrics", () => {
+  const text="LINE ONE\nLINE TWO";
+  const tight=D.textLayout({w:100,h:20,fontSizePt:12,wrapText:false,lineHeight:1},text);
+  const loose=D.textLayout({w:100,h:20,fontSizePt:12,wrapText:false,lineHeight:1.8},text);
+  assert.ok(loose.heightMm>tight.heightMm);
+  assert.equal(loose.lineCount,2);
+});
+
+test("effective raster DPI uses placed physical millimetres", () => {
+  const exact=D.effectiveImageDpi({type:"image",w:50.8,h:50.8,pixelWidth:600,pixelHeight:600});
+  assert.equal(exact.isVector,false);
+  assert.ok(Math.abs(exact.minDpi-300)<1e-9);
+  const vector=D.effectiveImageDpi({type:"image",w:100,h:50,vectorDataUrl:"data:image/svg+xml;base64,PHN2Zy8+"});
+  assert.equal(vector.isVector,true);
+  assert.equal(vector.minDpi,null);
+});
+
+test("raster below 150 PPI is a blocking preflight error", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const art={...D.defaultArtwork,elements:[{
+    id:"lowdpi",type:"image",name:"Low DPI Logo",
+    x:p.x+30,y:p.y+30,w:50.8,h:25.4,rotation:0,locked:false,visible:true,
+    panelId:p.id,constrainToPanel:true,safeAreaExempt:false,
+    sourceType:"uploaded-raster",mimeType:"image/jpeg",dataUrl:"data:image/jpeg;base64,AA==",
+    pixelWidth:100,pixelHeight:50
+  }]};
+  const assets=D.runPreflight(art).Assets;
+  const quality=assets.find(x=>x.id==="asset-resolution-lowdpi");
+  assert.equal(quality.status,"error");
+  assert.equal(quality.blocking,true);
+});
+
+test("preserved SVG source is vector-qualified for quality reporting but not production", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const el={
+    id:"svg-logo",type:"image",name:"Vector Logo",
+    x:p.x+30,y:p.y+30,w:60,h:30,rotation:0,locked:false,visible:true,
+    panelId:p.id,constrainToPanel:true,safeAreaExempt:false,
+    sourceType:"uploaded-vector",mimeType:"image/jpeg",
+    sourceMimeType:"image/svg+xml",dataUrl:"data:image/jpeg;base64,AA==",
+    vectorDataUrl:"data:image/svg+xml;base64,PHN2Zy8+",pixelWidth:1800,pixelHeight:900
+  };
+  const assets=D.runPreflight({...D.defaultArtwork,elements:[el]}).Assets;
+  assert.ok(assets.some(x=>x.id==="asset-vector-source-svg-logo"&&x.status==="warning"));
+  const qualification=D.productionElementQualification(el);
+  assert.equal(qualification.qualified,false);
+  assert.equal(qualification.reason,"UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED");
+});
+
+test("new text and source metadata round-trip through canonical snapshot", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const art={...D.defaultArtwork,elements:[{
+    id:"meta2",type:"image",name:"SVG",
+    x:p.x+30,y:p.y+30,w:60,h:30,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    sourceType:"uploaded-vector",mimeType:"image/jpeg",sourceMimeType:"image/svg+xml",
+    originalFileName:"logo.svg",dataUrl:"data:image/jpeg;base64,AA==",vectorDataUrl:"data:image/svg+xml;base64,PHN2Zy8+",
+    pixelWidth:1800,pixelHeight:900,sourcePixelWidth:300,sourcePixelHeight:150,
+    blockType:"",blockVersion:""
+  },{
+    id:"txt2",type:"text",name:"Wrapped",x:p.x+100,y:p.y+100,w:100,h:30,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    text:"WRAPPED TEXT",fontSizePt:10,fontWeight:"normal",textAlign:"left",wrapText:true,lineHeight:1.35,
+    autoFitText:true,minFontSizePt:7,blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.0.0"
+  }]};
+  const snapshot=D.canonicalData(art);
+  assert.equal(snapshot.artwork.elements[0].sourceMimeType,"image/svg+xml");
+  assert.equal(snapshot.artwork.elements[0].originalFileName,"logo.svg");
+  assert.ok(snapshot.artwork.elements[0].vectorDataUrl.startsWith("data:image/svg+xml"));
+  assert.equal(snapshot.artwork.elements[1].wrapText,true);
+  assert.equal(snapshot.artwork.elements[1].lineHeight,1.35);
+  assert.equal(snapshot.artwork.elements[1].blockVersion,"1.0.0");
+  const restored=D.artworkFromCanonical(snapshot);
+  assert.equal(restored.elements[0].sourcePixelWidth,300);
+  assert.equal(restored.elements[1].blockType,"SHIPPING_MARK_STANDARD");
+});
+
+test("controlled shipping mark block requires all six bindings and pinned version", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const keys=[
+    "shipping.skuLine","shipping.contractLine","shipping.weightLine",
+    "shipping.packageLine","shipping.crnLine","shipping.originLine"
+  ];
+  const elements=keys.map((bindingKey,i)=>({
+    id:"ship-"+i,type:"text",name:bindingKey,x:p.x+30,y:p.y+30+i*12,w:240,h:9,
+    rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,safeAreaExempt:false,
+    groupId:"grp-ship",text:"",bindingKey,fontSizePt:10,fontWeight:"normal",textAlign:"left",
+    wrapText:false,lineHeight:1.15,autoFitText:true,minFontSizePt:7,
+    blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.0.0"
+  }));
+  const good=D.runPreflight({...D.defaultArtwork,elements}).Assets;
+  assert.ok(good.some(x=>x.id==="shipping-block-grp-ship"&&x.status==="pass"));
+
+  const broken=D.runPreflight({...D.defaultArtwork,elements:elements.slice(0,-1)}).Assets;
+  assert.ok(broken.some(x=>x.id==="shipping-block-grp-ship"&&x.status==="error"&&x.blocking));
+});
+
+test("production element qualification is an explicit vector allowlist", () => {
+  assert.deepEqual(D.productionElementQualification({type:"text",fontWeight:"normal"}),{qualified:true,mode:"EMBEDDED_VECTOR_TEXT"});
+  assert.equal(D.productionElementQualification({type:"text",fontWeight:"bold"}).reason,"CUSTOM_BOLD_FONT_NOT_QUALIFIED");
+  assert.equal(D.productionElementQualification({type:"barcode"}).qualified,true);
+  assert.equal(D.productionElementQualification({type:"qr-generated"}).qualified,true);
+  assert.equal(D.productionElementQualification({type:"image"}).qualified,false);
+  assert.equal(D.productionElementQualification({type:"symbol"}).qualified,false);
+});
+
 console.log("Domain tests passed.");
