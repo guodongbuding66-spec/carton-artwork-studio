@@ -2137,40 +2137,16 @@
     toast(ids.size>1?`已删除 ${ids.size} 个元素`:"元素已删除","success");
   }
 
-  function visualBoundsFitContainer(element,bounds,tolerance=.01){
-    const v=D.elementVisualBounds(element);
-    return v.left>=bounds.x-tolerance&&
-      v.top>=bounds.y-tolerance&&
-      v.right<=bounds.x+bounds.w+tolerance&&
-      v.bottom<=bounds.y+bounds.h+tolerance;
-  }
   function constrainResizeDimensions(element,desiredW,desiredH,minSize=5){
-    const bounds=elementBounds(element);
-    const startW=Math.max(minSize,Number(element.w||minSize));
-    const startH=Math.max(minSize,Number(element.h||minSize));
-    const targetW=Math.max(minSize,Number(desiredW||minSize));
-    const targetH=Math.max(minSize,Number(desiredH||minSize));
-    const candidate=(w,h)=>({...element,w,h});
-    if(visualBoundsFitContainer(candidate(targetW,targetH),bounds)){
-      return {w:targetW,h:targetH,limited:false};
-    }
-    if(!visualBoundsFitContainer(candidate(startW,startH),bounds)){
-      return {w:startW,h:startH,limited:true};
-    }
-    let lo=0,hi=1;
-    for(let i=0;i<32;i+=1){
-      const mid=(lo+hi)/2;
-      const w=startW+(targetW-startW)*mid;
-      const h=startH+(targetH-startH)*mid;
-      if(visualBoundsFitContainer(candidate(w,h),bounds)) lo=mid;
-      else hi=mid;
-    }
-    return {
-      w:startW+(targetW-startW)*lo,
-      h:startH+(targetH-startH)*lo,
-      limited:true
-    };
+    return D.constrainElementResize(
+      element,
+      elementBounds(element),
+      desiredW,
+      desiredH,
+      minSize
+    );
   }
+
 
   function bindEditorKeyboard(){
     document.onkeydown=(event)=>{
