@@ -857,10 +857,14 @@
     document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();if(state.qualityTab==="assets")await loadProductionAssets();if(state.qualityTab==="compare"&&state.remoteArtworkId&&!state.remoteRevisions.length)await refreshRemoteRevisionMetadata();});
     document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
     document.querySelectorAll("[data-art]").forEach(el=>{
-      el.oninput=el.onchange=()=>{
+      const apply=()=>{
         const k=el.dataset.art;
         state.artwork[k]=el.type==="number"?Number(el.value):el.value;
         persistLocalDraft();
+      };
+      el.oninput=apply;
+      el.onchange=()=>{
+        apply();
         render();
       };
     });
