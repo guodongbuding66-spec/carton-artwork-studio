@@ -1469,11 +1469,49 @@
     toast("元素已删除","success");
   }
 
+  function bindEditorKeyboard(){
+    document.onkeydown=(event)=>{
+      const target=event.target;
+      const typing=target&&(["INPUT","TEXTAREA","SELECT"].includes(target.tagName)||target.isContentEditable);
+      if(typing) return;
+      const mod=event.ctrlKey||event.metaKey;
+      const key=String(event.key||"").toLowerCase();
+      if(mod&&key==="z"){
+        event.preventDefault();
+        if(event.shiftKey) redoArtwork(); else undoArtwork();
+        return;
+      }
+      if(mod&&key==="y"){
+        event.preventDefault();redoArtwork();return;
+      }
+      const element=selectedArtworkElement();
+      if(!element||element.locked||!localArtworkEditable()) return;
+      if(mod&&key==="d"){
+        event.preventDefault();duplicateSelectedElement();return;
+      }
+      if(event.key==="Delete"||event.key==="Backspace"){
+        event.preventDefault();deleteSelectedElement();return;
+      }
+      if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)){
+        event.preventDefault();
+        if(!event.repeat) pushArtworkHistory();
+        const step=event.altKey?.1:(event.shiftKey?5:1);
+        if(event.key==="ArrowLeft") element.x=Number(element.x||0)-step;
+        if(event.key==="ArrowRight") element.x=Number(element.x||0)+step;
+        if(event.key==="ArrowUp") element.y=Number(element.y||0)-step;
+        if(event.key==="ArrowDown") element.y=Number(element.y||0)+step;
+        clampElementToBounds(element);
+        persistLocalDraft();render();
+      }
+    };
+  }
+
   function bindArtworkElements(){
     document.querySelectorAll("[data-select-element]").forEach((b)=>{
       b.onclick=()=>{state.selectedElementId=b.dataset.selectElement;render();};
     });
     document.querySelectorAll("[data-element-prop]").forEach((el)=>{
+      el.onfocus=()=>{if(localArtworkEditable())pushArtworkHistory();};
       const apply=()=>{
         const e=selectedArtworkElement();
         if(!e||!localArtworkEditable()) return;
@@ -1494,23 +1532,64 @@
     const lock=document.querySelector("[data-element-lock]");
     if(lock) lock.onchange=()=>{
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      pushArtworkHistory();
       e.locked=Boolean(lock.checked);persistLocalDraft();render();
     };
     const visible=document.querySelector("[data-element-visible]");
     if(visible) visible.onchange=()=>{
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      pushArtworkHistory();
       e.visible=Boolean(visible.checked);persistLocalDraft();render();
     };
     const hri=document.querySelector("[data-element-hri]");
     if(hri) hri.onchange=()=>{
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      pushArtworkHistory();
       e.humanReadable=Boolean(hri.checked);persistLocalDraft();render();
     };
     const constrain=document.querySelector("[data-element-constrain]");
     if(constrain) constrain.onchange=()=>{
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      pushArtworkHistory();
       e.constrainToPanel=Boolean(constrain.checked);clampElementToBounds(e);persistLocalDraft();render();
     };
+
+    document.querySelectorAll("[data-element-resize]").forEach((handle)=>{
+      handle.onpointerdown=(ev)=>{
+        ev.preventDefault();ev.stopPropagation();
+        const id=handle.dataset.elementResize;
+        const element=artworkElements().find((x)=>x.id===id);
+        const group=handle.closest("[data-art-element]");
+        const svg=group?.ownerSVGElement;
+        if(!element||element.locked||!localArtworkEditable()||!group||!svg?.createSVGPoint) return;
+        pushArtworkHistory();
+        const localPoint=(event)=>{
+          const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;
+          return p.matrixTransform(group.getScreenCTM().inverse());
+        };
+        const bounds=elementBounds(element);
+        const maxW=Math.max(5,bounds.x+bounds.w-Number(element.x||0));
+        const maxH=Math.max(5,bounds.y+bounds.h-Number(element.y||0));
+        let nextW=Number(element.w||5),nextH=Number(element.h||5);
+        try{handle.setPointerCapture(ev.pointerId);}catch{}
+        handle.onpointermove=(move)=>{
+          if(move.pointerId!==ev.pointerId)return;
+          const p=localPoint(move);
+          nextW=Math.max(5,Math.min(maxW,p.x));
+          nextH=Math.max(5,Math.min(maxH,p.y));
+          const selection=group.querySelector("[data-element-selection]");
+          if(selection){selection.setAttribute("width",String(nextW));selection.setAttribute("height",String(nextH));}
+          handle.setAttribute("x",String(Math.max(0,nextW-4)));
+          handle.setAttribute("y",String(Math.max(0,nextH-4)));
+        };
+        const finish=()=>{
+          handle.onpointermove=null;handle.onpointerup=null;handle.onpointercancel=null;
+          element.w=nextW;element.h=nextH;clampElementToBounds(element);
+          persistLocalDraft();render();
+        };
+        handle.onpointerup=finish;handle.onpointercancel=finish;
+      };
+    });
 
     document.querySelectorAll("[data-art-element]").forEach((group)=>{
       group.onpointerdown=(ev)=>{
@@ -1519,6 +1598,7 @@
         if(!element) return;
         state.selectedElementId=id;
         if(element.locked||!localArtworkEditable()){render();return;}
+        pushArtworkHistory();
         ev.preventDefault();
         const svg=group.ownerSVGElement;
         if(!svg?.createSVGPoint) return;
