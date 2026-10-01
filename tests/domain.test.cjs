@@ -70,6 +70,35 @@ test("canonical snapshot hydrates back to editable artwork", () => {
   assert.equal(restored.revision, "R07");
 });
 
+test("custom artwork elements round-trip through canonical snapshot", () => {
+  const source = {
+    ...D.defaultArtwork,
+    elements: [
+      {id:"el-qr",type:"qr-generated",name:"Support QR",x:300,y:900,w:45,h:45,rotation:0,locked:false,payload:"https://example.com/help",ecc:"Q",sourceType:"generated-vector"},
+      {id:"el-logo",type:"image",name:"Logo",x:400,y:900,w:60,h:30,rotation:0,locked:false,dataUrl:"data:image/jpeg;base64,AA==",mimeType:"image/jpeg",pixelWidth:600,pixelHeight:300}
+    ]
+  };
+  const snapshot=D.canonicalData(source);
+  assert.equal(snapshot.artwork.elements.length,2);
+  assert.equal(snapshot.artwork.elements[0].type,"qr-generated");
+  assert.equal(snapshot.artwork.elements[0].ecc,"Q");
+  const restored=D.artworkFromCanonical(snapshot);
+  assert.equal(restored.elements.length,2);
+  assert.equal(restored.elements[1].name,"Logo");
+  const preflight=D.runPreflight(source);
+  assert.ok(Array.isArray(preflight.Assets));
+  assert.ok(preflight.Assets.some(x=>x.id==="qr-generated-el-qr"&&x.status==="pass"));
+});
+
+test("uploaded QR image is explicitly marked as unverified", () => {
+  const a={...D.defaultArtwork,elements:[{
+    id:"qr-img",type:"qr-image",name:"Customer QR",x:300,y:900,w:40,h:40,rotation:0,
+    dataUrl:"data:image/jpeg;base64,AA==",mimeType:"image/jpeg",pixelWidth:600,pixelHeight:600
+  }]};
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="qr-upload-qr-img"&&x.status==="warning"));
+});
+
 test("computed and preflight can use remote factory master", () => {
   const remoteFactories = [{ id: "remote-a", name: "Remote A", crn: "CRN-NEW", country: "Mexico" }];
   const a = { ...D.defaultArtwork, factoryId: "remote-a" };
