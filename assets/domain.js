@@ -350,16 +350,16 @@
     const maxPt=Math.max(minPt,Number(options.maxPt??element?.fontSizePt??12));
     const atMax=textFitMetrics({...element,fontSizePt:maxPt},text);
     if(atMax.fits) return {fits:true,fontSizePt:maxPt,metrics:atMax};
-    let lo=minPt,hi=maxPt,best=null;
+    const atMin=textFitMetrics({...element,fontSizePt:minPt},text);
+    if(!atMin.fits) return {fits:false,fontSizePt:minPt,metrics:atMin};
+    let lo=minPt,hi=maxPt,best={fits:true,fontSizePt:minPt,metrics:atMin};
     for(let i=0;i<28;i+=1){
       const mid=(lo+hi)/2;
       const metrics=textFitMetrics({...element,fontSizePt:mid},text);
       if(metrics.fits){best={fits:true,fontSizePt:mid,metrics};lo=mid;}
       else hi=mid;
     }
-    if(best) return {...best,fontSizePt:round(best.fontSizePt,2)};
-    const minMetrics=textFitMetrics({...element,fontSizePt:minPt},text);
-    return {fits:false,fontSizePt:minPt,metrics:minMetrics};
+    return {...best,fontSizePt:round(best.fontSizePt,2)};
   }
 
   function check(id, title, status, detail, category, blocking = false) {
