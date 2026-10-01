@@ -474,7 +474,7 @@
         ));
       }
       if(element.type==="barcode"){
-        const supported=["CODE128B","ITF14"].includes(String(element.symbology||"").toUpperCase());
+        const supported=["CODE128B","ITF14","GS1_128"].includes(String(element.symbology||"").toUpperCase());
         assetChecks.push(check(
           `barcode-type-${element.id||name}`,
           `${name} barcode symbology`,

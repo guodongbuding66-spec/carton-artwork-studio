@@ -66,4 +66,30 @@ test("ITF-14 rejects non-numeric data", () => {
   assert.throws(()=>C.itf14Bars("ABC123"),/numeric/i);
 });
 
+test("GS1-128 parses AI syntax and inserts FNC1 separators", () => {
+  const model=C.gs1_128Bars("(01)10614141000019(10)ABC123(21)SN9");
+  assert.equal(model.symbology,"GS1-128");
+  assert.equal(model.elements.length,3);
+  assert.equal(model.elements[0].ai,"01");
+  assert.equal(model.elements[1].ai,"10");
+  assert.equal(model.hri,"(01)10614141000019(10)ABC123(21)SN9");
+  assert.equal(model.values[0],104);
+  assert.equal(model.values[1],102);
+  assert.ok(model.values.filter(v=>v===102).length>=2,"Start FNC1 plus separator after variable-length AI should be encoded");
+  assert.equal(model.values.at(-1),106);
+  assert.ok(model.bars.length>20);
+});
+
+test("GS1-128 validates SSCC AI 00", () => {
+  assert.equal(C.normalizeSscc("12345678901234567"),"123456789012345675");
+  assert.equal(C.ssccGs1Text("12345678901234567"),"(00)123456789012345675");
+  const model=C.gs1_128Bars("(00)123456789012345675");
+  assert.equal(model.elements[0].rule.title,"SSCC");
+});
+
+test("GS1-128 rejects invalid check digits and unsupported AIs", () => {
+  assert.throws(()=>C.gs1_128Bars("(00)123456789012345676"),/check digit/i);
+  assert.throws(()=>C.gs1_128Bars("(999)ABC"),/Unsupported GS1 Application Identifier/i);
+});
+
 console.log("Code tests passed.");

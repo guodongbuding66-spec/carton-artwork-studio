@@ -109,6 +109,124 @@
       if (c < 32 || c > 126) throw new Error("Code 128-B supports printable ASCII 32..126 in this implementation.");
     }
   }
+  const GS1_AI_RULES = Object.freeze({
+    "00": { title:"SSCC", fixed:18, numeric:true, checkDigit:true },
+    "01": { title:"GTIN", fixed:14, numeric:true, checkDigit:true },
+    "02": { title:"CONTENT", fixed:14, numeric:true, checkDigit:true },
+    "10": { title:"BATCH/LOT", max:20, variable:true },
+    "11": { title:"PROD DATE", fixed:6, numeric:true },
+    "13": { title:"PACK DATE", fixed:6, numeric:true },
+    "15": { title:"BEST BEFORE", fixed:6, numeric:true },
+    "17": { title:"USE BY", fixed:6, numeric:true },
+    "21": { title:"SERIAL", max:20, variable:true },
+    "37": { title:"COUNT", max:8, variable:true, numeric:true }
+  });
+
+  function normalizeGs1Identifier(value) {
+    return String(value||"").replace(/[\s-]+/g,"");
+  }
+
+  function validateGs1CheckDigit(data, ai) {
+    const digits=normalizeGs1Identifier(data);
+    if(digits.length<2||!/^[0-9]+$/.test(digits)) throw new Error(`AI (${ai}) must contain digits only.`);
+    const expected=gs1CheckDigit(digits.slice(0,-1));
+    if(digits.at(-1)!==expected) throw new Error(`AI (${ai}) check digit invalid; expected ${expected}.`);
+  }
+
+  function parseGs1AiText(text) {
+    const source=String(text||"").trim();
+    if(!source) throw new Error("GS1-128 payload is empty.");
+    const re=/\((\d{2,4})\)/g;
+    const matches=[...source.matchAll(re)];
+    if(!matches.length||matches[0].index!==0) {
+      throw new Error("GS1-128 payload must use AI syntax such as (00)SSCC or (01)GTIN(10)LOT.");
+    }
+    const elements=[];
+    for(let i=0;i<matches.length;i+=1){
+      const ai=matches[i][1];
+      const rule=GS1_AI_RULES[ai];
+      if(!rule) throw new Error(`Unsupported GS1 Application Identifier (${ai}).`);
+      const dataStart=matches[i].index+matches[i][0].length;
+      const dataEnd=i+1<matches.length?matches[i+1].index:source.length;
+      const raw=source.slice(dataStart,dataEnd);
+      const data=raw.trim();
+      if(!data) throw new Error(`AI (${ai}) data is empty.`);
+      if(rule.numeric&&!/^\d+$/.test(data)) throw new Error(`AI (${ai}) requires numeric data.`);
+      if(rule.fixed&&data.length!==rule.fixed) throw new Error(`AI (${ai}) requires exactly ${rule.fixed} characters.`);
+      if(rule.max&&data.length>rule.max) throw new Error(`AI (${ai}) allows at most ${rule.max} characters.`);
+      if(rule.checkDigit) validateGs1CheckDigit(data,ai);
+      if(!rule.numeric) assertAscii(data);
+      elements.push({ai,data,rule});
+    }
+    return elements;
+  }
+
+  function gs1HumanReadable(elements) {
+    return elements.map((e)=>`(${e.ai})${e.data}`).join("");
+  }
+
+  function gs1Code128Values(text) {
+    const elements=parseGs1AiText(text);
+    const values=[104,102]; // Start B + FNC1 declares GS1-128.
+    for(let i=0;i<elements.length;i+=1){
+      const e=elements[i];
+      const raw=e.ai+e.data;
+      assertAscii(raw);
+      for(const ch of raw) values.push(ch.charCodeAt(0)-32);
+      if(e.rule.variable&&i<elements.length-1) values.push(102);
+    }
+    let checksum=104;
+    for(let i=1;i<values.length;i+=1) checksum+=values[i]*i;
+    checksum%=103;
+    values.push(checksum,106);
+    return {values,elements,hri:gs1HumanReadable(elements)};
+  }
+
+  function code128BarsFromValues(values, options={}) {
+    const quiet=Number(options.quietModules??10);
+    const moduleMm=Number(options.moduleMm??0.45);
+    const heightMm=Number(options.heightMm??24);
+    let x=quiet*moduleMm;
+    let black=true;
+    const bars=[];
+    for(const value of values){
+      const pattern=CODE128_PATTERNS[value];
+      if(!pattern) throw new Error(`Invalid Code 128 value ${value}.`);
+      for(const widthDigit of pattern){
+        const w=Number(widthDigit)*moduleMm;
+        if(black) bars.push({x,y:0,w,h:heightMm});
+        x+=w;
+        black=!black;
+      }
+    }
+    return {bars,widthMm:x+quiet*moduleMm,heightMm,quietModules:quiet,moduleMm};
+  }
+
+  function gs1_128Bars(text, options={}) {
+    const model=gs1Code128Values(text);
+    return {
+      symbology:"GS1-128",
+      ...code128BarsFromValues(model.values,options),
+      values:model.values,
+      elements:model.elements,
+      payload:model.hri,
+      hri:model.hri
+    };
+  }
+
+  function normalizeSscc(value) {
+    const digits=normalizeGs1Identifier(value);
+    if(!/^\d+$/.test(digits)) throw new Error("SSCC accepts digits only.");
+    if(digits.length===17) return digits+gs1CheckDigit(digits);
+    if(digits.length!==18) throw new Error("SSCC requires 17 digits plus calculated check digit, or a complete 18-digit SSCC.");
+    validateGs1CheckDigit(digits,"00");
+    return digits;
+  }
+
+  function ssccGs1Text(value) {
+    return `(00)${normalizeSscc(value)}`;
+  }
+
 
   function code128Values(text) {
     const input = String(text || "");
@@ -234,6 +352,12 @@
     normalizeItf14,
     itf14Bars,
     itf14Svg,
+    GS1_AI_RULES,
+    parseGs1AiText,
+    gs1Code128Values,
+    gs1_128Bars,
+    normalizeSscc,
+    ssccGs1Text,
     qrMatrix,
     qrPreviewMatrix,
     qrPreviewSvg

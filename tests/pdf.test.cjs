@@ -61,4 +61,15 @@ const barSymbolText=Buffer.from(barSymbolProof).toString("latin1");
 assert.ok(barSymbolText.includes("(10012345000017) Tj"),"ITF-14 human-readable data should be emitted into proof PDF");
 assert.ok((barSymbolText.match(/ re f/g)||[]).length>(text.match(/ re f/g)||[]).length,"Custom barcode should add vector bar rectangles");
 assert.ok((barSymbolText.match(/ m .* l S/g)||[]).length>0,"Handling symbol should add vector line operations");
+const gs1=C.gs1_128Bars("(00)123456789012345675",{moduleMm:.42,heightMm:28});
+const gs1Proof=P.createPdfBytes({
+  artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
+  customElements:[
+    {id:"gs1",type:"barcode",x:300,y:900,w:180,h:50,rotation:0,visible:true,humanReadable:true,payload:gs1.hri,barcodeModel:gs1}
+  ]
+});
+const gs1Text=Buffer.from(gs1Proof).toString("latin1");
+assert.ok(gs1Text.includes("(\\(00\\)123456789012345675) Tj"),"GS1-128 HRI should retain AI parentheses with PDF string escaping");
+assert.ok((gs1Text.match(/ re f/g)||[]).length>(text.match(/ re f/g)||[]).length,"GS1-128 should add vector bar rectangles");
+
 console.log("PDF tests passed.");
