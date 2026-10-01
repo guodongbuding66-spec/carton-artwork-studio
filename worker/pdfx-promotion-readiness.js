@@ -1,5 +1,6 @@
 import { PDFX_PRODUCTION_PROMOTION_POLICY, summarizePdfxPromotionEvidence } from "./pdfx-promotion-policy.js";
 import { evidenceRowToPolicyInput } from "./pdfx-promotion-evidence.js";
+import { verifyQualificationContextFingerprint } from "./production-qualification-context.js";
 
 function parseJson(value) {
   try{return JSON.parse(value||"{}");}
@@ -33,7 +34,7 @@ export async function collectPdfxPromotionReadiness(db, nowMs=Date.now()) {
     `).bind(PDFX_PRODUCTION_PROMOTION_POLICY.version).all()
   ]);
 
-  const primaryRuns=(primaryResult.results||[]).map((row)=>{
+  const primaryCandidates=(primaryResult.results||[]).map((row)=>{
     const report=parseJson(row.reportJson);
     const ruleset=report.ruleset||{};
     return {
@@ -48,12 +49,20 @@ export async function collectPdfxPromotionReadiness(db, nowMs=Date.now()) {
       rulesetSha256:String(ruleset.sha256||report.rulesetSha256||"").toLowerCase(),
       trusted:report.trusted===true,
       trustPolicyVersion:report.trustPolicyVersion||null,
+      qualificationContext:report.qualificationContext||null,
+      qualificationFingerprint:String(report.qualificationFingerprint||"").toLowerCase(),
       createdAt:row.createdAt
     };
   }).filter((x)=>
     x.trusted===true &&
     x.trustPolicyVersion===PDFX_PRODUCTION_PROMOTION_POLICY.version
   );
+
+  const verifiedPrimary=(await Promise.all(primaryCandidates.map(async(x)=>{
+    if(!x.qualificationContext||!x.qualificationFingerprint) return {...x,qualificationOk:false,qualificationErrors:["Qualification context is missing."]};
+    const verification=await verifyQualificationContextFingerprint(x.qualificationContext,x.qualificationFingerprint);
+    return {...x,qualificationOk:verification.ok,qualificationErrors:verification.errors,qualificationContext:verification.context};
+  }))).filter(x=>x.qualificationOk);
 
   const approved=(evidenceResult.results||[]).map((row)=>({
     row,
@@ -63,18 +72,75 @@ export async function collectPdfxPromotionReadiness(db, nowMs=Date.now()) {
   const ripEvidenceRuns=approved.filter((x)=>x.row.evidenceType==="RIP_QUALIFICATION").map((x)=>x.policy);
   const productionTrials=approved.filter((x)=>x.row.evidenceType==="PRODUCTION_TRIAL").map((x)=>x.policy);
 
-  const summary=summarizePdfxPromotionEvidence({
-    primaryRuns,
-    secondaryRuns,
-    ripEvidenceRuns,
-    productionTrials,
-    nowMs
-  });
+  const contextGroups=new Map();
+  for(const run of verifiedPrimary){
+    const key=run.qualificationFingerprint;
+    if(!contextGroups.has(key)) contextGroups.set(key,[]);
+    contextGroups.get(key).push(run);
+  }
+
+  const contextResults=[...contextGroups.entries()].map(([fingerprint,runs])=>{
+    const summary=summarizePdfxPromotionEvidence({
+      primaryRuns:runs,
+      secondaryRuns,
+      ripEvidenceRuns,
+      productionTrials,
+      nowMs
+    });
+    return {
+      fingerprint,
+      context:runs[0]?.qualificationContext||null,
+      primaryRuns:runs,
+      summary
+    };
+  }).sort((a,b)=>
+    Number(b.summary.ok)-Number(a.summary.ok) ||
+    b.summary.sharedRegressionArtifacts-a.summary.sharedRegressionArtifacts ||
+    b.summary.primaryUniqueArtifacts-a.summary.primaryUniqueArtifacts
+  );
+
+  const selected=contextResults[0]||{
+    fingerprint:null,
+    context:null,
+    primaryRuns:[],
+    summary:summarizePdfxPromotionEvidence({
+      primaryRuns:[],
+      secondaryRuns,
+      ripEvidenceRuns,
+      productionTrials,
+      nowMs
+    })
+  };
+  const summary={...selected.summary};
+  if(primaryCandidates.length>0&&verifiedPrimary.length===0){
+    summary.errors=[
+      "Trusted primary validation runs exist, but none carry a current valid Production Qualification Context fingerprint.",
+      ...summary.errors
+    ];
+    summary.ok=false;
+  }
+  if(contextGroups.size>1&&!summary.ok){
+    summary.errors=[
+      `Primary validation evidence is split across ${contextGroups.size} qualification contexts; five same-context artifacts are required.`,
+      ...summary.errors
+    ];
+  }
 
   return {
     ...summary,
+    qualifyingContextFingerprint:summary.ok?selected.fingerprint:null,
+    candidateContextFingerprint:selected.fingerprint,
+    qualificationContext:selected.context,
+    qualificationContexts:contextResults.map((x)=>({
+      fingerprint:x.fingerprint,
+      primaryUniqueArtifacts:x.summary.primaryUniqueArtifacts,
+      sharedRegressionArtifacts:x.summary.sharedRegressionArtifacts,
+      ok:x.summary.ok,
+      context:x.context
+    })),
     evidenceCounts:{
-      trustedPrimaryRuns:primaryRuns.length,
+      trustedPrimaryRuns:primaryCandidates.length,
+      currentContextPrimaryRuns:verifiedPrimary.length,
       approvedSecondaryValidation:secondaryRuns.length,
       approvedRipQualification:ripEvidenceRuns.length,
       approvedProductionTrial:productionTrials.length
