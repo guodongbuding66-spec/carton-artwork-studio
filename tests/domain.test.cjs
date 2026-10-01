@@ -371,7 +371,7 @@ test("rotated safe-area crossing blocks using visual bounds", () => {
   const p=g.panels.find(x=>x.id==="TOP_FACE");
   const element={
     id:"rotated-safe",type:"symbol",name:"Rotated Safe",
-    x:p.x+24,y:p.y+100,w:20,h:80,rotation:45,
+    x:p.x+30,y:p.y+100,w:20,h:80,rotation:45,
     locked:false,visible:true,panelId:p.id,constrainToPanel:true,
     safeAreaExempt:false,symbolKey:"KEEP_DRY"
   };
