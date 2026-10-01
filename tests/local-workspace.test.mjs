@@ -70,6 +70,14 @@ assert.match(app,/if\(event\.shiftKey\) toggleElementSelection/);
 assert.match(app,/DO_NOT_STACK/);
 assert.match(app,/KEEP_AWAY_FROM_HEAT/);
 assert.match(app,/NO_HOOKS/);
+assert.match(app,/function decodeUploadedQrElement\(element\)/);
+assert.match(app,/globalThis\.BarcodeDetector/);
+assert.match(app,/function verifySelectedQrImage\(\)/);
+assert.match(app,/data-action="verify-uploaded-qr"/);
+assert.match(app,/data-element-prop="expectedPayload"/);
+assert.match(app,/data-action="upload-symbol-trigger"/);
+assert.match(app,/addUploadedArtworkElement\(file,"symbol-image"\)/);
+assert.match(app,/type==="symbol-image"/);
 assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*persistLocalDraft\(\);/);
 
 console.log("Local workspace usability regression tests passed.");
