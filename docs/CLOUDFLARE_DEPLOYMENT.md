@@ -49,7 +49,7 @@ Use a narrowly scoped Cloudflare API token. Do not commit it.
 
 ## 3. Deploy staging
 
-The manual workflow `.github/workflows/deploy-staging.yml`:
+The staging workflow `.github/workflows/deploy-staging.yml` can be started manually or by advancing the dedicated `staging` branch. A branch-triggered deployment is accepted only when that exact commit is already contained in `main`.
 
 1. runs `npm run check`;
 2. generates a staging Wrangler config;
@@ -59,7 +59,7 @@ The manual workflow `.github/workflows/deploy-staging.yml`:
 6. runs an Access-authenticated post-deploy smoke test for service identity, version, D1, R2, Assets, auth-bypass state, and trusted-validator configuration;
 7. uploads `staging-acceptance.json` as a GitHub Actions artifact.
 
-Trigger it only after the secrets and variables above are configured.
+Advance `staging` only to a reviewed commit already merged into `main`. The workflow verifies ancestry before any migration or deployment step. Trigger it only after the secrets and variables above are configured.
 
 ## 4. Configure Cloudflare Access
 
