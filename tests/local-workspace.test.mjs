@@ -170,3 +170,21 @@ assert.match(app,/D\.constrainElementResize\(/);
 assert.match(app,/const resolved=constrainResizeDimensions\(element,Math\.max\(5,p\.x\),Math\.max\(5,p\.y\)\)/);
 assert.match(app,/resizeLimited=resolved\.limited/);
 assert.match(app,/尺寸已限制在旋转后的面板边界内/);
+
+
+assert.match(app,/function sanitizeSvgText\(svgText\)/);
+assert.match(app,/vectorDataUrl/);
+assert.match(app,/sourceMimeType/);
+assert.match(app,/originalFileName/);
+assert.match(app,/rasterizeArtworkSource\(vectorDataUrl,2400,true\)/);
+assert.match(app,/data-element-wrap/);
+assert.match(app,/data-element-prop="lineHeight"/);
+assert.match(app,/D\.textLayout\(e,D\.resolvedElementText/);
+assert.match(app,/function addShippingMarkBlock\(\)/);
+assert.match(app,/blockType:"SHIPPING_MARK_STANDARD"/);
+assert.match(app,/blockVersion:"1\.0\.0"/);
+assert.match(app,/data-action="add-shipping-mark-block"/);
+assert.match(app,/D\.effectiveImageDpi\(selected\)/);
+assert.match(app,/D\.productionElementQualification\(selected\)/);
+assert.match(app,/renderLines:layout\.lines/);
+assert.match(app,/renderLineWidthsMm:layout\.widthsMm/);
