@@ -117,15 +117,25 @@
     for(const element of customBars){
       let item=(groups.Assets||[]).find(x=>x.id===`barcode-data-${element.id||element.name}`);
       try{
-        const itf=String(element.symbology||"").toUpperCase()==="ITF14";
+        const sym=String(element.symbology||"").toUpperCase();
         const payload=D.resolvedElementPayload(element,artwork,state.factories);
-        const model=itf?C.itf14Bars(payload):C.code128Bars(payload);
+        const model=sym==="ITF14"
+          ? C.itf14Bars(payload)
+          : sym==="GS1_128"
+            ? C.gs1_128Bars(payload)
+            : C.code128Bars(payload);
         if(item){
           item.status="pass";item.blocking=false;
-          item.title=itf?"ITF-14 / GTIN-14 vector encoding":"Code 128-B vector encoding";
-          item.detail=itf
+          item.title=sym==="ITF14"
+            ? "ITF-14 / GTIN-14 vector encoding"
+            : sym==="GS1_128"
+              ? "GS1-128 vector encoding"
+              : "Code 128-B vector encoding";
+          item.detail=sym==="ITF14"
             ? `GTIN-14 ${model.payload} · check digit ${model.checkDigit} · vector bars generated.`
-            : `Encodable payload · ${model.bars.length} vector bars.`;
+            : sym==="GS1_128"
+              ? `${model.hri} · ${model.elements.length} GS1 AI element(s) · FNC1 applied · vector bars generated.`
+              : `Encodable payload · ${model.bars.length} vector bars.`;
         }
       }catch(err){
         if(!item){
@@ -445,10 +455,15 @@
           ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementPayload(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
           <div class="field"><label>Barcode payload</label><input class="input mono" data-element-prop="payload" value="${esc(selected.payload||"")}" ${selected.bindingKey?"disabled":""}/></div>
           <div class="row2">
-            <div class="field"><label>Symbology</label><select class="select" data-element-prop="symbology"><option value="CODE128B" ${selected.symbology!=="ITF14"?"selected":""}>Code 128-B</option><option value="ITF14" ${selected.symbology==="ITF14"?"selected":""}>ITF-14 / GTIN-14</option></select></div>
+            <div class="field"><label>Symbology</label><select class="select" data-element-prop="symbology"><option value="CODE128B" ${selected.symbology==="CODE128B"||!selected.symbology?"selected":""}>Code 128-B</option><option value="ITF14" ${selected.symbology==="ITF14"?"selected":""}>ITF-14 / GTIN-14</option><option value="GS1_128" ${selected.symbology==="GS1_128"?"selected":""}>GS1-128 / SSCC</option></select></div>
             <label class="toggle-line"><input type="checkbox" data-element-hri ${selected.humanReadable!==false?"checked":""}/> Human readable</label>
           </div>
-          <div class="notice">ITF-14 仅接受 GTIN 数字；13 位会自动计算校验位，14 位会验证校验位。</div>
+          ${selected.symbology==="GS1_128"?`
+            <div class="notice"><strong>GS1 AI 格式</strong><br><span class="mono">(00)SSCC · (01)GTIN · (10)BATCH · (21)SERIAL</span><br>固定长度 AI 会自动连续编码；可变长度 AI 后还有字段时自动插入 FNC1。</div>
+            <button class="btn small" data-action="normalize-sscc">把当前数字规范化为 (00) SSCC</button>
+          `:selected.symbology==="ITF14"
+            ?'<div class="notice">ITF-14 仅接受 GTIN 数字；13 位会自动计算校验位，14 位会验证校验位。</div>'
+            :'<div class="notice">Code 128-B 用于普通 ASCII 数据；需要 GS1 物流语义时请选择 GS1-128。</div>'}
         `:""}
         ${selected.type==="symbol"?`
           <div class="field"><label>Handling symbol</label><select class="select" data-element-prop="symbolKey">
@@ -580,17 +595,19 @@
   function barcodeSvgBody(element,w,h,artwork=state.artwork,factoryList=state.factories){
     try{
       const payload=D.resolvedElementPayload(element,artwork,factoryList);
-      const itf=String(element.symbology||"").toUpperCase()==="ITF14";
-      const model=itf
+      const sym=String(element.symbology||"").toUpperCase();
+      const model=sym==="ITF14"
         ? C.itf14Bars(payload,{moduleMm:.8,heightMm:30})
-        : C.code128Bars(payload,{moduleMm:.42,heightMm:28});
+        : sym==="GS1_128"
+          ? C.gs1_128Bars(payload,{moduleMm:.42,heightMm:28})
+          : C.code128Bars(payload,{moduleMm:.42,heightMm:28});
       const hri=element.humanReadable!==false;
       const hriH=hri?Math.min(8,h*.22):0;
       const maxW=Math.max(1,w-4),maxH=Math.max(1,h-hriH-3);
       const sx=maxW/Math.max(1,model.widthMm),sy=maxH/Math.max(1,model.heightMm);
       const x0=2,y0=1;
       const bars=model.bars.map(b=>`<rect x="${(x0+b.x*sx).toFixed(3)}" y="${y0}" width="${Math.max(.15,b.w*sx).toFixed(3)}" height="${Math.max(.5,b.h*sy).toFixed(3)}" fill="#000"/>`).join("");
-      const label=itf?(model.payload||payload):payload;
+      const label=sym==="ITF14"?(model.payload||payload):sym==="GS1_128"?(model.hri||payload):payload;
       const text=hri?`<text x="${w/2}" y="${h-1.5}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${Math.max(3,Math.min(5.5,hriH*.65))}" fill="#000">${esc(label)}</text>`:"";
       return `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/>${bars}${text}`;
     }catch(err){
@@ -1342,6 +1359,25 @@
     toast("矢量二维码已添加","success");
   }
 
+  function normalizeSelectedSscc(){
+    const e=selectedArtworkElement();
+    if(!e||e.type!=="barcode"||!localArtworkEditable()) return;
+    const raw=String(e.payload||"").trim();
+    try{
+      let digits=raw;
+      const match=/^\(00\)(\d+)$/.exec(raw);
+      if(match) digits=match[1];
+      pushArtworkHistory();
+      e.symbology="GS1_128";
+      e.bindingKey="";
+      e.payload=C.ssccGs1Text(digits);
+      e.name="SSCC";
+      persistLocalDraft();
+      render();
+      toast("已按 GS1 AI (00) 生成/验证 SSCC","success");
+    }catch(err){toast(err.message||String(err),"error");}
+  }
+
   function addBarcodeElement(){
     if(!localArtworkEditable()) return;
     const w=150,h=48,p=defaultElementPlacement(w,h);
@@ -1632,6 +1668,7 @@
     if(action==="add-text-element") return addTextElement();
     if(action==="add-bound-text-element") return addBoundTextElement();
     if(action==="add-barcode-element") return addBarcodeElement();
+    if(action==="normalize-sscc") return normalizeSelectedSscc();
     if(action==="add-handling-symbol") return addHandlingSymbol();
     if(action==="add-generated-qr") return addGeneratedQrElement();
     if(action==="duplicate-element") return duplicateSelectedElement();
@@ -2599,9 +2636,12 @@
       if(e.type==="barcode"){
         const payload=D.resolvedElementPayload(e,artwork,state.factories);
         try{
-          const model=String(e.symbology||"").toUpperCase()==="ITF14"
+          const sym=String(e.symbology||"").toUpperCase();
+          const model=sym==="ITF14"
             ? C.itf14Bars(payload,{moduleMm:.8,heightMm:30})
-            : C.code128Bars(payload,{moduleMm:.42,heightMm:28});
+            : sym==="GS1_128"
+              ? C.gs1_128Bars(payload,{moduleMm:.42,heightMm:28})
+              : C.code128Bars(payload,{moduleMm:.42,heightMm:28});
           return {...e,payload,barcodeModel:model};
         }catch{return {...e,payload,barcodeModel:null};}
       }
