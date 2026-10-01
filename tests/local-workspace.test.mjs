@@ -184,8 +184,8 @@ assert.match(app,/data-element-wrap/);
 assert.match(app,/data-element-prop="lineHeight"/);
 assert.match(app,/D\.textLayout\(e,D\.resolvedElementText/);
 assert.match(app,/function addShippingMarkBlock\(\)/);
-assert.match(app,/blockType:"SHIPPING_MARK_STANDARD"/);
-assert.match(app,/blockVersion:"1\.1\.0"/);
+assert.match(app,/D\.createShippingMarkBlockElements\(state\.artwork,panel,state\.factories/);
+assert.match(app,/version:def\?\.version\|\|"1\.1\.0"/);
 assert.match(app,/data-action="add-shipping-mark-block"/);
 assert.match(app,/D\.effectiveImageDpi\(selected\)/);
 assert.match(app,/D\.productionElementQualification\(selected\)/);
@@ -224,3 +224,8 @@ assert.match(app,/data-action="reflow-controlled-block"/);
 assert.match(app,/if\(action==="reflow-controlled-block"\) return reflowSelectedControlledBlock\(\)/);
 assert.match(app,/allowControlledOversized/);
 assert.match(app,/String\(element\.blockVersion\|\|""\)!=="1\.1\.0"/);
+
+
+assert.match(app,/controlledShippingMark:\{enabled:true,panelId:"TOP_FACE",version:"1\.1\.0"\}/);
+assert.match(app,/customElements:proofPdfElements\(art\)/);
+assert.match(app,/controlledPreset:\{type:"SHIPPING_MARK_STANDARD",version:"1\.1\.0",panelId:"TOP_FACE"\}/);
