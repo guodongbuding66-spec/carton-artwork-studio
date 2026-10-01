@@ -1961,7 +1961,7 @@
       id:newElementId(),type:"text",name,
       x,y:y+index*(rowH+gap),w:blockW,h:rowH,rotation:0,locked:false,visible:true,
       panelId:panel.id,constrainToPanel:true,safeAreaExempt:false,groupId,
-      text:"",bindingKey,fontSizePt,fontWeight:index===0?"bold":"normal",textAlign:"left",
+      text:"",bindingKey,fontSizePt,fontWeight:"normal",textAlign:"left",
       wrapText:false,lineHeight:1.15,autoFitText:true,minFontSizePt:7,
       symbology:"",humanReadable:false,symbolKey:"",
       payload:"",ecc:"M",sourceType:"controlled-shipping-block",mimeType:"",
