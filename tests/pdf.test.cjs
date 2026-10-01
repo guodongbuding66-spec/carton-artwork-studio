@@ -93,4 +93,16 @@ const customSymbolImageText=Buffer.from(customSymbolImageProof).toString("latin1
 assert.ok(customSymbolImageText.includes("/Subtype /Image"),"Custom symbol review image should be embedded in proof PDF");
 assert.ok(customSymbolImageText.includes("/Im1 Do"),"Custom symbol image should be drawn in proof PDF");
 
+const itfPhysical=C.itf14Bars("1001234500001",{moduleMm:1.016,heightMm:32,quietModules:10,wideRatio:2.5,bearerBars:true,bearerBarThicknessMm:2.032});
+const itfBearerProof=P.createPdfBytes({
+  artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
+  customElements:[
+    {id:"itf-physical",type:"barcode",x:300,y:900,w:170,h:58,rotation:0,visible:true,humanReadable:true,payload:itfPhysical.payload,barcodeModel:itfPhysical}
+  ]
+});
+const itfBearerText=Buffer.from(itfBearerProof).toString("latin1");
+const baseRects=(text.match(/ re f/g)||[]).length;
+const itfRects=(itfBearerText.match(/ re f/g)||[]).length;
+assert.ok(itfRects>=baseRects+itfPhysical.bars.length+2,"ITF-14 Proof PDF should include vector bars plus top/bottom bearer bars");
+
 console.log("PDF tests passed.");
