@@ -100,3 +100,53 @@ button{cursor:pointer}.app{min-height:100vh;display:grid;grid-template-columns:2
 
 .panel-copy-tools{border:1px solid #d9e2ea;background:#fbfcfe;border-radius:8px;padding:9px;margin:10px 0}
 .panel-copy-tools .section-mini-title{margin-top:0}
+
+
+/* Batch Reviewer Center */
+.reviewer-toolbar{margin-bottom:10px}
+.reviewer-toolbar-inner{display:flex;align-items:end;gap:14px;flex-wrap:wrap}
+.reviewer-toolbar-inner>div:first-child{min-width:320px}
+.reviewer-kpis{margin-bottom:10px}
+.reviewer-safety-note{margin-bottom:10px}
+.reviewer-layout{display:grid;grid-template-columns:330px minmax(0,1fr);gap:12px;align-items:start}
+.reviewer-queue-card{position:sticky;top:0;max-height:calc(100vh - 120px);overflow:hidden}
+.reviewer-list{overflow:auto;max-height:calc(100vh - 185px);padding:8px;display:grid;gap:7px;background:#f8fafc}
+.reviewer-item{width:100%;border:1px solid var(--line);background:#fff;border-radius:7px;padding:10px;text-align:left;color:var(--text);cursor:pointer}
+.reviewer-item:hover{border-color:#9eb6ca;background:#fbfdff}
+.reviewer-item.active{border-color:#3978b8;background:#f2f8fd;box-shadow:0 0 0 2px rgba(57,120,184,.10)}
+.reviewer-item-top,.reviewer-item-meta,.reviewer-item-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.reviewer-item-meta{margin-top:7px;color:#536270;font-size:11px}
+.reviewer-item-foot{margin-top:8px;min-width:0}
+.reviewer-item-foot .subtle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reviewer-detail{display:grid;gap:12px;min-width:0}
+.reviewer-meta-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.reviewer-meta-grid>div{background:#fff;padding:9px 11px;min-width:0}
+.reviewer-meta-grid span{display:block;font-size:9px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+.reviewer-meta-grid strong{display:block;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reviewer-preview{min-height:420px;max-height:650px;overflow:auto;display:grid;place-items:center;padding:18px;background-image:linear-gradient(#e6ebef 1px,transparent 1px),linear-gradient(90deg,#e6ebef 1px,transparent 1px);background-size:20px 20px}
+.reviewer-preview svg{display:block;width:min(1000px,100%);height:auto;background:#fff;box-shadow:0 5px 20px rgba(30,45,60,.12)}
+.reviewer-gates{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.reviewer-gate{border:1px solid var(--line);border-radius:7px;padding:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px}
+.reviewer-gate.pass{border-color:#b9ddcf;background:#f3fbf7;color:#176548}
+.reviewer-gate.fail{border-color:#efc0c4;background:#fff7f7;color:#922d37}
+.reviewer-textarea{height:84px;min-height:84px;padding:9px;resize:vertical;line-height:1.45}
+.reviewer-decision-actions{justify-content:flex-end;margin-top:10px}
+.reviewer-preflight-summary{grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.reviewer-checks{border:1px solid var(--line);border-radius:7px;margin-top:10px;overflow:hidden}
+.reviewer-comment{border:1px solid var(--line);border-radius:7px;padding:9px 10px;margin-bottom:8px;display:grid;gap:5px;font-size:11px}
+.reviewer-comment.blocking{border-color:#e8b4b9;background:#fffafb}
+.reviewer-comment:last-child{margin-bottom:0}
+.reviewer-diff-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:10px}
+.reviewer-diff-head .subtle{margin-left:auto}
+@media(max-width:1180px){
+  .reviewer-layout{grid-template-columns:285px minmax(0,1fr)}
+  .reviewer-meta-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:900px){
+  .reviewer-layout{grid-template-columns:1fr}
+  .reviewer-queue-card{position:static;max-height:none}
+  .reviewer-list{max-height:360px}
+  .reviewer-toolbar-inner>div:first-child{min-width:0;flex:1 1 260px}
+  .reviewer-gates{grid-template-columns:1fr}
+  .reviewer-preview{min-height:300px}
+}
