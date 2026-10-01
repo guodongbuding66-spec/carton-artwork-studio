@@ -85,3 +85,6 @@ button{cursor:pointer}.app{min-height:100vh;display:grid;grid-template-columns:2
 .element-action-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:9px}
 .align-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:7px}
 .align-grid .tool{width:100%}
+
+
+.compact-select{width:auto;min-width:128px;max-width:180px}

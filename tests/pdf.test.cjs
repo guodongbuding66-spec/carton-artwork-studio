@@ -48,4 +48,17 @@ const textProof=P.createPdfBytes({
 const textProofText=Buffer.from(textProof).toString("latin1");
 assert.ok(textProofText.includes("(CUSTOM MARK) Tj"),"Custom text should be emitted into proof PDF");
 assert.ok(!textProofText.includes("DO NOT PRINT"),"Hidden custom text must not be emitted into proof PDF");
+
+const itf=C.itf14Bars("1001234500001",{moduleMm:.8,heightMm:30});
+const barSymbolProof=P.createPdfBytes({
+  artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
+  customElements:[
+    {id:"bar",type:"barcode",x:300,y:900,w:150,h:48,rotation:0,visible:true,humanReadable:true,payload:itf.payload,barcodeModel:itf},
+    {id:"sym",type:"symbol",x:480,y:900,w:48,h:48,rotation:0,visible:true,symbolKey:"THIS_WAY_UP"}
+  ]
+});
+const barSymbolText=Buffer.from(barSymbolProof).toString("latin1");
+assert.ok(barSymbolText.includes("(10012345000017) Tj"),"ITF-14 human-readable data should be emitted into proof PDF");
+assert.ok((barSymbolText.match(/ re f/g)||[]).length>(text.match(/ re f/g)||[]).length,"Custom barcode should add vector bar rectangles");
+assert.ok((barSymbolText.match(/ m .* l S/g)||[]).length>0,"Handling symbol should add vector line operations");
 console.log("PDF tests passed.");

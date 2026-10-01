@@ -260,6 +260,35 @@
     return {co,si,e,f,w,h};
   }
 
+  function handlingSymbolPdfOps(key,w,h) {
+    const ops=["1.2 w"];
+    const ln=(x1,y1,x2,y2)=>ops.push(lineOp(x1,y1,x2,y2,false));
+    if(key==="THIS_WAY_UP"){
+      const x1=w*.34,x2=w*.66,top=h*.88,bottom=h*.15,headH=h*.18,headW=w*.11;
+      ln(x1,bottom,x1,top-headH);ln(x1,top-headH,x1-headW,top-headH*1.55);ln(x1,top-headH,x1+headW,top-headH*1.55);
+      ln(x2,bottom,x2,top-headH);ln(x2,top-headH,x2-headW,top-headH*1.55);ln(x2,top-headH,x2+headW,top-headH*1.55);
+      return ops;
+    }
+    if(key==="KEEP_DRY"){
+      const cx=w/2,base=h*.52,rx=w*.34;
+      ln(cx-rx,base,cx-rx*.55,base+h*.15);
+      ln(cx-rx*.55,base+h*.15,cx,base+h*.22);
+      ln(cx,base+h*.22,cx+rx*.55,base+h*.15);
+      ln(cx+rx*.55,base+h*.15,cx+rx,base);
+      ln(cx,base,cx,h*.2);ln(cx,h*.2,cx+w*.09,h*.12);
+      ln(w*.18,h*.88,w*.12,h*.72);ln(w*.82,h*.88,w*.88,h*.72);
+      return ops;
+    }
+    if(key==="FRAGILE"){
+      ln(w*.28,h*.86,w*.72,h*.86);ln(w*.28,h*.86,w*.36,h*.52);ln(w*.72,h*.86,w*.64,h*.52);
+      ln(w*.36,h*.52,w*.45,h*.39);ln(w*.64,h*.52,w*.55,h*.39);
+      ln(w*.45,h*.39,w*.55,h*.39);ln(w*.5,h*.39,w*.5,h*.17);ln(w*.32,h*.14,w*.68,h*.14);
+      return ops;
+    }
+    ops.push(rectOp(1,1,Math.max(1,w-2),Math.max(1,h-2),false));
+    return ops;
+  }
+
   function customElementOps(elements, geometry, writeText) {
     const ops=[];
     for(const element of Array.isArray(elements)?elements:[]) {
@@ -279,6 +308,30 @@
           const y=geometry.totalHeight-Number(element.y||0)-fontSizeMm-(i*fontSizeMm*1.2);
           ops.push(writeText(x,y,fontSizePt,line,-Number(element.rotation||0)));
         }
+      } else if(element.type==="barcode"&&element.barcodeModel?.bars?.length) {
+        const model=element.barcodeModel;
+        const hri=element.humanReadable!==false;
+        const boxW=Math.max(1,Number(element.w||1)),boxH=Math.max(1,Number(element.h||1));
+        const hriH=hri?Math.min(8,boxH*.22):0;
+        const maxW=Math.max(1,boxW-4),maxH=Math.max(1,boxH-hriH-3);
+        const sx=maxW/Math.max(1,Number(model.widthMm||1));
+        const sy=maxH/Math.max(1,Number(model.heightMm||1));
+        ops.push("q");
+        ops.push(`${m.co.toFixed(8)} ${m.si.toFixed(8)} ${(-m.si).toFixed(8)} ${m.co.toFixed(8)} ${m.e.toFixed(3)} ${m.f.toFixed(3)} cm`);
+        ops.push("0 g");
+        for(const b of model.bars){
+          ops.push(rectOp(2+Number(b.x||0)*sx,hriH+2,Math.max(.12,Number(b.w||0)*sx),Math.max(.5,Number(b.h||0)*sy),true));
+        }
+        if(hri){
+          const label=String(model.payload||element.payload||"");
+          ops.push(writeText(2,2,7,label,0));
+        }
+        ops.push("Q");
+      } else if(element.type==="symbol"&&element.symbolKey) {
+        ops.push("q");
+        ops.push(`${m.co.toFixed(8)} ${m.si.toFixed(8)} ${(-m.si).toFixed(8)} ${m.co.toFixed(8)} ${m.e.toFixed(3)} ${m.f.toFixed(3)} cm`);
+        ops.push(...handlingSymbolPdfOps(String(element.symbolKey),Number(element.w||1),Number(element.h||1)));
+        ops.push("Q");
       } else if(element.type==="qr-generated"&&Array.isArray(element.matrix)&&element.matrix.length) {
         const matrix=element.matrix,quiet=4,n=matrix.length;
         const size=Math.min(Number(element.w||1),Number(element.h||1));

@@ -111,6 +111,27 @@
         qr.status="error";qr.blocking=true;qr.title="QR vector encoding";qr.detail=e.message||String(e);
       }
     }
+    const customBars=(Array.isArray(artwork.elements)?artwork.elements:[]).filter(e=>e.visible!==false&&e.type==="barcode");
+    for(const element of customBars){
+      let item=(groups.Assets||[]).find(x=>x.id===`barcode-data-${element.id||element.name}`);
+      try{
+        const itf=String(element.symbology||"").toUpperCase()==="ITF14";
+        const model=itf?C.itf14Bars(element.payload||""):C.code128Bars(element.payload||"");
+        if(item){
+          item.status="pass";item.blocking=false;
+          item.title=itf?"ITF-14 / GTIN-14 vector encoding":"Code 128-B vector encoding";
+          item.detail=itf
+            ? `GTIN-14 ${model.payload} · check digit ${model.checkDigit} · vector bars generated.`
+            : `Encodable payload · ${model.bars.length} vector bars.`;
+        }
+      }catch(err){
+        if(!item){
+          item={id:`barcode-data-${element.id}`,title:"Barcode encoding",category:"Assets"};
+          (groups.Assets||(groups.Assets=[])).push(item);
+        }
+        item.status="error";item.blocking=true;item.detail=err.message||String(err);
+      }
+    }
     return groups;
   }
   function checks() { return checksFor(state.artwork); }
@@ -334,7 +355,7 @@
     const selected=selectedArtworkElement();
     const locked=isArtworkLocked();
     const rows=[...elements].reverse().map((e)=>{
-      const label=e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":e.type==="text"?"TEXT":"IMG";
+      const label=e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":e.type==="text"?"TEXT":e.type==="barcode"?"BAR":e.type==="symbol"?"SYM":"IMG";
       return `<button type="button" class="element-row ${state.selectedElementId===e.id?"active":""} ${e.visible===false?"muted":""}" data-select-element="${esc(e.id)}">
         <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
@@ -362,6 +383,22 @@
         ${selected.type==="qr-generated"?`
           <div class="field"><label>QR payload</label><textarea class="input" rows="3" data-element-prop="payload">${esc(selected.payload||"")}</textarea></div>
           <div class="field"><label>Error correction</label><select class="select" data-element-prop="ecc">${["L","M","Q","H"].map(x=>`<option ${selected.ecc===x?"selected":""}>${x}</option>`).join("")}</select></div>`:""}
+        ${selected.type==="barcode"?`
+          <div class="field"><label>Barcode payload</label><input class="input mono" data-element-prop="payload" value="${esc(selected.payload||"")}"/></div>
+          <div class="row2">
+            <div class="field"><label>Symbology</label><select class="select" data-element-prop="symbology"><option value="CODE128B" ${selected.symbology!=="ITF14"?"selected":""}>Code 128-B</option><option value="ITF14" ${selected.symbology==="ITF14"?"selected":""}>ITF-14 / GTIN-14</option></select></div>
+            <label class="toggle-line"><input type="checkbox" data-element-hri ${selected.humanReadable!==false?"checked":""}/> Human readable</label>
+          </div>
+          <div class="notice">ITF-14 仅接受 GTIN 数字；13 位会自动计算校验位，14 位会验证校验位。</div>
+        `:""}
+        ${selected.type==="symbol"?`
+          <div class="field"><label>Handling symbol</label><select class="select" data-element-prop="symbolKey">
+            <option value="THIS_WAY_UP" ${selected.symbolKey==="THIS_WAY_UP"?"selected":""}>This Way Up</option>
+            <option value="KEEP_DRY" ${selected.symbolKey==="KEEP_DRY"?"selected":""}>Keep Dry</option>
+            <option value="FRAGILE" ${selected.symbolKey==="FRAGILE"?"selected":""}>Fragile</option>
+          </select></div>
+          <div class="notice warn">当前为 Review Library 矢量符号。正式生产须绑定客户/工厂批准的受控 Symbol Master。</div>
+        `:""}
         <div class="row2">
           <div class="field"><label>X mm</label><input class="input mono" type="number" step="1" data-element-prop="x" value="${esc(selected.x)}"/></div>
           <div class="field"><label>Y mm</label><input class="input mono" type="number" step="1" data-element-prop="y" value="${esc(selected.y)}"/></div>
@@ -389,8 +426,15 @@
         <input id="art-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <input id="art-qr-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <button class="btn small" data-action="add-text-element" ${locked?"disabled":""}>＋ 文字</button>
+        <button class="btn small" data-action="add-barcode-element" ${locked?"disabled":""}>＋ 条码</button>
         <button class="btn small" data-action="upload-image-trigger" ${locked?"disabled":""}>＋ 图片 / Logo</button>
         <button class="btn small" data-action="upload-qr-trigger" ${locked?"disabled":""}>＋ 上传二维码</button>
+        <select id="handling-symbol-select" class="select compact-select" ${locked?"disabled":""}>
+          <option value="THIS_WAY_UP">This Way Up</option>
+          <option value="KEEP_DRY">Keep Dry</option>
+          <option value="FRAGILE">Fragile</option>
+        </select>
+        <button class="btn small" data-action="add-handling-symbol" ${locked?"disabled":""}>＋ 包装图标</button>
       </div>
       <div class="field" style="margin-top:8px"><label>生成二维码内容</label><textarea id="custom-qr-payload" class="input" rows="2" placeholder="URL / SKU / GS1 Digital Link / 自定义内容">${esc(state.artwork.qr||"")}</textarea></div>
       <div class="row2">
@@ -442,6 +486,52 @@
     return `<div class="comments">${composer}${list}</div>`;
   }
 
+  function handlingSymbolSvgBody(key,w,h){
+    const sw=Math.max(1.2,Math.min(w,h)*0.045);
+    if(key==="THIS_WAY_UP"){
+      const x1=w*.34,x2=w*.66,top=h*.12,bottom=h*.85,head=h*.22;
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="square" stroke-linejoin="miter">
+        <line x1="${x1}" y1="${bottom}" x2="${x1}" y2="${top+head}"/><polyline points="${x1-w*.12},${top+head} ${x1},${top} ${x1+w*.12},${top+head}"/>
+        <line x1="${x2}" y1="${bottom}" x2="${x2}" y2="${top+head}"/><polyline points="${x2-w*.12},${top+head} ${x2},${top} ${x2+w*.12},${top+head}"/>
+      </g>`;
+    }
+    if(key==="KEEP_DRY"){
+      const cx=w/2,cy=h*.43,rx=w*.36,ry=h*.25;
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M ${cx-rx} ${cy} Q ${cx} ${cy-ry*1.8} ${cx+rx} ${cy} Q ${cx+rx*.5} ${cy-ry*.25} ${cx} ${cy} Q ${cx-rx*.5} ${cy-ry*.25} ${cx-rx} ${cy}"/>
+        <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${h*.79}"/><path d="M ${cx} ${h*.79} q 0 ${h*.09} ${w*.09} ${h*.09}"/>
+        <line x1="${w*.18}" y1="${h*.08}" x2="${w*.12}" y2="${h*.20}"/><line x1="${w*.82}" y1="${h*.08}" x2="${w*.88}" y2="${h*.20}"/>
+      </g>`;
+    }
+    if(key==="FRAGILE"){
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M ${w*.28} ${h*.12} L ${w*.72} ${h*.12} L ${w*.63} ${h*.48} Q ${w*.58} ${h*.62} ${w*.5} ${h*.62} Q ${w*.42} ${h*.62} ${w*.37} ${h*.48} Z"/>
+        <line x1="${w*.5}" y1="${h*.62}" x2="${w*.5}" y2="${h*.84}"/><line x1="${w*.32}" y1="${h*.86}" x2="${w*.68}" y2="${h*.86}"/>
+      </g>`;
+    }
+    return `<rect x="1" y="1" width="${Math.max(1,w-2)}" height="${Math.max(1,h-2)}" fill="none" stroke="#bc2f3b" stroke-width="${sw}"/>`;
+  }
+
+  function barcodeSvgBody(element,w,h){
+    try{
+      const itf=String(element.symbology||"").toUpperCase()==="ITF14";
+      const model=itf
+        ? C.itf14Bars(element.payload||"",{moduleMm:.8,heightMm:30})
+        : C.code128Bars(element.payload||"",{moduleMm:.42,heightMm:28});
+      const hri=element.humanReadable!==false;
+      const hriH=hri?Math.min(8,h*.22):0;
+      const maxW=Math.max(1,w-4),maxH=Math.max(1,h-hriH-3);
+      const sx=maxW/Math.max(1,model.widthMm),sy=maxH/Math.max(1,model.heightMm);
+      const x0=2,y0=1;
+      const bars=model.bars.map(b=>`<rect x="${(x0+b.x*sx).toFixed(3)}" y="${y0}" width="${Math.max(.15,b.w*sx).toFixed(3)}" height="${Math.max(.5,b.h*sy).toFixed(3)}" fill="#000"/>`).join("");
+      const label=itf?(model.payload||element.payload||""):(element.payload||"");
+      const text=hri?`<text x="${w/2}" y="${h-1.5}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${Math.max(3,Math.min(5.5,hriH*.65))}" fill="#000">${esc(label)}</text>`:"";
+      return `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/>${bars}${text}`;
+    }catch(err){
+      return `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff" stroke="#bc2f3b"/><text x="5" y="15" font-size="9" fill="#bc2f3b">Invalid barcode</text>`;
+    }
+  }
+
   function renderCustomElements(artwork=state.artwork,mode="editor"){
     const elements=Array.isArray(artwork.elements)?artwork.elements:[];
     return elements.filter((e)=>e.visible!==false).map((e)=>{
@@ -458,6 +548,10 @@
         const tx=e.textAlign==="center"?w/2:e.textAlign==="right"?w:0;
         const weight=e.fontWeight==="bold"?"700":"400";
         body=`<text x="${tx}" y="${fontMm}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="${fontMm}" font-weight="${weight}" fill="#000">${lines.map((line,i)=>`<tspan x="${tx}" dy="${i===0?0:fontMm*1.2}">${esc(line)}</tspan>`).join("")}</text>`;
+      }else if(e.type==="barcode"){
+        body=barcodeSvgBody(e,w,h);
+      }else if(e.type==="symbol"){
+        body=handlingSymbolSvgBody(e.symbolKey,w,h);
       }else if(e.type==="qr-generated"){
         try{
           const model=C.qrMatrix(e.payload||"",e.ecc||"M");
@@ -1177,6 +1271,40 @@
     toast("矢量二维码已添加","success");
   }
 
+  function addBarcodeElement(){
+    if(!localArtworkEditable()) return;
+    const w=150,h=48,p=defaultElementPlacement(w,h);
+    const el={
+      id:newElementId(),type:"barcode",name:"Barcode",
+      x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
+      panelId:p.panelId,constrainToPanel:true,
+      text:"",fontSizePt:12,fontWeight:"normal",textAlign:"center",
+      symbology:"CODE128B",humanReadable:true,symbolKey:"",
+      payload:String(state.artwork.barcode||"ABC123"),ecc:"M",
+      sourceType:"generated-vector",mimeType:"",dataUrl:"",pixelWidth:0,pixelHeight:0
+    };
+    artworkElements().push(el);state.selectedElementId=el.id;
+    persistLocalDraft();render();toast("条码元素已添加","success");
+  }
+
+  function addHandlingSymbol(){
+    if(!localArtworkEditable()) return;
+    const key=String(document.getElementById("handling-symbol-select")?.value||"THIS_WAY_UP");
+    const names={THIS_WAY_UP:"This Way Up",KEEP_DRY:"Keep Dry",FRAGILE:"Fragile"};
+    const size=48,p=defaultElementPlacement(size,size);
+    const el={
+      id:newElementId(),type:"symbol",name:names[key]||key,
+      x:p.x,y:p.y,w:size,h:size,rotation:0,locked:false,visible:true,
+      panelId:p.panelId,constrainToPanel:true,
+      text:"",fontSizePt:12,fontWeight:"normal",textAlign:"center",
+      symbology:"",humanReadable:false,symbolKey:key,
+      payload:"",ecc:"M",sourceType:"builtin-review-symbol",mimeType:"",
+      dataUrl:"",pixelWidth:0,pixelHeight:0
+    };
+    artworkElements().push(el);state.selectedElementId=el.id;
+    persistLocalDraft();render();toast("包装图标已添加（Review Library）","success");
+  }
+
   function addTextElement(){
     if(!localArtworkEditable()) return;
     const w=120,h=28,p=defaultElementPlacement(w,h);
@@ -1275,6 +1403,11 @@
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
       e.visible=Boolean(visible.checked);persistLocalDraft();render();
     };
+    const hri=document.querySelector("[data-element-hri]");
+    if(hri) hri.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      e.humanReadable=Boolean(hri.checked);persistLocalDraft();render();
+    };
     const constrain=document.querySelector("[data-element-constrain]");
     if(constrain) constrain.onchange=()=>{
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
@@ -1317,6 +1450,8 @@
     if(action==="upload-image-trigger"){document.getElementById("art-image-file")?.click();return;}
     if(action==="upload-qr-trigger"){document.getElementById("art-qr-image-file")?.click();return;}
     if(action==="add-text-element") return addTextElement();
+    if(action==="add-barcode-element") return addBarcodeElement();
+    if(action==="add-handling-symbol") return addHandlingSymbol();
     if(action==="add-generated-qr") return addGeneratedQrElement();
     if(action==="duplicate-element") return duplicateSelectedElement();
     if(action==="layer-front") return reorderSelectedElement("front");
@@ -2272,6 +2407,14 @@
       if(e.type==="qr-generated"){
         try{return {...e,matrix:C.qrMatrix(e.payload||"",e.ecc||"M").matrix};}
         catch{return {...e,matrix:[]};}
+      }
+      if(e.type==="barcode"){
+        try{
+          const model=String(e.symbology||"").toUpperCase()==="ITF14"
+            ? C.itf14Bars(e.payload||"",{moduleMm:.8,heightMm:30})
+            : C.code128Bars(e.payload||"",{moduleMm:.42,heightMm:28});
+          return {...e,barcodeModel:model};
+        }catch{return {...e,barcodeModel:null};}
       }
       return {...e};
     });
