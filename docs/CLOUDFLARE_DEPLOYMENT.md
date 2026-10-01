@@ -30,6 +30,7 @@ CLOUDFLARE_API_TOKEN
 CLOUDFLARE_ACCOUNT_ID
 CLOUDFLARE_ACCESS_CLIENT_ID
 CLOUDFLARE_ACCESS_CLIENT_SECRET
+CLOUDFLARE_PDFX_VALIDATOR_TOKEN
 ```
 
 Repository **Variables**:
@@ -44,7 +45,7 @@ CLOUDFLARE_PDFX_VALIDATOR_URL=https://<trusted-validator-endpoint>   # required 
 
 Use a narrowly scoped Cloudflare API token. Do not commit it.
 
-`PDFX_VALIDATOR_TOKEN` is required by the v2 trust policy. Provision it directly as a Cloudflare Worker secret. Do not place it in repository variables.
+`PDFX_VALIDATOR_TOKEN` is required by the v2 trust policy. Store its source value as the GitHub Environment secret `CLOUDFLARE_PDFX_VALIDATOR_TOKEN`; the staging workflow pipes it directly to `wrangler secret put PDFX_VALIDATOR_TOKEN`. Do not place it in repository variables or source control.
 
 ## 3. Deploy staging
 
@@ -54,8 +55,9 @@ The manual workflow `.github/workflows/deploy-staging.yml`:
 2. generates a staging Wrangler config;
 3. applies D1 migrations remotely;
 4. deploys the Worker/assets;
-5. runs an Access-authenticated post-deploy smoke test for service identity, version, D1, R2, Assets, auth-bypass state, and trusted-validator configuration;
-6. uploads `staging-acceptance.json` as a GitHub Actions artifact.
+5. installs the trusted validator bearer token as the Worker `PDFX_VALIDATOR_TOKEN` secret;
+6. runs an Access-authenticated post-deploy smoke test for service identity, version, D1, R2, Assets, auth-bypass state, and trusted-validator configuration;
+7. uploads `staging-acceptance.json` as a GitHub Actions artifact.
 
 Trigger it only after the secrets and variables above are configured.
 

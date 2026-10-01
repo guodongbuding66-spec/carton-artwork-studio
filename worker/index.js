@@ -7,6 +7,8 @@ import { inspectProductionAsset, safeAssetCode } from "./production-assets.js";
 import { renderEmbeddedArtworkPdf } from "./production-renderer.js";
 import { runExternalPdfxValidation, validateValidatorConfig } from "./pdfx-validator.js";
 import { PDFX_PRODUCTION_PROMOTION_POLICY } from "./pdfx-promotion-policy.js";
+import { collectPdfxPromotionReadiness } from "./pdfx-promotion-readiness.js";
+import { evidenceRowToPolicyInput, normalizePromotionEvidenceType, parseEvidenceMetadata, sanitizeEvidenceFilename, validatePromotionEvidence } from "./pdfx-promotion-evidence.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -107,7 +109,8 @@ const REQUIRED_SCHEMA_TABLES = Object.freeze([
   "mapping_profiles","import_jobs","import_rows",
   "users","user_roles","security_events",
   "reference_records","production_policies","production_policy_approvals",
-  "system_readiness_runs","production_assets","production_asset_approvals","pdfx_validation_runs"
+  "system_readiness_runs","production_assets","production_asset_approvals","pdfx_validation_runs",
+  "pdfx_promotion_evidence","pdfx_promotion_evidence_approvals"
 ]);
 
 async function collectSystemReadiness(env, identity) {
@@ -156,6 +159,7 @@ async function collectSystemReadiness(env, identity) {
     loadApprovedProductionAssets(env)
   ]);
   const productionReadiness=summarizeProductionReadiness(policyRows,undefined,approvedAssets);
+  const pdfxPromotionReadiness=await collectPdfxPromotionReadiness(env.DB);
 
   const report=buildSystemReadiness({
     identitySource:identity?.source||null,
@@ -178,7 +182,8 @@ async function collectSystemReadiness(env, identity) {
     roleUsers,
     lastR2Probe:lastProbe?{status:lastProbe.status,createdAt:lastProbe.createdAt}:null,
     productionReadiness,
-    pdfxValidatorConfigured:validateValidatorConfig(env).ok
+    pdfxValidatorConfigured:validateValidatorConfig(env).ok,
+    pdfxPromotionReadiness
   });
 
   return {
@@ -205,7 +210,8 @@ async function collectSystemReadiness(env, identity) {
       }:null,
       bindings:{d1:Boolean(env.DB),r2:Boolean(env.ARTWORK_FILES),assets:Boolean(env.ASSETS)},
       auth:{identitySource:identity?.source||null,bypassEnabled:String(env.AUTH_BYPASS||"")==="1",bootstrapAdminConfigured:Boolean(String(env.BOOTSTRAP_ADMIN_EMAIL||"").trim())},
-      pdfxValidator:{configured:validateValidatorConfig(env).ok}
+      pdfxValidator:{configured:validateValidatorConfig(env).ok},
+      pdfxPromotionReadiness
     }
   };
 }
@@ -366,6 +372,215 @@ export default {
           reason:"Admin-initiated staging readiness deep check"
         });
         return json({data:{probe,readiness,systemRunId}},{status:201});
+      }
+
+      if(request.method==="GET"&&url.pathname==="/api/pdfx/promotion/readiness"){
+        const readiness=await collectPdfxPromotionReadiness(env.DB);
+        return json({data:readiness});
+      }
+
+      if(request.method==="GET"&&url.pathname==="/api/pdfx/promotion/evidence"){
+        const type=normalizePromotionEvidenceType(url.searchParams.get("type"));
+        const where=[],binds=[];
+        if(type){where.push("e.evidence_type=?");binds.push(type);}
+        const {results}=await env.DB.prepare(`
+          SELECT e.id,e.evidence_type AS evidenceType,e.profile,e.policy_version AS policyVersion,e.artifact_sha256 AS artifactSha256,
+                 e.validator_name AS validatorName,e.validator_version AS validatorVersion,
+                 e.ruleset_id AS rulesetId,e.ruleset_version AS rulesetVersion,e.ruleset_sha256 AS rulesetSha256,
+                 e.print_service_provider AS printServiceProvider,e.rip_product AS ripProduct,e.rip_version AS ripVersion,
+                 e.output_device AS outputDevice,e.suite,e.suite_version AS suiteVersion,
+                 e.conformance_level AS conformanceLevel,e.tested_at AS testedAt,
+                 e.actual_production_workflow AS actualProductionWorkflow,e.no_pdf_repair AS noPdfRepair,
+                 e.evidence_sha256 AS evidenceSha256,e.filename,e.media_type AS mediaType,e.metadata_json AS metadataJson,
+                 e.status,e.uploaded_by AS uploadedBy,e.submitted_by AS submittedBy,e.submitted_at AS submittedAt,
+                 e.approved_by AS approvedBy,e.approved_at AS approvedAt,e.created_at AS createdAt,e.updated_at AS updatedAt,
+                 (SELECT a.decision FROM pdfx_promotion_evidence_approvals a WHERE a.evidence_id=e.id ORDER BY a.created_at DESC LIMIT 1) AS lastDecision,
+                 (SELECT a.comment FROM pdfx_promotion_evidence_approvals a WHERE a.evidence_id=e.id ORDER BY a.created_at DESC LIMIT 1) AS lastComment
+          FROM pdfx_promotion_evidence e
+          ${where.length?`WHERE ${where.join(" AND ")}`:""}
+          ORDER BY e.created_at DESC
+          LIMIT 500
+        `).bind(...binds).all();
+        return json({data:(results||[]).map((x)=>{
+          let metadata={};
+          try{metadata=JSON.parse(x.metadataJson||"{}");}catch{}
+          return {...x,actualProductionWorkflow:Boolean(x.actualProductionWorkflow),noPdfRepair:Boolean(x.noPdfRepair),metadata};
+        })});
+      }
+
+      if(request.method==="POST"&&url.pathname==="/api/pdfx/promotion/evidence/upload"){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const type=normalizePromotionEvidenceType(url.searchParams.get("type"));
+        if(!type)return err(400,"INVALID_EVIDENCE_TYPE","type must be SECONDARY_VALIDATION, RIP_QUALIFICATION or PRODUCTION_TRIAL.");
+        const filename=sanitizeEvidenceFilename(url.searchParams.get("filename")||"evidence.bin");
+        const decodeHeader=(name)=>{
+          const raw=String(request.headers.get(name)||"");
+          try{return decodeURIComponent(raw).trim();}catch{return raw.trim();}
+        };
+        const metadata=parseEvidenceMetadata(decodeHeader("x-evidence-metadata"));
+        const declared=Number(request.headers.get("content-length")||0);
+        if(declared>24*1024*1024)return err(413,"EVIDENCE_TOO_LARGE","Promotion evidence exceeds 24 MB limit.");
+        const bytes=new Uint8Array(await request.arrayBuffer());
+        if(bytes.length===0)return err(400,"EVIDENCE_EMPTY","Promotion evidence file is empty.");
+        if(bytes.length>24*1024*1024)return err(413,"EVIDENCE_TOO_LARGE","Promotion evidence exceeds 24 MB limit.");
+        const digest=await crypto.subtle.digest("SHA-256",bytes);
+        const evidenceSha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        const validation=validatePromotionEvidence(type,metadata,evidenceSha256);
+        if(!validation.ok)return err(400,"EVIDENCE_VALIDATION_FAILED","Promotion evidence metadata does not satisfy the v2 policy.",validation.errors);
+        const d=validation.data;
+        const id=crypto.randomUUID();
+        const objectKey=`_pdfx-promotion-evidence/${type.toLowerCase()}/${id}/${evidenceSha256.slice(0,16)}-${filename}`;
+        const mediaType=request.headers.get("content-type")||"application/octet-stream";
+        try{
+          await env.ARTWORK_FILES.put(objectKey,bytes,{httpMetadata:{contentType:mediaType}});
+          await env.DB.prepare(`
+            INSERT INTO pdfx_promotion_evidence(
+              id,evidence_type,profile,policy_version,artifact_sha256,validator_name,validator_version,
+              ruleset_id,ruleset_version,ruleset_sha256,
+              print_service_provider,rip_product,rip_version,output_device,
+              suite,suite_version,conformance_level,tested_at,
+              actual_production_workflow,no_pdf_repair,
+              object_key,evidence_sha256,filename,media_type,metadata_json,
+              status,uploaded_by,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'DRAFT',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+          `).bind(
+            id,type,d.profile,d.policyVersion,d.artifactSha256||null,d.validator||null,d.version||null,
+            d.rulesetId||null,d.rulesetVersion||null,d.rulesetSha256||null,
+            d.printServiceProvider||null,d.ripProduct||null,d.ripVersion||null,d.outputDevice||null,
+            d.suite||null,d.suiteVersion||null,d.conformanceLevel||null,d.testedAt||null,
+            d.actualProductionWorkflow?1:0,d.noPdfRepair?1:0,
+            objectKey,evidenceSha256,filename,mediaType,JSON.stringify({...metadata,result:d.status}),
+            identity.email
+          ).run();
+        }catch(e){
+          try{await env.ARTWORK_FILES.delete(objectKey);}catch{}
+          throw e;
+        }
+        await audit(env,identity,"PDFX_PROMOTION_EVIDENCE",id,"UPLOAD",{
+          newValue:{evidenceType:type,artifactSha256:d.artifactSha256||null,evidenceSha256,filename,policyVersion:validation.policyVersion},
+          reason:"PDF/X production-promotion evidence uploaded"
+        });
+        return json({data:{
+          id,evidenceType:type,status:"DRAFT",artifactSha256:d.artifactSha256||null,
+          evidenceSha256,filename,policyVersion:validation.policyVersion
+        }},{status:201});
+      }
+
+      const promotionEvidenceFileMatch=/^\/api\/pdfx\/promotion\/evidence\/([^/]+)\/file$/.exec(url.pathname);
+      if(request.method==="GET"&&promotionEvidenceFileMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const id=promotionEvidenceFileMatch[1];
+        const evidence=await env.DB.prepare(
+          "SELECT filename,object_key,evidence_sha256,media_type FROM pdfx_promotion_evidence WHERE id=?"
+        ).bind(id).first();
+        if(!evidence)return err(404,"NOT_FOUND","Promotion evidence not found.");
+        const object=await env.ARTWORK_FILES.get(evidence.object_key);
+        if(!object)return err(404,"EVIDENCE_OBJECT_MISSING","Promotion evidence object is missing from R2.");
+        const bytes=new Uint8Array(await object.arrayBuffer());
+        const digest=await crypto.subtle.digest("SHA-256",bytes);
+        const actual=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
+        if(actual!==evidence.evidence_sha256){
+          await securityEvent(env,identity,"PDFX_PROMOTION_EVIDENCE_HASH_MISMATCH",request,{evidenceId:id,expected:evidence.evidence_sha256,actual});
+          return err(409,"EVIDENCE_HASH_MISMATCH","Promotion evidence bytes do not match the registered SHA-256.");
+        }
+        return new Response(bytes,{
+          headers:{
+            "content-type":evidence.media_type||"application/octet-stream",
+            "content-disposition":`attachment; filename="${sanitizeEvidenceFilename(evidence.filename)}"`,
+            "cache-control":"no-store",
+            "x-cas-evidence-sha256":actual
+          }
+        });
+      }
+
+      const promotionEvidenceSubmitMatch=/^\/api\/pdfx\/promotion\/evidence\/([^/]+)\/submit$/.exec(url.pathname);
+      if(request.method==="POST"&&promotionEvidenceSubmitMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const id=promotionEvidenceSubmitMatch[1],b=await bodyJson(request);
+        const evidence=await env.DB.prepare("SELECT * FROM pdfx_promotion_evidence WHERE id=?").bind(id).first();
+        if(!evidence)return err(404,"NOT_FOUND","Promotion evidence not found.");
+        if(!["DRAFT","REJECTED"].includes(String(evidence.status).toUpperCase())){
+          return err(409,"EVIDENCE_SUBMIT_STATE","Only DRAFT or REJECTED promotion evidence can be submitted.");
+        }
+        const object=await env.ARTWORK_FILES.head(evidence.object_key);
+        if(!object)return err(409,"EVIDENCE_OBJECT_MISSING","Promotion evidence object is missing from R2.");
+        if(String(evidence.policy_version||"")!==PDFX_PRODUCTION_PROMOTION_POLICY.version){
+          return err(409,"EVIDENCE_POLICY_STALE","Promotion evidence was created under an older policy and must be requalified.",{
+            evidencePolicyVersion:evidence.policy_version,currentPolicyVersion:PDFX_PRODUCTION_PROMOTION_POLICY.version
+          });
+        }
+        const policyInput=evidenceRowToPolicyInput(evidence);
+        const validation=validatePromotionEvidence(evidence.evidence_type,policyInput,evidence.evidence_sha256);
+        if(!validation.ok)return err(409,"EVIDENCE_VALIDATION_FAILED","Promotion evidence no longer satisfies the v2 policy.",validation.errors);
+        await env.DB.prepare(`
+          UPDATE pdfx_promotion_evidence
+          SET status='SUBMITTED',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,
+              approved_by=NULL,approved_at=NULL,updated_at=CURRENT_TIMESTAMP
+          WHERE id=?
+        `).bind(identity.email,id).run();
+        await audit(env,identity,"PDFX_PROMOTION_EVIDENCE",id,"SUBMIT_REVIEW",{
+          newValue:{status:"SUBMITTED",evidenceType:evidence.evidence_type,evidenceSha256:evidence.evidence_sha256},
+          reason:b.reason||"Promotion evidence submitted for four-eyes review"
+        });
+        return json({data:{id,status:"SUBMITTED",submittedBy:identity.email}},{status:201});
+      }
+
+      const promotionEvidenceApprovalMatch=/^\/api\/pdfx\/promotion\/evidence\/([^/]+)\/approval$/.exec(url.pathname);
+      if(request.method==="POST"&&promotionEvidenceApprovalMatch){
+        if(!env.ARTWORK_FILES)return err(503,"R2_NOT_BOUND","Cloudflare R2 binding ARTWORK_FILES is not configured.");
+        const id=promotionEvidenceApprovalMatch[1],b=await bodyJson(request);
+        const evidence=await env.DB.prepare("SELECT * FROM pdfx_promotion_evidence WHERE id=?").bind(id).first();
+        if(!evidence)return err(404,"NOT_FOUND","Promotion evidence not found.");
+        if(String(evidence.status).toUpperCase()!=="SUBMITTED"){
+          return err(409,"EVIDENCE_NOT_SUBMITTED","Only SUBMITTED promotion evidence can be approved or rejected.");
+        }
+        if(String(evidence.submitted_by||"").toLowerCase()===identity.email.toLowerCase()){
+          await securityEvent(env,identity,"PDFX_PROMOTION_EVIDENCE_SELF_APPROVAL_BLOCKED",request,{evidenceId:id});
+          return err(409,"FOUR_EYES_REQUIRED","The promotion evidence submitter cannot approve or reject the same evidence.");
+        }
+        const decision=String(b.decision||"").toUpperCase();
+        if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
+        if(decision==="APPROVE"){
+          if(String(evidence.policy_version||"")!==PDFX_PRODUCTION_PROMOTION_POLICY.version){
+            return err(409,"EVIDENCE_POLICY_STALE","Promotion evidence was created under an older policy and must be requalified.",{
+              evidencePolicyVersion:evidence.policy_version,currentPolicyVersion:PDFX_PRODUCTION_PROMOTION_POLICY.version
+            });
+          }
+          const object=await env.ARTWORK_FILES.get(evidence.object_key);
+          if(!object)return err(409,"EVIDENCE_OBJECT_MISSING","Promotion evidence object is missing from R2.");
+          const bytes=new Uint8Array(await object.arrayBuffer());
+          const digest=await crypto.subtle.digest("SHA-256",bytes);
+          const actual=[...new Uint8Array(digest)].map((x)=>x.toString(16).padStart(2,"0")).join("");
+          if(actual!==evidence.evidence_sha256){
+            await securityEvent(env,identity,"PDFX_PROMOTION_EVIDENCE_HASH_MISMATCH",request,{evidenceId:id,expected:evidence.evidence_sha256,actual});
+            return err(409,"EVIDENCE_HASH_MISMATCH","Promotion evidence bytes no longer match the registered SHA-256.");
+          }
+          const validation=validatePromotionEvidence(
+            evidence.evidence_type,
+            evidenceRowToPolicyInput(evidence),
+            evidence.evidence_sha256
+          );
+          if(!validation.ok)return err(409,"EVIDENCE_VALIDATION_FAILED","Promotion evidence failed approval-time policy validation.",validation.errors);
+        }
+        const approvalId=crypto.randomUUID();
+        const next=decision==="APPROVE"?"APPROVED":"REJECTED";
+        await env.DB.batch([
+          env.DB.prepare(`
+            INSERT INTO pdfx_promotion_evidence_approvals(id,evidence_id,reviewer,decision,comment,created_at)
+            VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
+          `).bind(approvalId,id,identity.email,decision,b.comment||""),
+          env.DB.prepare(`
+            UPDATE pdfx_promotion_evidence
+            SET status=?,approved_by=?,approved_at=${decision==="APPROVE"?"CURRENT_TIMESTAMP":"NULL"},updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+          `).bind(next,decision==="APPROVE"?identity.email:null,id)
+        ]);
+        const promotionReadiness=await collectPdfxPromotionReadiness(env.DB);
+        await audit(env,identity,"PDFX_PROMOTION_EVIDENCE",id,decision,{
+          newValue:{status:next,reviewer:identity.email,promotionReady:promotionReadiness.ok},
+          reason:b.comment||"Promotion evidence review decision"
+        });
+        return json({data:{id,status:next,reviewer:identity.email,promotionReadiness}},{status:201});
       }
 
       if(request.method==="POST"&&url.pathname==="/api/factories"){

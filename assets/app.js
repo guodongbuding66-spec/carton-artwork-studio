@@ -66,7 +66,10 @@
     readinessProbeBusy: false,
     productionAssets: [],
     productionAssetBusy: false,
-    pdfxValidationRuns: []
+    pdfxValidationRuns: [],
+    pdfxPromotionReadiness: null,
+    pdfxPromotionEvidence: [],
+    promotionEvidenceBusy: false
   };
 
   const navItems = [
@@ -667,6 +670,89 @@
     return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
   }
 
+  function renderPromotionEvidenceRegistry(){
+    const p=state.pdfxPromotionReadiness||state.systemReadiness?.pdfxPromotionReadiness||{};
+    const counts=p.evidenceCounts||{};
+    const evidence=state.pdfxPromotionEvidence||[];
+    const statusColor=(s)=>String(s||"").toUpperCase()==="APPROVED"?"green":String(s||"").toUpperCase()==="SUBMITTED"?"blue":String(s||"").toUpperCase()==="REJECTED"?"red":"amber";
+    const detail=(x)=>{
+      if(x.evidenceType==="SECONDARY_VALIDATION") return `${x.validatorName||"—"} ${x.validatorVersion||""}`;
+      if(x.evidenceType==="RIP_QUALIFICATION") return `${x.printServiceProvider||"—"} · ${x.ripProduct||"—"} ${x.ripVersion||""} · ${x.outputDevice||"—"}`;
+      return `${x.printServiceProvider||"—"} · ${x.ripProduct||"—"} ${x.ripVersion||""} · no repair: ${x.noPdfRepair?"yes":"no"}`;
+    };
+    const rows=evidence.map(x=>{
+      const actions=[
+        `<button class="btn small" data-promotion-evidence-action="download" data-promotion-evidence-id="${esc(x.id)}">Download</button>`
+      ];
+      if(["DRAFT","REJECTED"].includes(String(x.status||"").toUpperCase())&&permitted("productionPolicyWrite")){
+        actions.push(`<button class="btn small" data-promotion-evidence-action="submit" data-promotion-evidence-id="${esc(x.id)}">Submit</button>`);
+      }
+      if(String(x.status||"").toUpperCase()==="SUBMITTED"&&permitted("productionPolicyApprove")){
+        actions.push(`<button class="btn primary small" data-promotion-evidence-action="approve" data-promotion-evidence-id="${esc(x.id)}">Approve</button>`);
+        actions.push(`<button class="btn small danger" data-promotion-evidence-action="reject" data-promotion-evidence-id="${esc(x.id)}">Reject</button>`);
+      }
+      return [
+        esc(x.evidenceType||"—"),
+        `<span class="badge ${statusColor(x.status)}">${esc(x.status||"—")}</span>`,
+        x.artifactSha256?`<span class="mono">${esc(String(x.artifactSha256).slice(0,14))}…</span>`:"—",
+        esc(detail(x)),
+        x.testedAt?esc(x.testedAt):"—",
+        `<span class="mono">${esc(String(x.evidenceSha256||"").slice(0,14))}…</span>`,
+        actions.join(" ")
+      ];
+    });
+    const upload=permitted("productionPolicyWrite")?`
+      <div class="card-body">
+        <div class="notice">
+          Evidence file bytes are hashed by the Worker and stored in private R2. Upload metadata is policy-validated; approval re-downloads the object and verifies the SHA again.
+        </div>
+        <div class="row2" style="margin-top:12px">
+          <div class="field"><label>Evidence Type</label><select id="promotion-evidence-type" class="input"><option>SECONDARY_VALIDATION</option><option>RIP_QUALIFICATION</option><option>PRODUCTION_TRIAL</option></select></div>
+          <div class="field"><label>Artifact SHA-256 <span class="subtle">Secondary / Trial</span></label><input id="promotion-artifact-sha" class="input mono" placeholder="64 hex"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Print Service Provider <span class="subtle">RIP / Trial</span></label><input id="promotion-provider" class="input" placeholder="Factory / print house"/></div>
+          <div class="field"><label>RIP / DFE Product</label><input id="promotion-rip-product" class="input" placeholder="RIP product"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>RIP / DFE Version</label><input id="promotion-rip-version" class="input" placeholder="Exact version"/></div>
+          <div class="field"><label>Output Device</label><input id="promotion-output-device" class="input" placeholder="Press / proofer / device"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Tested At <span class="subtle">RIP / Trial</span></label><input id="promotion-tested-at" class="input" type="datetime-local"/></div>
+          <div class="field"><label>Evidence File</label><input id="promotion-evidence-file" class="input" type="file"/></div>
+        </div>
+        <div class="toolbar" style="justify-content:space-between">
+          <div>
+            <label style="margin-right:14px"><input id="promotion-actual-workflow" type="checkbox" checked/> Actual production workflow</label>
+            <label><input id="promotion-no-repair" type="checkbox" checked/> No PDF repair / rewrite</label>
+          </div>
+          <button class="btn primary" data-action="upload-promotion-evidence" ${state.promotionEvidenceBusy?"disabled":""}>${state.promotionEvidenceBusy?"Uploading…":"Upload Evidence"}</button>
+        </div>
+      </div>`:"";
+    return `
+      <section class="card" style="margin-top:12px">
+        <div class="card-head">
+          <h3>PDF/X Production Promotion Evidence</h3>
+          <span class="badge ${p.ok?"green":"amber"}">${p.ok?"QUALIFIED":"INCOMPLETE"}</span>
+          <span class="spacer"></span>
+          <button class="btn small" data-action="refresh-promotion-evidence">Refresh</button>
+        </div>
+        <div class="card-body">
+          <div class="kpis" style="margin:0">
+            <div class="kpi"><div class="kpi-label">SAME-BYTE REGRESSION</div><div class="kpi-value">${p.sharedRegressionArtifacts||0}/${p.policy?.minimumUniqueArtifacts||5}</div></div>
+            <div class="kpi"><div class="kpi-label">PRIMARY PASS</div><div class="kpi-value">${counts.trustedPrimaryRuns||0}</div></div>
+            <div class="kpi"><div class="kpi-label">SECONDARY APPROVED</div><div class="kpi-value">${counts.approvedSecondaryValidation||0}</div></div>
+            <div class="kpi"><div class="kpi-label">RIP / TRIAL</div><div class="kpi-value">${p.ripOk?"PASS":"—"} / ${p.productionTrialOk?"PASS":"—"}</div></div>
+          </div>
+          ${(p.errors||[]).length?`<div class="notice warn" style="margin-top:12px">${(p.errors||[]).map(esc).join(" · ")}</div>`:`<div class="notice" style="margin-top:12px">Promotion evidence satisfies policy ${esc(p.policyVersion||"2.0.0")}. PDF/X-4 capability still requires a separate code-reviewed promotion change.</div>`}
+        </div>
+        ${upload}
+        ${rows.length?table(["Type","State","Artifact SHA","Qualification Detail","Tested At","Evidence SHA","Actions"],rows,true):'<div class="card-body"><div class="notice">No controlled promotion evidence has been uploaded yet.</div></div>'}
+      </section>
+    `;
+  }
+
   function renderSystemReadiness(){
     const r=state.systemReadiness;
     if(!r) return `<section class="card"><div class="card-head"><h3>Staging Readiness Center</h3><span class="spacer"></span><button class="btn small" data-action="refresh-system-readiness">Refresh</button></div><div class="card-body"><div class="notice">尚未读取服务器 Readiness 状态。</div></div></section>`;
@@ -683,6 +769,7 @@
     ]);
     const diag=r.diagnostics||{};
     const lastProbe=diag.lastR2Probe?.createdAt||"Never";
+    state.pdfxPromotionReadiness=r.pdfxPromotionReadiness||state.pdfxPromotionReadiness;
     return `
       <section class="card">
         <div class="card-head">
@@ -701,7 +788,7 @@
             <div class="kpi"><div class="kpi-label">LAST R2 PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
           </div>
           <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
-            Staging 与 Production 是两套门禁。TrueType 字体嵌入已实现，PDF/X-4 Candidate 也可内部生成；但在外部 PDF/X conformance 验证未接入前，Production 仍保持 BLOCKED，不能靠 Policy JSON 或内部结构检查伪造通过。
+            Staging 与 Production 是独立门禁。PDF/X-4 Production 需要 trusted primary validator、同 SHA 的独立 secondary validator、真实 RIP qualification 和无修复 production trial；证据齐全后仍需单独代码审查才能把 PDF/X-4 加入 production capability。
           </div>
         </div>
         <div class="card-head"><h3>Staging Gates</h3></div>
@@ -709,6 +796,7 @@
         <div class="card-head"><h3>Production Gates</h3></div>
         ${table(["Gate","Result","Detail"],productionRows,true)}
       </section>
+      ${renderPromotionEvidenceRegistry()}
     `;
   }
 
@@ -753,7 +841,7 @@
   }
 
   function bind(){
-    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();await loadSystemReadiness();}});
+    document.querySelectorAll("[data-page]").forEach(b=>b.onclick=async()=>{state.page=b.dataset.page;render();if(state.page==="dashboard")await loadRemoteArtworks();if(state.page==="templates")await loadTemplateVersions();if(state.page==="content")await loadReferenceData();if(state.page==="admin"){await loadAdminUsers();await loadAudit();await loadSystemReadiness();await loadPromotionEvidence();}});
     document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;render();if(state.tab==="comments")await loadComments();});
     document.querySelectorAll("[data-template-tab]").forEach(b=>b.onclick=async()=>{state.templateTab=b.dataset.templateTab;render();if(state.templateTab==="versions")await loadTemplateVersions();});
     document.querySelectorAll("[data-content-tab]").forEach(b=>b.onclick=async()=>{state.contentTab=b.dataset.contentTab;render();if(state.contentTab!=="factories")await loadReferenceMasters();});
@@ -784,6 +872,7 @@
     document.querySelectorAll("[data-edit-template-version]").forEach(b=>b.onclick=()=>openTemplateVersion(b.dataset.editTemplateVersion));
     document.querySelectorAll("[data-policy-action]").forEach(b=>b.onclick=()=>handlePolicyAction(b.dataset.policyAction,b.dataset.policyCode));
     document.querySelectorAll("[data-production-asset-action]").forEach(b=>b.onclick=()=>handleProductionAssetAction(b.dataset.productionAssetAction,b.dataset.productionAssetId));
+    document.querySelectorAll("[data-promotion-evidence-action]").forEach(b=>b.onclick=()=>handlePromotionEvidenceAction(b.dataset.promotionEvidenceAction,b.dataset.promotionEvidenceId));
     document.querySelectorAll("[data-compare-mode]").forEach(b=>b.onclick=()=>{state.compareMode=b.dataset.compareMode;render();});
     const compareOpacity=document.getElementById("compare-opacity");
     if(compareOpacity) compareOpacity.oninput=()=>{state.compareOpacity=Number(compareOpacity.value);const top=document.getElementById("compare-overlay-top");if(top)top.style.opacity=String(state.compareOpacity);};
@@ -814,6 +903,8 @@
     if(action==="refresh-audit") return loadAudit();
     if(action==="refresh-system-readiness") return loadSystemReadiness();
     if(action==="run-readiness-probe") return runSystemReadinessProbe();
+    if(action==="refresh-promotion-evidence") return loadPromotionEvidence();
+    if(action==="upload-promotion-evidence") return uploadPromotionEvidence();
     if(action==="upload-production-asset") return uploadProductionAsset();
     if(action==="pdfx4-candidate") return renderPdfX4Candidate();
     if(action==="pdfx4-external-validate") return runExternalPdfXValidation();
@@ -1374,6 +1465,133 @@
     }catch(e){toast(e.message||String(e),"error");}
   }
 
+  async function loadPromotionEvidence(renderAfter=true){
+    if(!state.apiOnline||!permitted("auditRead")){
+      state.pdfxPromotionReadiness=null;
+      state.pdfxPromotionEvidence=[];
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const [readiness,evidence]=await Promise.all([
+        api.pdfxPromotionReadiness(),
+        api.pdfxPromotionEvidence()
+      ]);
+      state.pdfxPromotionReadiness=readiness.data||null;
+      state.pdfxPromotionEvidence=evidence.data||[];
+    }catch(e){
+      state.pdfxPromotionReadiness=null;
+      state.pdfxPromotionEvidence=[];
+      toast("Promotion evidence load failed: "+(e.message||e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  function promotionTestedAt(){
+    const raw=document.getElementById("promotion-tested-at")?.value||"";
+    if(!raw) return "";
+    const d=new Date(raw);
+    return Number.isFinite(d.getTime())?d.toISOString():"";
+  }
+
+  async function uploadPromotionEvidence(){
+    if(!state.apiOnline||!permitted("productionPolicyWrite")){toast("需要 Production Policy Write 权限。","error");return;}
+    const type=document.getElementById("promotion-evidence-type")?.value||"";
+    const file=document.getElementById("promotion-evidence-file")?.files?.[0]||null;
+    const artifactSha256=document.getElementById("promotion-artifact-sha")?.value?.trim().toLowerCase()||"";
+    const printServiceProvider=document.getElementById("promotion-provider")?.value?.trim()||"";
+    const ripProduct=document.getElementById("promotion-rip-product")?.value?.trim()||"";
+    const ripVersion=document.getElementById("promotion-rip-version")?.value?.trim()||"";
+    const outputDevice=document.getElementById("promotion-output-device")?.value?.trim()||"";
+    const testedAt=promotionTestedAt();
+    const actualProductionWorkflow=Boolean(document.getElementById("promotion-actual-workflow")?.checked);
+    const noPdfRepair=Boolean(document.getElementById("promotion-no-repair")?.checked);
+    if(!file){toast("请选择 Evidence File。","error");return;}
+
+    let metadata={result:"PASS"};
+    if(type==="SECONDARY_VALIDATION"){
+      metadata={
+        ...metadata,
+        profile:"PDF/X-4",
+        artifactSha256,
+        validator:"Enfocus PitStop Pro",
+        version:"26.07"
+      };
+      if(!/^[0-9a-f]{64}$/.test(artifactSha256)){toast("Secondary Validation 必须填写 64 位 Artifact SHA-256。","error");return;}
+    }else if(type==="RIP_QUALIFICATION"){
+      metadata={
+        ...metadata,
+        suite:"Ghent PDF Output Suite",
+        suiteVersion:"5.0",
+        conformanceLevel:"LEVEL_1_PLUS_2",
+        printServiceProvider,ripProduct,ripVersion,outputDevice,
+        actualProductionWorkflow,testedAt
+      };
+      if(!printServiceProvider||!ripProduct||!ripVersion||!outputDevice||!testedAt){
+        toast("RIP Qualification 必须填写印厂、RIP/DFE、版本、设备和测试时间。","error");return;
+      }
+    }else if(type==="PRODUCTION_TRIAL"){
+      metadata={
+        ...metadata,
+        profile:"PDF/X-4",
+        artifactSha256,
+        printServiceProvider,ripProduct,ripVersion,outputDevice,
+        actualProductionWorkflow,noPdfRepair,testedAt
+      };
+      if(!/^[0-9a-f]{64}$/.test(artifactSha256)||!printServiceProvider||!ripProduct||!ripVersion||!outputDevice||!testedAt){
+        toast("Production Trial 必须填写 Artifact SHA、印厂、RIP/DFE、版本、设备和测试时间。","error");return;
+      }
+      if(!noPdfRepair){toast("Production Trial 必须确认 No PDF repair / rewrite。","error");return;}
+    }else{
+      toast("Evidence Type 无效。","error");return;
+    }
+
+    state.promotionEvidenceBusy=true;render();
+    try{
+      await api.uploadPdfxPromotionEvidence(file,type,metadata);
+      await loadPromotionEvidence(false);
+      if(permitted("admin")) await loadSystemReadiness(false);
+      toast("Promotion Evidence 已上传为 DRAFT","success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }finally{
+      state.promotionEvidenceBusy=false;
+      render();
+    }
+  }
+
+  async function handlePromotionEvidenceAction(action,id){
+    const evidence=state.pdfxPromotionEvidence.find(x=>x.id===id);
+    if(!evidence){toast("Promotion Evidence not found.","error");return;}
+    try{
+      if(action==="download"){
+        const result=await api.downloadPdfxPromotionEvidence(id);
+        downloadBlob(result.filename||evidence.filename||"evidence.bin",result.blob);
+        return;
+      }
+      if(action==="submit"){
+        if(!permitted("productionPolicyWrite")){toast("需要 Production Policy Write 权限。","error");return;}
+        await api.submitPdfxPromotionEvidence(id,{reason:"Submitted from Admin / PDF/X Promotion Evidence"});
+      }else if(action==="approve"||action==="reject"){
+        if(!permitted("productionPolicyApprove")){toast("需要 Production Policy Approve 权限。","error");return;}
+        await api.decidePdfxPromotionEvidence(id,action==="approve"?"APPROVE":"REJECT",{
+          comment:action==="approve"
+            ?"Evidence bytes, SHA binding and qualification metadata reviewed."
+            :"Promotion evidence requires replacement or correction."
+        });
+      }
+      await loadPromotionEvidence(false);
+      if(permitted("admin")) await loadSystemReadiness(false);
+      if(permitted("auditRead")) await loadAudit(false);
+      render();
+      toast(`${evidence.evidenceType} · ${action} completed`,"success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }
+  }
+
   async function loadSystemReadiness(renderAfter=true){
     if(!state.apiOnline||!permitted("admin")){
       state.systemReadiness=null;
@@ -1889,6 +2107,8 @@
         if(state.page==="admin"&&permitted("admin")){
           try{state.adminUsers=(await api.adminUsers()).data||[];}catch{}
           try{state.systemReadiness=(await api.systemReadiness()).data||null;}catch{}
+          try{state.pdfxPromotionReadiness=(await api.pdfxPromotionReadiness()).data||null;}catch{}
+          try{state.pdfxPromotionEvidence=(await api.pdfxPromotionEvidence()).data||[];}catch{}
         }
       }
     }catch(e){

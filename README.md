@@ -94,7 +94,23 @@ staging workflow 现在：
 - smoke 验证部署版本和 Promotion Policy；
 - 生成并上传 `staging-acceptance.json` 作为部署验收证据。
 
-### 4. 仍然保持 fail-closed
+### 4. Promotion Evidence Registry
+
+PDF/X Production 晋升证据现在进入受控 D1 + R2 Registry：
+
+- Secondary Validator 报告；
+- Ghent / RIP Qualification；
+- 实际 Production Trial；
+- 服务端 Evidence SHA-256；
+- DRAFT → SUBMITTED → APPROVED / REJECTED；
+- four-eyes；
+- approval-time R2 hash revalidation；
+- Production Trial 必须绑定双 Validator 同 SHA regression artifact；
+- `noPdfRepair=true`。
+
+System Readiness 新增 `PDFX_PROMOTION_EVIDENCE` Production Gate。
+
+### 5. 仍然保持 fail-closed
 
 当前仍然：
 
@@ -1101,6 +1117,7 @@ migrations/
   0006_system_readiness.sql
   0007_production_assets.sql
   0008_pdfx_validation_runs.sql
+  0009_pdfx_promotion_evidence.sql
 worker/
   auth.js                 # Access identity + RBAC policy
   index.js

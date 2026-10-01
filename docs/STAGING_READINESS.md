@@ -13,7 +13,7 @@ Required checks:
 - Cloudflare Access identity is used
 - AUTH_BYPASS is disabled
 - D1 binding is present
-- D1 schema latest migration = `0008_pdfx_validation_runs.sql`
+- D1 schema latest migration = `0009_pdfx_promotion_evidence.sql`
 - required D1 tables are present
 - R2 binding is present
 - R2 write / read / delete deep probe has passed within 24 hours
@@ -120,6 +120,7 @@ CLOUDFLARE_API_TOKEN
 CLOUDFLARE_ACCOUNT_ID
 CLOUDFLARE_ACCESS_CLIENT_ID
 CLOUDFLARE_ACCESS_CLIENT_SECRET
+CLOUDFLARE_PDFX_VALIDATOR_TOKEN
 ```
 
 The Access Client ID / Secret must belong to a Cloudflare Access Service Token allowed by the staging application's Service Auth policy.
@@ -130,6 +131,7 @@ The post-deploy smoke test verifies:
 - D1 binding
 - R2 binding
 - Assets binding
+- trusted PDF/X validator URL + Worker bearer secret are configured
 - AUTH_BYPASS is disabled
 - unauthenticated `/api/me` does not pass through as an authenticated request
 
@@ -179,3 +181,18 @@ containing `artifacts/staging-acceptance.json`.
 This artifact is staging evidence only; it is not printer/RIP qualification evidence.
 
 For PDF/X-4 Production promotion, see `docs/PRODUCTION_PROMOTION_POLICY.md`.
+
+
+## PDF/X Promotion Evidence Registry
+
+Migration `0009_pdfx_promotion_evidence.sql` adds controlled evidence for:
+
+- `SECONDARY_VALIDATION` — approved PitStop report bound to the exact Candidate artifact SHA-256;
+- `RIP_QUALIFICATION` — Ghent PDF Output Suite 5.0 Level 1+2 evidence from the actual production workflow;
+- `PRODUCTION_TRIAL` — a real Carton Artwork Studio Candidate processed end-to-end with `noPdfRepair=true`.
+
+Evidence bytes are stored in private R2 and their SHA-256 is calculated by the Worker. Upload creates a DRAFT; submission and approval use the same four-eyes rule as other production controls. Approval re-downloads the R2 object and verifies the registered hash again.
+
+System Readiness contains a separate `PDFX_PROMOTION_EVIDENCE` production gate. It does not affect `STAGING_READY`; it prevents `PRODUCTION_READY` until the complete qualification package passes.
+
+The staging workflow installs `CLOUDFLARE_PDFX_VALIDATOR_TOKEN` into the Worker as the `PDFX_VALIDATOR_TOKEN` secret after deploy and before post-deploy smoke.

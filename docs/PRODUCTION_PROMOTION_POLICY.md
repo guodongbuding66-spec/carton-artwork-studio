@@ -186,7 +186,35 @@ Requalification is also mandatory when any of the following changes:
 - RIP/DFE PDF processing settings;
 - output workflow changes that can affect interpretation of transparency, overprint, color management, fonts, or page boxes.
 
-## 8. Promotion decision
+## 8. Controlled evidence registry
+
+Promotion qualification evidence is stored as controlled R2 + D1 records rather than free-form notes.
+
+Evidence types:
+
+- `SECONDARY_VALIDATION`
+- `RIP_QUALIFICATION`
+- `PRODUCTION_TRIAL`
+
+Lifecycle:
+
+```text
+Upload bytes
+   ↓ Worker SHA-256
+DRAFT
+   ↓ submit
+SUBMITTED
+   ↓ different reviewer
+APPROVED / REJECTED
+```
+
+The submitter cannot approve their own evidence. Approval re-reads the private R2 object, recomputes the evidence SHA-256, and revalidates policy metadata.
+
+The Production Trial must reference an artifact SHA-256 that is part of the same-byte regression set which passed both the trusted primary validator and the approved secondary validator. It must also assert `actualProductionWorkflow=true` and `noPdfRepair=true`.
+
+System Readiness consumes only **APPROVED** evidence.
+
+## 9. Promotion decision
 
 Only after all evidence above exists and has been reviewed may a separate code-reviewed promotion change set:
 
@@ -211,7 +239,7 @@ pdfxProfiles = []
 Production Export = BLOCKED
 ```
 
-## 9. Cloudflare staging final acceptance
+## 10. Cloudflare staging final acceptance
 
 v2.0 staging is eligible for final acceptance only when:
 

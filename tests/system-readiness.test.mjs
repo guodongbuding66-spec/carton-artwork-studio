@@ -13,6 +13,7 @@ const base={
   lastR2Probe:{status:"PASS",createdAt:"2026-09-30T08:00:00.000Z"},
   nowMs:Date.parse("2026-09-30T09:00:00.000Z"),
   pdfxValidatorConfigured:true,
+  pdfxPromotionReadiness:{ok:false,errors:["Promotion evidence incomplete."],policyVersion:"2.0.0",sharedRegressionArtifacts:0},
   productionReadiness:{
     ready:false,
     rendererCapabilities:{fontEmbedding:false,pdfxProfiles:[]},
@@ -30,6 +31,7 @@ assert.equal(staging.stagingReady,true);
 assert.equal(staging.status,"STAGING_READY");
 assert.equal(staging.productionReady,false);
 assert.equal(staging.productionStatus,"PRODUCTION_BLOCKED");
+assert.ok(staging.productionChecks.find(x=>x.id==="PDFX_PROMOTION_EVIDENCE"&&!x.ok));
 
 const bootstrap=buildSystemReadiness({...base,bootstrapAdminConfigured:true});
 assert.equal(bootstrap.stagingReady,false);
@@ -50,6 +52,7 @@ assert.ok(wrongMigration.stagingChecks.find(x=>x.id==="SCHEMA_CURRENT"&&!x.ok));
 const productionReady=buildSystemReadiness({
   ...base,
   counts:{...base.counts,approvedFonts:1,approvedIccProfiles:1},
+  pdfxPromotionReadiness:{ok:true,errors:[],policyVersion:"2.0.0",sharedRegressionArtifacts:5},
   productionReadiness:{
     ready:true,
     rendererCapabilities:{fontEmbedding:true,pdfxProfiles:["PDF/X-4"]},

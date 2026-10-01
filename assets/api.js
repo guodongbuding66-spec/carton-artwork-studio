@@ -67,7 +67,8 @@
           renderer:response.headers?.get?.("x-cas-renderer")||"",
           exportId:response.headers?.get?.("x-cas-export-id")||"",
           pdfxProfile:response.headers?.get?.("x-cas-pdfx-profile")||"",
-          pdfxCandidate:response.headers?.get?.("x-cas-pdfx-candidate")||""
+          pdfxCandidate:response.headers?.get?.("x-cas-pdfx-candidate")||"",
+          evidenceSha256:response.headers?.get?.("x-cas-evidence-sha256")||""
         }
       };
     }
@@ -105,6 +106,38 @@
       },
       async productionReadiness() {
         return request("/api/production-readiness");
+      },
+      async pdfxPromotionReadiness() {
+        return request("/api/pdfx/promotion/readiness");
+      },
+      async pdfxPromotionEvidence(type = "") {
+        const q=new URLSearchParams();
+        if(type) q.set("type",type);
+        return request("/api/pdfx/promotion/evidence"+(q.size?"?"+q:""));
+      },
+      async uploadPdfxPromotionEvidence(file, type, metadata = {}) {
+        const q=new URLSearchParams({
+          type:type||"",
+          filename:file?.name||"evidence.bin"
+        });
+        const headers=new Headers({
+          "content-type":file?.type||"application/octet-stream",
+          "x-evidence-metadata":encodeURIComponent(JSON.stringify(metadata||{}))
+        });
+        return request("/api/pdfx/promotion/evidence/upload?"+q,{method:"POST",headers,body:file});
+      },
+      async submitPdfxPromotionEvidence(id, payload = {}) {
+        return request(`/api/pdfx/promotion/evidence/${encodeURIComponent(id)}/submit`,{
+          method:"POST",body:JSON.stringify(payload)
+        });
+      },
+      async decidePdfxPromotionEvidence(id, decision, payload = {}) {
+        return request(`/api/pdfx/promotion/evidence/${encodeURIComponent(id)}/approval`,{
+          method:"POST",body:JSON.stringify({...payload,decision})
+        });
+      },
+      async downloadPdfxPromotionEvidence(id) {
+        return requestBlob(`/api/pdfx/promotion/evidence/${encodeURIComponent(id)}/file`);
       },
       async productionAssets(type = "") {
         const q = new URLSearchParams();

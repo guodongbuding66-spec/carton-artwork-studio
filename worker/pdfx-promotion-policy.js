@@ -31,6 +31,12 @@ export const PDFX_PRODUCTION_PROMOTION_POLICY = Object.freeze({
     minimumConformance: "LEVEL_1_PLUS_2",
     maxEvidenceAgeDays: 365,
     requireActualProductionWorkflow: true
+  }),
+  productionTrial: Object.freeze({
+    maxEvidenceAgeDays: 365,
+    requireActualProductionWorkflow: true,
+    requireNoPdfRepair: true,
+    requireQualifiedRegressionArtifact: true
   })
 });
 
@@ -41,6 +47,31 @@ function norm(value) {
 function exactNameAllowed(value, allowed) {
   const n=norm(value);
   return allowed.some((x)=>norm(x)===n);
+}
+
+function validSha(value) {
+  return /^[0-9a-f]{64}$/i.test(String(value||""));
+}
+
+function productionWorkflowKey(evidence={}) {
+  return [
+    evidence.printServiceProvider,
+    evidence.ripProduct,
+    evidence.ripVersion,
+    evidence.outputDevice
+  ].map(norm).join("|");
+}
+
+function validateFreshTimestamp(value, maxDays, nowMs, label) {
+  const errors=[];
+  const testedAt=Date.parse(String(value||""));
+  if(!Number.isFinite(testedAt)) errors.push(`${label} must be a valid timestamp.`);
+  else {
+    const age=nowMs-testedAt;
+    const max=maxDays*24*60*60*1000;
+    if(age<0 || age>max) errors.push(`${label} must be no older than ${maxDays} days.`);
+  }
+  return errors;
 }
 
 export function validateTrustedPrimaryValidatorEvidence(evidence={}) {
@@ -63,6 +94,7 @@ export function validateTrustedPrimaryValidatorEvidence(evidence={}) {
   if(String(evidence.rulesetSha256||"").toLowerCase()!==p.primaryValidator.ruleset.sha256) {
     errors.push("Ruleset SHA-256 does not match the pinned production ruleset.");
   }
+  if(!validSha(evidence.artifactSha256)) errors.push("Primary validator artifactSha256 must be a valid SHA-256.");
   return {ok:errors.length===0,errors,policyVersion:p.version};
 }
 
@@ -77,6 +109,8 @@ export function validateSecondaryValidatorEvidence(evidence={}) {
   if(String(evidence.version||"")!==p.secondaryValidator.version) {
     errors.push(`Secondary validator version must be exactly ${p.secondaryValidator.version}.`);
   }
+  if(!validSha(evidence.artifactSha256)) errors.push("Secondary validator artifactSha256 must be a valid SHA-256.");
+  if(!validSha(evidence.evidenceSha256)) errors.push("Secondary validator report evidenceSha256 must be a valid SHA-256.");
   return {ok:errors.length===0,errors,policyVersion:p.version};
 }
 
@@ -93,40 +127,70 @@ export function validateRipQualificationEvidence(evidence={}, nowMs=Date.now()) 
     if(!String(evidence[key]||"").trim()) errors.push(`${key} is required.`);
   }
   if(evidence.actualProductionWorkflow!==true) errors.push("Evidence must come from the actual production workflow.");
-  const testedAt=Date.parse(String(evidence.testedAt||""));
-  if(!Number.isFinite(testedAt)) errors.push("testedAt must be a valid timestamp.");
-  else {
-    const age=nowMs-testedAt;
-    const max=p.ripQualification.maxEvidenceAgeDays*24*60*60*1000;
-    if(age<0 || age>max) errors.push(`RIP evidence must be no older than ${p.ripQualification.maxEvidenceAgeDays} days.`);
+  errors.push(...validateFreshTimestamp(evidence.testedAt,p.ripQualification.maxEvidenceAgeDays,nowMs,"testedAt"));
+  if(!validSha(evidence.evidenceSha256)) errors.push("evidenceSha256 must be a valid SHA-256.");
+  return {ok:errors.length===0,errors,policyVersion:p.version};
+}
+
+export function validateProductionTrialEvidence(evidence={}, nowMs=Date.now()) {
+  const p=PDFX_PRODUCTION_PROMOTION_POLICY;
+  const errors=[];
+  if(String(evidence.status||"").toUpperCase()!=="PASS") errors.push("Production trial evidence must be PASS.");
+  if(String(evidence.profile||"").toUpperCase()!==p.profile.toUpperCase()) errors.push(`Profile must be ${p.profile}.`);
+  if(!validSha(evidence.artifactSha256)) errors.push("Production trial artifactSha256 must be a valid SHA-256.");
+  for(const key of ["printServiceProvider","ripProduct","ripVersion","outputDevice"]) {
+    if(!String(evidence[key]||"").trim()) errors.push(`${key} is required.`);
   }
-  if(!/^[0-9a-f]{64}$/i.test(String(evidence.evidenceSha256||""))) {
-    errors.push("evidenceSha256 must be a 64-character SHA-256.");
+  if(p.productionTrial.requireActualProductionWorkflow && evidence.actualProductionWorkflow!==true) {
+    errors.push("Production trial must use the actual production workflow.");
   }
+  if(p.productionTrial.requireNoPdfRepair && evidence.noPdfRepair!==true) {
+    errors.push("Production trial must confirm that the PDF was not repaired or rewritten before RIP processing.");
+  }
+  errors.push(...validateFreshTimestamp(evidence.testedAt,p.productionTrial.maxEvidenceAgeDays,nowMs,"testedAt"));
+  if(!validSha(evidence.evidenceSha256)) errors.push("evidenceSha256 must be a valid SHA-256.");
   return {ok:errors.length===0,errors,policyVersion:p.version};
 }
 
 export function summarizePdfxPromotionEvidence(input={}) {
   const p=PDFX_PRODUCTION_PROMOTION_POLICY;
+  const nowMs=input.nowMs??Date.now();
   const primary=Array.isArray(input.primaryRuns)?input.primaryRuns:[];
   const secondary=Array.isArray(input.secondaryRuns)?input.secondaryRuns:[];
-  const uniquePrimary=new Set(primary.map((x)=>String(x.artifactSha256||"").toLowerCase()).filter((x)=>/^[0-9a-f]{64}$/.test(x)));
-  const uniqueSecondary=new Set(secondary.map((x)=>String(x.artifactSha256||"").toLowerCase()).filter((x)=>/^[0-9a-f]{64}$/.test(x)));
-  const primaryChecks=primary.map(validateTrustedPrimaryValidatorEvidence);
-  const secondaryChecks=secondary.map(validateSecondaryValidatorEvidence);
+  const ripRuns=Array.isArray(input.ripEvidenceRuns)
+    ? input.ripEvidenceRuns
+    : (input.ripEvidence?[input.ripEvidence]:[]);
+  const productionTrials=Array.isArray(input.productionTrials)?input.productionTrials:[];
+
+  const trustedPrimary=primary.filter((x)=>validateTrustedPrimaryValidatorEvidence(x).ok);
+  const trustedSecondary=secondary.filter((x)=>validateSecondaryValidatorEvidence(x).ok);
+  const uniquePrimary=new Set(trustedPrimary.map((x)=>String(x.artifactSha256||"").toLowerCase()));
+  const uniqueSecondary=new Set(trustedSecondary.map((x)=>String(x.artifactSha256||"").toLowerCase()));
+  const sharedRegression=new Set([...uniquePrimary].filter((sha)=>uniqueSecondary.has(sha)));
+  const validRip=ripRuns.filter((x)=>validateRipQualificationEvidence(x,nowMs).ok);
+  const validRipWorkflows=new Set(validRip.map(productionWorkflowKey));
+  const validTrials=productionTrials.filter((x)=>validateProductionTrialEvidence(x,nowMs).ok);
+  const qualifiedTrials=validTrials.filter((x)=>
+    sharedRegression.has(String(x.artifactSha256||"").toLowerCase()) &&
+    validRipWorkflows.has(productionWorkflowKey(x))
+  );
+
   const errors=[];
   if(uniquePrimary.size<p.regression.minimumUniqueArtifacts) {
     errors.push(`At least ${p.regression.minimumUniqueArtifacts} unique trusted primary validation artifacts are required.`);
   }
-  if(primaryChecks.some((x)=>!x.ok)) errors.push("One or more primary validation runs are not trusted.");
-  if(secondaryChecks.some((x)=>!x.ok)) errors.push("One or more secondary validation runs are not trusted.");
-  if(p.regression.requireSameBytesAcrossValidators) {
-    for(const sha of uniquePrimary) {
-      if(!uniqueSecondary.has(sha)) errors.push(`Secondary validation is missing for artifact ${sha}.`);
-    }
+  if(uniqueSecondary.size<p.regression.minimumUniqueArtifacts) {
+    errors.push(`At least ${p.regression.minimumUniqueArtifacts} unique trusted secondary validation artifacts are required.`);
   }
-  const rip=validateRipQualificationEvidence(input.ripEvidence||{});
-  if(!rip.ok) errors.push(...rip.errors);
+  if(p.regression.requireSameBytesAcrossValidators && sharedRegression.size<p.regression.minimumUniqueArtifacts) {
+    errors.push(`At least ${p.regression.minimumUniqueArtifacts} identical artifact SHA-256 values must pass both validators.`);
+  }
+  if(validRip.length===0) errors.push("At least one current approved printer/RIP qualification is required.");
+  if(validTrials.length===0) errors.push("At least one current approved end-to-end production trial is required.");
+  if(p.productionTrial.requireQualifiedRegressionArtifact && qualifiedTrials.length===0) {
+    errors.push("Production trial must use a same-byte regression artifact that passed both validators and the exact print-provider/RIP/device workflow covered by an approved RIP qualification.");
+  }
+
   return {
     ok:errors.length===0,
     errors,
@@ -134,6 +198,10 @@ export function summarizePdfxPromotionEvidence(input={}) {
     profile:p.profile,
     primaryUniqueArtifacts:uniquePrimary.size,
     secondaryUniqueArtifacts:uniqueSecondary.size,
-    ripOk:rip.ok
+    sharedRegressionArtifacts:sharedRegression.size,
+    ripOk:validRip.length>0,
+    productionTrialOk:qualifiedTrials.length>0,
+    qualifyingRipEvidence:validRip.length,
+    qualifyingProductionTrials:qualifiedTrials.length
   };
 }
