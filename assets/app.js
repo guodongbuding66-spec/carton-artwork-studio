@@ -32,6 +32,8 @@
     batchMapping: null,
     batchSource: null,
     batchGenerating: false,
+    batchDraftBusy: false,
+    batchDraftResult: null,
     dialog: null,
     apiOnline: false,
     apiChecked: false,
@@ -1185,11 +1187,12 @@
       <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><span class="badge blue">US Packing List Default</span><span class="badge green">Shipping Mark 1.1 · TOP_FACE</span></div><div class="card-body">
         ${!cloudBatchWritable()?'<div class="notice warn" style="margin-bottom:10px"><strong>本地批量模式</strong>：文件解析、Dry Run、错误下载和 Proof ZIP 生成均可直接使用；只有保存 Mapping / Import Job 到 D1 需要登录权限。</div>':""}
         <label class="dropzone" id="batch-dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors · Controlled Shipping Mark per row</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
-        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&cloudBatchWritable()?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
+        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&cloudBatchWritable()?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button><button class="btn primary" data-action="batch-create-drafts" ${stats.passed&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchDraftBusy?"":"disabled"}>${state.batchDraftBusy?"Creating Drafts…":"Create Drafts from Passed Rows"}</button></div>
+        ${state.batchDraftResult?`<div class="notice ${state.batchDraftResult.failed?.length?"warn":"success"}" style="margin-top:10px"><strong>Batch Draft Promotion</strong><br>Created ${state.batchDraftResult.created?.length||0} · Skipped ${state.batchDraftResult.skipped?.length||0} · Failed ${state.batchDraftResult.failed?.length||0} · Linked ${state.batchDraftResult.counts?.linked||0}/${state.batchDraftResult.counts?.passed||0}</div>`:""}
       </div></section>
       ${state.batchSource?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL</div><div class="kpi-value">${stats.total}</div></div><div class="kpi"><div class="kpi-label">PASSED</div><div class="kpi-value" style="color:#16835d">${stats.passed}</div></div><div class="kpi"><div class="kpi-label">FAILED</div><div class="kpi-value" style="color:#bc2f3b">${stats.failed}</div></div><div class="kpi"><div class="kpi-label">MAPPING</div><div class="kpi-value">${mapping.length}</div><div class="kpi-foot">fields detected</div></div></div>`:""}
       ${mapping.length?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Detected Mapping</h3><span class="subtle">自动表头映射，可保存为 Mapping Profile（D1 schema 已预留）</span></div>${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}</section>`:""}
-      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Import Review</h3><span class="subtle">真实行级 Preflight · 最多显示前 100 行</span></div>${review.length?table(["Row","SKU","Status","Issue"],review.map(r=>[r.row,r.sku,`<span class="badge ${r.status==="PASS"?"green":"red"}">${r.status}</span>`,r.issue]),true):`<div class="card-body"><div class="notice">尚未载入文件。导入后系统会先做 Excel 解析，再将每一行转换为 Canonical Artwork Data 并运行阻断检查。</div></div>`}</section>`;
+      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Import Review</h3><span class="subtle">真实行级 Preflight · 最多显示前 100 行</span></div>${review.length?table(["Row","SKU","Status","Draft","Issue"],review.map(r=>[r.row,r.sku,`<span class="badge ${r.status==="PASS"?"green":"red"}">${r.status}</span>`,r.draftArtworkId?`<span class="badge green mono">${esc(r.draftArtworkNo||r.draftArtworkId.slice(0,8))}</span>`:"—",r.issue]),true):`<div class="card-body"><div class="notice">尚未载入文件。导入后系统会先做 Excel 解析，再将每一行转换为 Canonical Artwork Data 并运行阻断检查。</div></div>`}</section>`;
   }
 
   function renderTemplates(){
@@ -2809,6 +2812,7 @@
     }
     if(action==="download-errors"){downloadText("failed_rows.csv",B.failedRowsCsv(state.batchReview),"text/csv;charset=utf-8");}
     if(action==="batch-generate") return exportBatchProofs();
+    if(action==="batch-create-drafts") return createBatchDrafts();
     if(action==="save-mapping") return saveMappingProfile();
     if(action==="close-dialog"){state.dialog=null;state.impact=null;render();}
   }
@@ -3984,6 +3988,7 @@
       state.batchMapping=result.header.mapping;
       state.batchReview=review;
       state.batchRows=review.slice(0,100);
+      state.batchDraftResult=null;
       state.batchStep=3;
       render();
       const s=B.summarize(review);
@@ -4020,6 +4025,43 @@
     }));
     for(let i=0;i<rows.length;i+=500) await api.saveImportRows(jobId,rows.slice(i,i+500));
     return jobId;
+  }
+
+  async function createBatchDrafts(){
+    if(!state.remoteImportJobId||!cloudBatchWritable()||!cloudArtworkWritable()){
+      toast("Create Drafts 需要已同步的 Import Job、Batch Write 和 Artwork Write 权限。","error");
+      return;
+    }
+    if(state.batchDraftBusy) return;
+    state.batchDraftBusy=true;render();
+    try{
+      const response=await api.createImportDrafts(state.remoteImportJobId);
+      const result=response.data||{};
+      state.batchDraftResult=result;
+      const byRow=new Map();
+      for(const item of [...(result.created||[]),...(result.skipped||[])]){
+        if(item?.artworkId) byRow.set(Number(item.rowNo),item);
+      }
+      state.batchReview=state.batchReview.map((row)=>{
+        const linked=byRow.get(Number(row.row));
+        return linked?{
+          ...row,
+          draftArtworkId:linked.artworkId,
+          draftArtworkNo:linked.artworkNo||row.draftArtworkNo||""
+        }:row;
+      });
+      state.batchRows=state.batchReview.slice(0,100);
+      const failed=result.failed?.length||0;
+      toast(
+        `Drafts: ${result.created?.length||0} created · ${result.skipped?.length||0} skipped · ${failed} failed`,
+        failed?"error":"success"
+      );
+      await loadRemoteArtworks();
+    }catch(e){
+      toast(e.message||String(e),"error");
+    }finally{
+      state.batchDraftBusy=false;render();
+    }
   }
 
   async function saveMappingProfile(){
