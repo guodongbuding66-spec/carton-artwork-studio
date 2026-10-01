@@ -96,3 +96,13 @@ assert.ok(app.includes('e.type!=="barcode"'));
 assert.ok(app.includes("no fit-to-box scaling"));
 
 console.log("Local workspace usability regression tests passed.");
+
+
+{
+  const fs = await import("node:fs");
+  const deployWorkflow=fs.readFileSync(".github/workflows/deploy-staging.yml","utf8");
+  assert.match(deployWorkflow,/push:\s*\n\s*branches:\s*\n\s*- staging/);
+  assert.match(deployWorkflow,/workflow_dispatch:/);
+  assert.match(deployWorkflow,/Post-deploy staging smoke test/);
+  assert.match(deployWorkflow,/Upload staging acceptance evidence/);
+}
