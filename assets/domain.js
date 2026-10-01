@@ -685,6 +685,58 @@
     };
   }
 
+  function createShippingMarkBlockElements(artwork,panel,factoryList=factories,options={}) {
+    const root=controlledBlockDefinitions.SHIPPING_MARK_STANDARD;
+    const version=String(options.version||root.currentVersion);
+    const layout=shippingMarkBlockLayout(artwork,panel,factoryList,{version});
+    if(!layout.ok) return {...layout,elements:[]};
+
+    const idFactory=typeof options.idFactory==="function"
+      ? options.idFactory
+      : ((slot,index)=>`shipping-${slot.id.toLowerCase()}-${index+1}`);
+    const groupId=String(options.groupId||`shipping-mark-${String(panel?.id||"panel").toLowerCase()}`);
+    const locked=options.locked!==false;
+    const elements=layout.slots.map((slot,index)=>({
+      id:String(idFactory(slot,index)||`shipping-${index+1}`),
+      type:"text",
+      name:slot.name,
+      x:slot.x,
+      y:slot.y,
+      w:slot.w,
+      h:slot.h,
+      rotation:0,
+      locked,
+      visible:true,
+      panelId:String(panel?.id||""),
+      constrainToPanel:true,
+      safeAreaExempt:false,
+      groupId,
+      text:"",
+      bindingKey:slot.bindingKey,
+      fontSizePt:slot.fontSizePt,
+      fontWeight:"normal",
+      textAlign:"left",
+      wrapText:true,
+      lineHeight:slot.lineHeight,
+      autoFitText:false,
+      minFontSizePt:Number(controlledBlockDefinition(root.type,version)?.minFontSizePt||7),
+      symbology:"",
+      humanReadable:false,
+      symbolKey:"",
+      payload:"",
+      ecc:"M",
+      sourceType:"controlled-shipping-block",
+      mimeType:"",
+      dataUrl:"",
+      pixelWidth:0,
+      pixelHeight:0,
+      blockType:root.type,
+      blockVersion:version,
+      blockSlot:slot.id
+    }));
+    return {...layout,ok:true,groupId,elements};
+  }
+
   function effectiveImageDpi(element) {
     const vector=Boolean(element?.vectorDataUrl)||String(element?.sourceType||"")==="uploaded-vector";
     if(vector) return {isVector:true,xDpi:null,yDpi:null,minDpi:null};
@@ -1389,6 +1441,7 @@
     controlledBlockDefinition,
     shippingMarkBlockLayout,
     validateShippingMarkBlock,
+    createShippingMarkBlockElements,
     effectiveImageDpi,
     productionElementQualification,
     runPreflight,
