@@ -1361,7 +1361,7 @@
       };
       pushArtworkHistory();
       artworkElements().push(el);
-      state.selectedElementId=el.id;
+      selectOnlyElement(el.id);
       const saved=persistLocalDraft();
       render();
       toast(saved?(type==="qr-image"?"二维码图片已添加":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
@@ -1385,7 +1385,7 @@
     };
     pushArtworkHistory();
     artworkElements().push(el);
-    state.selectedElementId=el.id;
+    selectOnlyElement(el.id);
     persistLocalDraft();
     render();
     toast("矢量二维码已添加","success");
@@ -1423,7 +1423,7 @@
       sourceType:"generated-vector",mimeType:"",dataUrl:"",pixelWidth:0,pixelHeight:0
     };
     pushArtworkHistory();
-    artworkElements().push(el);state.selectedElementId=el.id;
+    artworkElements().push(el);selectOnlyElement(el.id);
     persistLocalDraft();render();toast("条码元素已添加","success");
   }
 
@@ -1442,7 +1442,7 @@
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
     pushArtworkHistory();
-    artworkElements().push(el);state.selectedElementId=el.id;
+    artworkElements().push(el);selectOnlyElement(el.id);
     persistLocalDraft();render();toast("包装图标已添加（Review Library）","success");
   }
 
@@ -1462,7 +1462,7 @@
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
     pushArtworkHistory();
-    artworkElements().push(el);state.selectedElementId=el.id;
+    artworkElements().push(el);selectOnlyElement(el.id);
     persistLocalDraft();render();toast(`数据字段已绑定：${meta?.label||bindingKey}`,"success");
   }
 
@@ -1479,7 +1479,7 @@
     };
     pushArtworkHistory();
     artworkElements().push(el);
-    state.selectedElementId=el.id;
+    selectOnlyElement(el.id);
     persistLocalDraft();render();toast("文字元素已添加","success");
   }
 
@@ -1493,7 +1493,7 @@
     copy.x=Number(current.x||0)+8;copy.y=Number(current.y||0)+8;
     clampElementToBounds(copy);
     artworkElements().push(copy);
-    state.selectedElementId=copy.id;
+    selectOnlyElement(copy.id);
     persistLocalDraft();render();
   }
 
@@ -1611,7 +1611,8 @@
         event.preventDefault();redoArtwork();return;
       }
       const element=selectedArtworkElement();
-      if(!element||element.locked||!localArtworkEditable()) return;
+      const selection=selectedArtworkElements().filter(e=>!e.locked);
+      if(!element||!selection.length||!localArtworkEditable()) return;
       if(mod&&key==="d"){
         event.preventDefault();duplicateSelectedElement();return;
       }
@@ -1622,11 +1623,13 @@
         event.preventDefault();
         if(!event.repeat) pushArtworkHistory();
         const step=event.altKey?0.1:(event.shiftKey?5:1);
-        if(event.key==="ArrowLeft") element.x=Number(element.x||0)-step;
-        if(event.key==="ArrowRight") element.x=Number(element.x||0)+step;
-        if(event.key==="ArrowUp") element.y=Number(element.y||0)-step;
-        if(event.key==="ArrowDown") element.y=Number(element.y||0)+step;
-        clampElementToBounds(element);
+        for(const item of selection){
+          if(event.key==="ArrowLeft") item.x=Number(item.x||0)-step;
+          if(event.key==="ArrowRight") item.x=Number(item.x||0)+step;
+          if(event.key==="ArrowUp") item.y=Number(item.y||0)-step;
+          if(event.key==="ArrowDown") item.y=Number(item.y||0)+step;
+          clampElementToBounds(item);
+        }
         persistLocalDraft();render();
       }
     };
