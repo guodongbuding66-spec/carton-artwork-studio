@@ -316,7 +316,7 @@ test("safe margin blocks edge artwork unless explicitly exempted", () => {
 
 test("text overflow is blocking and auto-fit can resolve it", () => {
   const text="THIS IS A VERY LONG CARTON MARK THAT SHOULD NOT FIT";
-  const element={type:"text",w:55,h:16,fontSizePt:18,fontWeight:"bold",minFontSizePt:7};
+  const element={type:"text",w:90,h:16,fontSizePt:18,fontWeight:"bold",minFontSizePt:7};
   const overflow=D.textFitMetrics(element,text);
   assert.equal(overflow.fits,false);
   const fitted=D.fitTextToBox(element,text,{minPt:7,maxPt:18});
