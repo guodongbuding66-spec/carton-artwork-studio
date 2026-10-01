@@ -125,6 +125,7 @@
           rotation:Number(e.rotation||0),
           locked:Boolean(e.locked),
           visible:e.visible!==false,
+          visibilityRule:String(e.visibilityRule||"ALWAYS"),
           panelId:e.panelId||"TOP_FACE",
           constrainToPanel:e.constrainToPanel!==false,
           text:e.text||"",
@@ -217,6 +218,26 @@
   function resolvedElementPayload(element, artwork, factoryList = factories) {
     const binding=String(element?.bindingKey||"");
     return binding ? resolveArtworkBinding(binding,artwork,factoryList) : String(element?.payload||"");
+  }
+
+  function elementVisibilityRule(element) {
+    const rule=String(element?.visibilityRule||"ALWAYS");
+    return ["ALWAYS","WHEN_NONEMPTY","WHEN_MULTI_PACKAGE","WHEN_SINGLE_PACKAGE"].includes(rule)?rule:"ALWAYS";
+  }
+
+  function elementIsVisible(element, artwork, factoryList = factories) {
+    if(element?.visible===false) return false;
+    const rule=elementVisibilityRule(element);
+    if(rule==="ALWAYS") return true;
+    if(rule==="WHEN_MULTI_PACKAGE") return Number(artwork?.packageCount||0)>1;
+    if(rule==="WHEN_SINGLE_PACKAGE") return Number(artwork?.packageCount||0)===1;
+    if(rule==="WHEN_NONEMPTY"){
+      const value=element?.type==="text"
+        ? resolvedElementText(element,artwork,factoryList)
+        : resolvedElementPayload(element,artwork,factoryList);
+      return Boolean(String(value||"").trim());
+    }
+    return true;
   }
 
   function sideSealGeometry(artwork) {
@@ -402,13 +423,17 @@
     for(const element of customElements){
       const name=element.name||element.type||"element";
       const x=Number(element.x||0),y=Number(element.y||0),w=Number(element.w||0),h=Number(element.h||0);
-      const visible=element.visible!==false;
-      if(!visible){
+      const manualVisible=element.visible!==false;
+      const effectiveVisible=elementIsVisible(element,a,factoryList);
+      if(!effectiveVisible){
+        const rule=elementVisibilityRule(element);
         assetChecks.push(check(
           `asset-hidden-${element.id||name}`,
-          `${name} is hidden`,
-          "warning",
-          "Hidden custom elements are excluded from preview/proof output.",
+          `${name} is suppressed`,
+          manualVisible?"pass":"warning",
+          manualVisible
+            ? `Visibility rule ${rule} currently evaluates to false; element is excluded from output.`
+            : "Element is manually hidden and excluded from preview/proof output.",
           "Assets"
         ));
         continue;
@@ -623,6 +648,9 @@
         rotation:Number(e.rotation||0),
         locked:Boolean(e.locked),
         visible:e.visible!==false,
+        visibilityRule:["ALWAYS","WHEN_NONEMPTY","WHEN_MULTI_PACKAGE","WHEN_SINGLE_PACKAGE"].includes(String(e.visibilityRule||"ALWAYS"))
+          ? String(e.visibilityRule||"ALWAYS")
+          : "ALWAYS",
         panelId:String(e.panelId||"TOP_FACE"),
         constrainToPanel:e.constrainToPanel!==false,
         text:String(e.text||""),
@@ -675,6 +703,8 @@
     resolveArtworkBinding,
     resolvedElementText,
     resolvedElementPayload,
+    elementVisibilityRule,
+    elementIsVisible,
     artworkFromCanonical,
     sideSealGeometry,
     calibrationMetrics,
