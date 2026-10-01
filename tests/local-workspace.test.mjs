@@ -222,7 +222,8 @@ assert.match(app,/refreshControlledShippingBlocks\(\);\s*refreshAutoFitTextEleme
 assert.match(domainSource,/blockType:root\.type/);
 assert.match(domainSource,/blockVersion:version/);
 assert.match(domainSource,/blockSlot:slot\.id/);
-assert.match(app,/locked:true,visible:true/);
+assert.match(domainSource,/const locked=options\.locked!==false/);
+assert.match(domainSource,/locked,\s*visible:true/);
 assert.match(app,/data-action="reflow-controlled-block"/);
 assert.match(app,/if\(action==="reflow-controlled-block"\) return reflowSelectedControlledBlock\(\)/);
 assert.match(app,/allowControlledOversized/);
