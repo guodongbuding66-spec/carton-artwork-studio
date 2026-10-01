@@ -129,6 +129,25 @@ test("custom element crossing its assigned fold line blocks", () => {
   assert.ok(assets.some(x=>x.id==="asset-panel-bounds-bad-1"&&x.status==="error"&&x.blocking));
 });
 
+test("barcode and handling symbol metadata round-trip through canonical snapshot", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[
+    {id:"bar-1",type:"barcode",name:"Case GTIN",x:p.x+20,y:p.y+20,w:140,h:45,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,symbology:"ITF14",humanReadable:true,payload:"10012345000017"},
+    {id:"sym-1",type:"symbol",name:"Keep Dry",x:p.x+180,y:p.y+20,w:45,h:45,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,symbolKey:"KEEP_DRY"}
+  ]};
+  const snapshot=D.canonicalData(a);
+  assert.equal(snapshot.artwork.elements[0].symbology,"ITF14");
+  assert.equal(snapshot.artwork.elements[0].humanReadable,true);
+  assert.equal(snapshot.artwork.elements[1].symbolKey,"KEEP_DRY");
+  const restored=D.artworkFromCanonical(snapshot);
+  assert.equal(restored.elements[0].symbology,"ITF14");
+  assert.equal(restored.elements[1].symbolKey,"KEEP_DRY");
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="barcode-type-bar-1"&&x.status==="pass"));
+  assert.ok(assets.some(x=>x.id==="symbol-master-sym-1"&&x.status==="warning"));
+});
+
 test("computed and preflight can use remote factory master", () => {
   const remoteFactories = [{ id: "remote-a", name: "Remote A", crn: "CRN-NEW", country: "Mexico" }];
   const a = { ...D.defaultArtwork, factoryId: "remote-a" };
