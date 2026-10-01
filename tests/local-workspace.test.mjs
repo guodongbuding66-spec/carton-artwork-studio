@@ -78,6 +78,14 @@ assert.match(app,/data-element-prop="expectedPayload"/);
 assert.match(app,/data-action="upload-symbol-trigger"/);
 assert.match(app,/addUploadedArtworkElement\(file,"symbol-image"\)/);
 assert.match(app,/type==="symbol-image"/);
+assert.match(app,/function barcodePhysicalDefaults\(symbology\)/);
+assert.match(app,/data-element-prop="moduleMm"/);
+assert.match(app,/data-element-prop="barHeightMm"/);
+assert.match(app,/data-element-prop="quietModules"/);
+assert.match(app,/data-element-prop="wideRatio"/);
+assert.match(app,/data-element-bearer/);
+assert.match(app,/ITF-14 Review Profile/);
+assert.match(app,/GS1-128 Logistics Review Profile/);
 assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*persistLocalDraft\(\);/);
 
 console.log("Local workspace usability regression tests passed.");
