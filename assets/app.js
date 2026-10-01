@@ -38,6 +38,16 @@
     batchProcessResult: null,
     batchJobs: [],
     batchJobLoading: false,
+    reviewerJobs: [],
+    reviewerJobId: null,
+    reviewerQueue: [],
+    reviewerSummary: null,
+    reviewerSelectedId: null,
+    reviewerComments: [],
+    reviewerDiff: null,
+    reviewerLoading: false,
+    reviewerDecisionBusy: false,
+    reviewerError: "",
     dialog: null,
     apiOnline: false,
     apiChecked: false,
@@ -89,6 +99,7 @@
     ["dashboard", "▦", "工作台", "Dashboard"],
     ["artwork", "▣", "印刷稿", "Artwork"],
     ["batch", "⇅", "批量生成", "Batch"],
+    ["reviewer", "◎", "审核中心", "Reviewer"],
     ["templates", "▤", "模板", "Templates"],
     ["content", "◫", "内容资料", "Content"],
     ["quality", "✓", "质量检查", "Quality"],
@@ -583,6 +594,7 @@
     if (state.page === "dashboard") { titleZh="工作台"; titleEn="Dashboard"; body=renderDashboard(); }
     if (state.page === "artwork") { titleZh="印刷稿"; titleEn="Artwork"; body=renderArtwork(); }
     if (state.page === "batch") { titleZh="批量生成"; titleEn="Batch Generation"; body=renderBatch(); }
+    if (state.page === "reviewer") { titleZh="审核中心"; titleEn="Batch Reviewer Center"; body=renderReviewer(); }
     if (state.page === "templates") { titleZh="模板"; titleEn="Templates"; body=renderTemplates(); }
     if (state.page === "content") { titleZh="内容资料"; titleEn="Content Master"; body=renderContent(); }
     if (state.page === "quality") { titleZh="质量检查"; titleEn="Quality"; body=renderQuality(); }
