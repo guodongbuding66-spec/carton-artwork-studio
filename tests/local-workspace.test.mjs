@@ -59,6 +59,17 @@ assert.match(app,/D\.resolvedElementText\(selected,state\.artwork,state\.factori
 assert.match(app,/D\.resolvedElementPayload\(selected,state\.artwork,state\.factories\)/);
 assert.match(app,/text:D\.resolvedElementText\(e,artwork,state\.factories\)/);
 assert.match(app,/\$\{code\}\$\{custom\}\$\{watermark\}/);
+assert.match(app,/selectedElementIds:\s*\[\]/);
+assert.match(app,/function selectedArtworkElements\(\)/);
+assert.match(app,/function toggleElementSelection\(id\)/);
+assert.match(app,/function alignSelectedElements\(mode\)/);
+assert.match(app,/function distributeSelectedElements\(axis\)/);
+assert.match(app,/data-action="distribute-horizontal"/);
+assert.match(app,/data-action="distribute-vertical"/);
+assert.match(app,/if\(event\.shiftKey\) toggleElementSelection/);
+assert.match(app,/DO_NOT_STACK/);
+assert.match(app,/KEEP_AWAY_FROM_HEAT/);
+assert.match(app,/NO_HOOKS/);
 assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*persistLocalDraft\(\);/);
 
 console.log("Local workspace usability regression tests passed.");

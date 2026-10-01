@@ -285,6 +285,31 @@
       ln(w*.45,h*.39,w*.55,h*.39);ln(w*.5,h*.39,w*.5,h*.17);ln(w*.32,h*.14,w*.68,h*.14);
       return ops;
     }
+    if(key==="DO_NOT_STACK"){
+      ops.push(rectOp(w*.22,h*.20,w*.56,h*.28,false));
+      ops.push(rectOp(w*.28,h*.58,w*.44,h*.24,false));
+      ln(w*.15,h*.12,w*.85,h*.88);ln(w*.85,h*.12,w*.15,h*.88);
+      return ops;
+    }
+    if(key==="KEEP_AWAY_FROM_HEAT"){
+      const cx=w*.72,cy=h*.74,r=Math.min(w,h)*.12;
+      // Review-only sun + carton + diagonal separation mark.
+      for(let i=0;i<8;i+=1){
+        const a=i*Math.PI/4;
+        ln(cx+Math.cos(a)*r*1.35,cy+Math.sin(a)*r*1.35,cx+Math.cos(a)*r*1.8,cy+Math.sin(a)*r*1.8);
+      }
+      ops.push(rectOp(w*.18,h*.20,w*.48,h*.28,false));
+      ln(w*.12,h*.12,w*.88,h*.88);
+      return ops;
+    }
+    if(key==="NO_HOOKS"){
+      ln(w*.55,h*.86,w*.55,h*.45);
+      ln(w*.55,h*.45,w*.47,h*.26);
+      ln(w*.47,h*.26,w*.34,h*.22);
+      ln(w*.34,h*.22,w*.22,h*.38);
+      ln(w*.14,h*.86,w*.86,h*.14);
+      return ops;
+    }
     ops.push(rectOp(1,1,Math.max(1,w-2),Math.max(1,h-2),false));
     return ops;
   }

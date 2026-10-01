@@ -71,6 +71,7 @@
     pdfxPromotionEvidence: [],
     promotionEvidenceBusy: false,
     selectedElementId: null,
+    selectedElementIds: [],
     historyPast: [],
     historyFuture: []
   };
@@ -192,6 +193,8 @@
     try{
       state.artwork=JSON.parse(snapshot);
       if(state.selectedElementId&&!artworkElements().some(e=>e.id===state.selectedElementId)) state.selectedElementId=null;
+      state.selectedElementIds=(state.selectedElementIds||[]).filter(id=>artworkElements().some(e=>e.id===id));
+      if(state.selectedElementId&&!state.selectedElementIds.includes(state.selectedElementId)) state.selectedElementIds=[state.selectedElementId];
       persistLocalDraft();
       render();
       return true;
@@ -215,6 +218,24 @@
   }
   function selectedArtworkElement(){
     return artworkElements().find((e)=>e.id===state.selectedElementId)||null;
+  }
+  function selectedArtworkElements(){
+    const ids=new Set(state.selectedElementIds||[]);
+    if(state.selectedElementId) ids.add(state.selectedElementId);
+    return artworkElements().filter((e)=>ids.has(e.id));
+  }
+  function isElementSelected(id){
+    return selectedArtworkElements().some((e)=>e.id===id);
+  }
+  function selectOnlyElement(id){
+    state.selectedElementId=id||null;
+    state.selectedElementIds=id?[id]:[];
+  }
+  function toggleElementSelection(id){
+    const ids=new Set(state.selectedElementIds||[]);
+    if(ids.has(id)) ids.delete(id); else ids.add(id);
+    state.selectedElementIds=[...ids];
+    state.selectedElementId=ids.has(id)?id:(state.selectedElementIds.at(-1)||null);
   }
   function newElementId(){
     return "el-"+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36));
@@ -415,10 +436,11 @@
   function renderElementEditor(){
     const elements=artworkElements();
     const selected=selectedArtworkElement();
+    const selectedMany=selectedArtworkElements();
     const locked=isArtworkLocked();
     const rows=[...elements].reverse().map((e)=>{
       const label=e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":e.type==="text"?"TEXT":e.type==="barcode"?"BAR":e.type==="symbol"?"SYM":"IMG";
-      return `<button type="button" class="element-row ${state.selectedElementId===e.id?"active":""} ${e.visible===false?"muted":""}" data-select-element="${esc(e.id)}">
+      return `<button type="button" class="element-row ${isElementSelected(e.id)?"active":""} ${e.visible===false?"muted":""}" data-select-element="${esc(e.id)}">
         <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
         <span class="mono subtle">${esc(e.panelId||"—")}</span>
@@ -426,6 +448,16 @@
       </button>`;
     }).join("");
     const panelOptions=geometry().panels.map(p=>`<option value="${p.id}" ${selected?.panelId===p.id?"selected":""}>${p.id}</option>`).join("");
+    const multiTools=selectedMany.length>1?`
+      <div class="multi-selection-tools">
+        <div class="notice"><strong>${selectedMany.length} 个元素已多选</strong><br>Shift+点击继续增减选择；对齐/分布会以当前选择整体为参考。</div>
+        <div class="align-grid">
+          ${[["multi-align-left","左对齐"],["multi-align-hcenter","水平居中"],["multi-align-right","右对齐"],["multi-align-top","顶对齐"],["multi-align-vcenter","垂直居中"],["multi-align-bottom","底对齐"]].map(([a,n])=>`<button class="tool" data-action="${a}">${n}</button>`).join("")}
+          <button class="tool" data-action="distribute-horizontal" ${selectedMany.length<3?"disabled":""}>水平等距</button>
+          <button class="tool" data-action="distribute-vertical" ${selectedMany.length<3?"disabled":""}>垂直等距</button>
+        </div>
+        <div class="toolbar" style="justify-content:flex-end;margin-top:8px"><button class="btn danger small" data-action="delete-selection">删除所选</button></div>
+      </div>`:"";
     const bindingOptions=(D.artworkBindings||[]).map(b=>`<option value="${esc(b.key)}" ${selected?.bindingKey===b.key?"selected":""}>${esc(b.label)}</option>`).join("");
     const props=selected?`
       <div class="element-properties">
@@ -470,6 +502,9 @@
             <option value="THIS_WAY_UP" ${selected.symbolKey==="THIS_WAY_UP"?"selected":""}>This Way Up</option>
             <option value="KEEP_DRY" ${selected.symbolKey==="KEEP_DRY"?"selected":""}>Keep Dry</option>
             <option value="FRAGILE" ${selected.symbolKey==="FRAGILE"?"selected":""}>Fragile</option>
+            <option value="DO_NOT_STACK" ${selected.symbolKey==="DO_NOT_STACK"?"selected":""}>Do Not Stack</option>
+            <option value="KEEP_AWAY_FROM_HEAT" ${selected.symbolKey==="KEEP_AWAY_FROM_HEAT"?"selected":""}>Keep Away From Heat</option>
+            <option value="NO_HOOKS" ${selected.symbolKey==="NO_HOOKS"?"selected":""}>No Hooks</option>
           </select></div>
           <div class="notice warn">当前为 Review Library 矢量符号。正式生产须绑定客户/工厂批准的受控 Symbol Master。</div>
         `:""}
@@ -507,6 +542,9 @@
           <option value="THIS_WAY_UP">This Way Up</option>
           <option value="KEEP_DRY">Keep Dry</option>
           <option value="FRAGILE">Fragile</option>
+          <option value="DO_NOT_STACK">Do Not Stack</option>
+          <option value="KEEP_AWAY_FROM_HEAT">Keep Away From Heat</option>
+          <option value="NO_HOOKS">No Hooks</option>
         </select>
         <button class="btn small" data-action="add-handling-symbol" ${locked?"disabled":""}>＋ 包装图标</button>
       </div>
@@ -520,7 +558,7 @@
         <div class="field"><label>&nbsp;</label><button class="btn primary" style="width:100%" data-action="add-generated-qr" ${locked?"disabled":""}>生成矢量 QR</button></div>
       </div>
       <div class="element-list">${rows||'<div class="subtle">还没有自定义元素。</div>'}</div>
-      ${props}
+      ${multiTools}${props}
     `);
   }
 
@@ -589,6 +627,34 @@
         <line x1="${w*.5}" y1="${h*.62}" x2="${w*.5}" y2="${h*.84}"/><line x1="${w*.32}" y1="${h*.86}" x2="${w*.68}" y2="${h*.86}"/>
       </g>`;
     }
+    if(key==="DO_NOT_STACK"){
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linejoin="round">
+        <rect x="${w*.22}" y="${h*.52}" width="${w*.56}" height="${h*.28}"/>
+        <rect x="${w*.28}" y="${h*.18}" width="${w*.44}" height="${h*.24}"/>
+        <line x1="${w*.15}" y1="${h*.12}" x2="${w*.85}" y2="${h*.88}"/>
+        <line x1="${w*.85}" y1="${h*.12}" x2="${w*.15}" y2="${h*.88}"/>
+      </g>`;
+    }
+    if(key==="KEEP_AWAY_FROM_HEAT"){
+      const cx=w*.72,cy=h*.26,r=Math.min(w,h)*.12;
+      const rays=[0,45,90,135,180,225,270,315].map(deg=>{
+        const a=deg*Math.PI/180;
+        const x1=cx+Math.cos(a)*r*1.35,y1=cy+Math.sin(a)*r*1.35;
+        const x2=cx+Math.cos(a)*r*1.8,y2=cy+Math.sin(a)*r*1.8;
+        return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+      }).join("");
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round">
+        <circle cx="${cx}" cy="${cy}" r="${r}"/>${rays}
+        <rect x="${w*.18}" y="${h*.52}" width="${w*.48}" height="${h*.28}"/>
+        <line x1="${w*.12}" y1="${h*.88}" x2="${w*.88}" y2="${h*.12}"/>
+      </g>`;
+    }
+    if(key==="NO_HOOKS"){
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M ${w*.55} ${h*.14} L ${w*.55} ${h*.55} Q ${w*.55} ${h*.78} ${w*.38} ${h*.78} Q ${w*.22} ${h*.78} ${w*.22} ${h*.62}"/>
+        <line x1="${w*.14}" y1="${h*.14}" x2="${w*.86}" y2="${h*.86}"/>
+      </g>`;
+    }
     return `<rect x="1" y="1" width="${Math.max(1,w-2)}" height="${Math.max(1,h-2)}" fill="none" stroke="#bc2f3b" stroke-width="${sw}"/>`;
   }
 
@@ -619,9 +685,9 @@
     const elements=Array.isArray(artwork.elements)?artwork.elements:[];
     return elements.filter((e)=>e.visible!==false).map((e)=>{
       const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
-      const selected=mode==="editor"&&state.selectedElementId===e.id;
+      const selected=mode==="editor"&&isElementSelected(e.id);
       const border=selected?`<rect data-element-selection x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
-      const resizeHandle=selected&&!e.locked?`<rect data-element-resize="${esc(e.id)}" x="${Math.max(0,w-4)}" y="${Math.max(0,h-4)}" width="8" height="8" rx="1.5" fill="#fff" stroke="#e13b6b" stroke-width="2" vector-effect="non-scaling-stroke" style="cursor:nwse-resize"/>`:"";
+      const resizeHandle=selected&&selectedArtworkElements().length===1&&!e.locked?`<rect data-element-resize="${esc(e.id)}" x="${Math.max(0,w-4)}" y="${Math.max(0,h-4)}" width="8" height="8" rx="1.5" fill="#fff" stroke="#e13b6b" stroke-width="2" vector-effect="non-scaling-stroke" style="cursor:nwse-resize"/>`:"";
       let body="";
       if((e.type==="image"||e.type==="qr-image")&&e.dataUrl){
         body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
@@ -1329,7 +1395,7 @@
       };
       pushArtworkHistory();
       artworkElements().push(el);
-      state.selectedElementId=el.id;
+      selectOnlyElement(el.id);
       const saved=persistLocalDraft();
       render();
       toast(saved?(type==="qr-image"?"二维码图片已添加":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
@@ -1353,7 +1419,7 @@
     };
     pushArtworkHistory();
     artworkElements().push(el);
-    state.selectedElementId=el.id;
+    selectOnlyElement(el.id);
     persistLocalDraft();
     render();
     toast("矢量二维码已添加","success");
@@ -1391,14 +1457,14 @@
       sourceType:"generated-vector",mimeType:"",dataUrl:"",pixelWidth:0,pixelHeight:0
     };
     pushArtworkHistory();
-    artworkElements().push(el);state.selectedElementId=el.id;
+    artworkElements().push(el);selectOnlyElement(el.id);
     persistLocalDraft();render();toast("条码元素已添加","success");
   }
 
   function addHandlingSymbol(){
     if(!localArtworkEditable()) return;
     const key=String(document.getElementById("handling-symbol-select")?.value||"THIS_WAY_UP");
-    const names={THIS_WAY_UP:"This Way Up",KEEP_DRY:"Keep Dry",FRAGILE:"Fragile"};
+    const names={THIS_WAY_UP:"This Way Up",KEEP_DRY:"Keep Dry",FRAGILE:"Fragile",DO_NOT_STACK:"Do Not Stack",KEEP_AWAY_FROM_HEAT:"Keep Away From Heat",NO_HOOKS:"No Hooks"};
     const size=48,p=defaultElementPlacement(size,size);
     const el={
       id:newElementId(),type:"symbol",name:names[key]||key,
@@ -1410,7 +1476,7 @@
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
     pushArtworkHistory();
-    artworkElements().push(el);state.selectedElementId=el.id;
+    artworkElements().push(el);selectOnlyElement(el.id);
     persistLocalDraft();render();toast("包装图标已添加（Review Library）","success");
   }
 
@@ -1430,7 +1496,7 @@
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
     pushArtworkHistory();
-    artworkElements().push(el);state.selectedElementId=el.id;
+    artworkElements().push(el);selectOnlyElement(el.id);
     persistLocalDraft();render();toast(`数据字段已绑定：${meta?.label||bindingKey}`,"success");
   }
 
@@ -1447,7 +1513,7 @@
     };
     pushArtworkHistory();
     artworkElements().push(el);
-    state.selectedElementId=el.id;
+    selectOnlyElement(el.id);
     persistLocalDraft();render();toast("文字元素已添加","success");
   }
 
@@ -1461,7 +1527,7 @@
     copy.x=Number(current.x||0)+8;copy.y=Number(current.y||0)+8;
     clampElementToBounds(copy);
     artworkElements().push(copy);
-    state.selectedElementId=copy.id;
+    selectOnlyElement(copy.id);
     persistLocalDraft();render();
   }
 
@@ -1476,6 +1542,64 @@
     if(mode==="up") next=Math.min(list.length,index+1);
     if(mode==="down") next=Math.max(0,index-1);
     list.splice(next,0,item);
+    persistLocalDraft();render();
+  }
+
+  function selectionBounds(elements=selectedArtworkElements()){
+    if(!elements.length) return null;
+    const left=Math.min(...elements.map(e=>Number(e.x||0)));
+    const top=Math.min(...elements.map(e=>Number(e.y||0)));
+    const right=Math.max(...elements.map(e=>Number(e.x||0)+Math.max(1,Number(e.w||1))));
+    const bottom=Math.max(...elements.map(e=>Number(e.y||0)+Math.max(1,Number(e.h||1))));
+    return {left,top,right,bottom,width:right-left,height:bottom-top};
+  }
+
+  function sameSelectionPanel(elements=selectedArtworkElements()){
+    const panels=new Set(elements.map(e=>String(e.panelId||"")));
+    return panels.size<=1;
+  }
+
+  function alignSelectedElements(mode){
+    const items=selectedArtworkElements().filter(e=>!e.locked);
+    if(items.length<2||!localArtworkEditable()) return;
+    if(!sameSelectionPanel(items)){toast("多选对齐要求元素位于同一纸箱面板，避免跨折线误移动。","error");return;}
+    const b=selectionBounds(items);if(!b)return;
+    pushArtworkHistory();
+    for(const e of items){
+      const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
+      if(mode==="left") e.x=b.left;
+      if(mode==="hcenter") e.x=b.left+(b.width-w)/2;
+      if(mode==="right") e.x=b.right-w;
+      if(mode==="top") e.y=b.top;
+      if(mode==="vcenter") e.y=b.top+(b.height-h)/2;
+      if(mode==="bottom") e.y=b.bottom-h;
+      clampElementToBounds(e);
+    }
+    persistLocalDraft();render();
+  }
+
+  function distributeSelectedElements(axis){
+    const items=selectedArtworkElements().filter(e=>!e.locked);
+    if(items.length<3||!localArtworkEditable()) return;
+    if(!sameSelectionPanel(items)){toast("等距分布要求元素位于同一纸箱面板。","error");return;}
+    pushArtworkHistory();
+    if(axis==="horizontal"){
+      const sorted=[...items].sort((a,b)=>Number(a.x||0)-Number(b.x||0));
+      const first=sorted[0],last=sorted.at(-1);
+      const left=Number(first.x||0),right=Number(last.x||0)+Number(last.w||0);
+      const totalWidth=sorted.reduce((sum,e)=>sum+Number(e.w||0),0);
+      const gap=(right-left-totalWidth)/(sorted.length-1);
+      let x=left;
+      for(const e of sorted){e.x=x;x+=Number(e.w||0)+gap;clampElementToBounds(e);}
+    }else{
+      const sorted=[...items].sort((a,b)=>Number(a.y||0)-Number(b.y||0));
+      const first=sorted[0],last=sorted.at(-1);
+      const top=Number(first.y||0),bottom=Number(last.y||0)+Number(last.h||0);
+      const totalHeight=sorted.reduce((sum,e)=>sum+Number(e.h||0),0);
+      const gap=(bottom-top-totalHeight)/(sorted.length-1);
+      let y=top;
+      for(const e of sorted){e.y=y;y+=Number(e.h||0)+gap;clampElementToBounds(e);}
+    }
     persistLocalDraft();render();
   }
 
@@ -1495,14 +1619,14 @@
 
   function deleteSelectedElement(){
     if(!localArtworkEditable()) return;
-    const index=artworkElements().findIndex((e)=>e.id===state.selectedElementId);
-    if(index<0){toast("请先选择一个元素。","error");return;}
+    const ids=new Set(selectedArtworkElements().filter(e=>!e.locked).map(e=>e.id));
+    if(!ids.size){toast("请先选择可编辑元素。","error");return;}
     pushArtworkHistory();
-    artworkElements().splice(index,1);
-    state.selectedElementId=null;
+    state.artwork.elements=artworkElements().filter(e=>!ids.has(e.id));
+    selectOnlyElement(null);
     persistLocalDraft();
     render();
-    toast("元素已删除","success");
+    toast(ids.size>1?`已删除 ${ids.size} 个元素`:"元素已删除","success");
   }
 
   function bindEditorKeyboard(){
@@ -1521,7 +1645,8 @@
         event.preventDefault();redoArtwork();return;
       }
       const element=selectedArtworkElement();
-      if(!element||element.locked||!localArtworkEditable()) return;
+      const selection=selectedArtworkElements().filter(e=>!e.locked);
+      if(!element||!selection.length||!localArtworkEditable()) return;
       if(mod&&key==="d"){
         event.preventDefault();duplicateSelectedElement();return;
       }
@@ -1532,11 +1657,13 @@
         event.preventDefault();
         if(!event.repeat) pushArtworkHistory();
         const step=event.altKey?0.1:(event.shiftKey?5:1);
-        if(event.key==="ArrowLeft") element.x=Number(element.x||0)-step;
-        if(event.key==="ArrowRight") element.x=Number(element.x||0)+step;
-        if(event.key==="ArrowUp") element.y=Number(element.y||0)-step;
-        if(event.key==="ArrowDown") element.y=Number(element.y||0)+step;
-        clampElementToBounds(element);
+        for(const item of selection){
+          if(event.key==="ArrowLeft") item.x=Number(item.x||0)-step;
+          if(event.key==="ArrowRight") item.x=Number(item.x||0)+step;
+          if(event.key==="ArrowUp") item.y=Number(item.y||0)-step;
+          if(event.key==="ArrowDown") item.y=Number(item.y||0)+step;
+          clampElementToBounds(item);
+        }
         persistLocalDraft();render();
       }
     };
@@ -1544,7 +1671,11 @@
 
   function bindArtworkElements(){
     document.querySelectorAll("[data-select-element]").forEach((b)=>{
-      b.onclick=()=>{state.selectedElementId=b.dataset.selectElement;render();};
+      b.onclick=(event)=>{
+        if(event.shiftKey) toggleElementSelection(b.dataset.selectElement);
+        else selectOnlyElement(b.dataset.selectElement);
+        render();
+      };
     });
     document.querySelectorAll("[data-element-prop]").forEach((el)=>{
       el.onfocus=()=>{if(localArtworkEditable())pushArtworkHistory();};
@@ -1632,7 +1763,13 @@
         const id=group.dataset.artElement;
         const element=artworkElements().find((x)=>x.id===id);
         if(!element) return;
-        state.selectedElementId=id;
+        if(ev.shiftKey){
+          toggleElementSelection(id);
+          ev.preventDefault();
+          render();
+          return;
+        }
+        selectOnlyElement(id);
         if(element.locked||!localArtworkEditable()){render();return;}
         pushArtworkHistory();
         ev.preventDefault();
@@ -1682,6 +1819,15 @@
     if(action==="align-top") return alignSelectedElement("top");
     if(action==="align-vcenter") return alignSelectedElement("vcenter");
     if(action==="align-bottom") return alignSelectedElement("bottom");
+    if(action==="multi-align-left") return alignSelectedElements("left");
+    if(action==="multi-align-hcenter") return alignSelectedElements("hcenter");
+    if(action==="multi-align-right") return alignSelectedElements("right");
+    if(action==="multi-align-top") return alignSelectedElements("top");
+    if(action==="multi-align-vcenter") return alignSelectedElements("vcenter");
+    if(action==="multi-align-bottom") return alignSelectedElements("bottom");
+    if(action==="distribute-horizontal") return distributeSelectedElements("horizontal");
+    if(action==="distribute-vertical") return distributeSelectedElements("vertical");
+    if(action==="delete-selection") return deleteSelectedElement();
     if(action==="delete-element") return deleteSelectedElement();
     if(action==="new-local") return resetLocalArtwork();
     if(action==="save") return saveDraft();

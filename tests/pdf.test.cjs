@@ -72,4 +72,15 @@ const gs1Text=Buffer.from(gs1Proof).toString("latin1");
 assert.ok(gs1Text.includes("(\\(00\\)123456789012345675) Tj"),"GS1-128 HRI should retain AI parentheses with PDF string escaping");
 assert.ok((gs1Text.match(/ re f/g)||[]).length>(text.match(/ re f/g)||[]).length,"GS1-128 should add vector bar rectangles");
 
+const expandedSymbolProof=P.createPdfBytes({
+  artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
+  customElements:[
+    {id:"stack",type:"symbol",x:300,y:900,w:48,h:48,rotation:0,visible:true,symbolKey:"DO_NOT_STACK"},
+    {id:"heat",type:"symbol",x:360,y:900,w:48,h:48,rotation:0,visible:true,symbolKey:"KEEP_AWAY_FROM_HEAT"},
+    {id:"hook",type:"symbol",x:420,y:900,w:48,h:48,rotation:0,visible:true,symbolKey:"NO_HOOKS"}
+  ]
+});
+const expandedSymbolText=Buffer.from(expandedSymbolProof).toString("latin1");
+assert.ok((expandedSymbolText.match(/ m .* l S/g)||[]).length>=8,"Expanded handling symbols should emit vector line operations");
+
 console.log("PDF tests passed.");
