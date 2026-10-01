@@ -1348,7 +1348,7 @@
               <div class="batch-action-group">
                 <div class="batch-action-head"><span>02</span><div><strong>Server promotion</strong><small>D1 canonical snapshot remains authoritative</small></div></div>
                 <div class="batch-action-buttons">
-                  <button class="btn primary" data-action="batch-create-drafts" ${pendingDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchDraftBusy?"":"disabled"}>${state.batchDraftBusy?"Creating…":`Create Drafts (${pendingDrafts})`}</button>
+                  <button class="btn primary" data-action="batch-create-drafts" ${pendingDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchDraftBusy?"":"disabled"}>${state.batchDraftBusy?"Creating…":`Create Remaining Drafts (${pendingDrafts})`}</button>
                   <button class="btn" data-action="batch-server-preflight" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>${state.batchProcessBusy?"Processing…":"Server Preflight"}</button>
                   <button class="btn success" data-action="batch-preflight-submit" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Preflight + Submit</button>
                   <button class="btn" data-action="batch-retry-failed" ${failedServerPf&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Retry Failed (${failedServerPf})</button>
