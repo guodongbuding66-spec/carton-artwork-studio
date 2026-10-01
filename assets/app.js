@@ -704,8 +704,8 @@
           <button class="tool" data-action="distribute-vertical" ${selectedMany.length<3?"disabled":""}>垂直等距</button>
         </div>
         <div class="toolbar" style="justify-content:flex-end;margin-top:8px">
-          <button class="btn small" data-action="group-selection" ${sameSelectionPanel(selectedMany)?"":"disabled"}>Group 组合</button>
-          <button class="btn small" data-action="ungroup-selection" ${selectedMany.some(e=>e.groupId)?"":"disabled"}>Ungroup</button>
+          <button class="btn small" data-action="group-selection" ${sameSelectionPanel(selectedMany)&&!selectedMany.some(e=>e.blockType)?"":"disabled"}>Group 组合</button>
+          <button class="btn small" data-action="ungroup-selection" ${selectedMany.some(e=>e.groupId)&&!selectedMany.some(e=>e.blockType)?"":"disabled"}>Ungroup</button>
           <button class="btn danger small" data-action="delete-selection">删除所选</button>
         </div>
       </div>`:"";
@@ -717,6 +717,10 @@
       ? D.effectiveImageDpi(selected)
       : null;
     const selectedProductionQualification=selected?D.productionElementQualification(selected):null;
+    const selectedBlockItems=selected?.blockType
+      ? artworkElements().filter(e=>String(e.blockType||"")===String(selected.blockType||"")&&String(e.groupId||"")===String(selected.groupId||""))
+      : [];
+    const selectedBlockLocked=selectedBlockItems.length>0&&selectedBlockItems.every(e=>e.locked);
     const props=selected?`
       <div class="element-properties">
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
@@ -727,6 +731,17 @@
         </div>
         <label class="toggle-line"><input type="checkbox" data-element-constrain ${selected.constrainToPanel!==false?"checked":""}/> 限制在所属面板内</label>
         <label class="toggle-line"><input type="checkbox" data-element-safe-exempt ${selected.safeAreaExempt?"checked":""}/> 允许超出 Safe Margin（显式豁免）</label>
+        ${selected.blockType?`
+          <div class="notice ${selectedBlockLocked?"success":""}">
+            <strong>Controlled Block · ${esc(selected.blockType)}</strong><br>
+            Version ${esc(selected.blockVersion||"—")} · ${selectedBlockItems.length} element(s) · ${selectedBlockLocked?"LOCKED":"EDITABLE"}<br>
+            受控 Block 不允许普通 Group / Ungroup，避免破坏字段完整性。
+          </div>
+          <div class="row2">
+            <button class="btn small" data-action="lock-controlled-block" ${selectedBlockLocked?"disabled":""}>Lock Whole Block</button>
+            <button class="btn small" data-action="unlock-controlled-block" ${!selectedBlockLocked?"disabled":""}>Unlock Whole Block</button>
+          </div>
+        `:""}
         ${selected.type==="text"?`
           <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
           ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementText(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
@@ -2176,6 +2191,7 @@
   function groupSelectedElements(){
     const items=selectedArtworkElements();
     if(items.length<2||!localArtworkEditable()) return;
+    if(items.some(e=>e.blockType)){toast("受控 Block 不能用普通 Group 重组。请保持 Block 结构完整。","error");return;}
     if(!sameSelectionPanel(items)){toast("Group 要求元素位于同一纸箱面板。","error");return;}
     pushArtworkHistory();
     const groupId=newGroupId();
@@ -2183,7 +2199,9 @@
     persistLocalDraft();render();toast(`已组合 ${items.length} 个元素`,"success");
   }
   function ungroupSelectedElements(){
-    const ids=new Set(selectedArtworkElements().map(e=>String(e.groupId||"")).filter(Boolean));
+    const selectedItems=selectedArtworkElements();
+    if(selectedItems.some(e=>e.blockType)){toast("受控 Block 不能解除组合。可以整块复制、锁定或删除。","error");return;}
+    const ids=new Set(selectedItems.map(e=>String(e.groupId||"")).filter(Boolean));
     if(!ids.size||!localArtworkEditable()) return;
     pushArtworkHistory();
     let count=0;
@@ -2191,6 +2209,26 @@
       if(ids.has(String(item.groupId||""))){item.groupId="";count+=1;}
     }
     persistLocalDraft();render();toast(`已解除 ${count} 个元素的组合`,"success");
+  }
+
+  function controlledBlockItemsFor(element=selectedArtworkElement()){
+    if(!element?.blockType||!element?.groupId) return [];
+    return artworkElements().filter(e=>
+      String(e.blockType||"")===String(element.blockType||"")&&
+      String(e.groupId||"")===String(element.groupId||"")
+    );
+  }
+
+  function setSelectedControlledBlockLock(locked){
+    if(!localArtworkEditable()) return;
+    const items=controlledBlockItemsFor();
+    if(!items.length){toast("当前选择不是受控 Block。","error");return;}
+    pushArtworkHistory();
+    for(const item of items) item.locked=Boolean(locked);
+    state.selectedElementIds=items.map(e=>e.id);
+    state.selectedElementId=items.at(-1)?.id||null;
+    persistLocalDraft();render();
+    toast(locked?"受控 Block 已整块锁定":"受控 Block 已整块解锁","success");
   }
 
   function selectionMoveLimits(items){
@@ -2628,6 +2666,8 @@
     if(action==="copy-opposite-panel") return cloneSelectionToOppositePanel();
     if(action==="group-selection") return groupSelectedElements();
     if(action==="ungroup-selection") return ungroupSelectedElements();
+    if(action==="lock-controlled-block") return setSelectedControlledBlockLock(true);
+    if(action==="unlock-controlled-block") return setSelectedControlledBlockLock(false);
     if(action==="fit-text-element") return fitSelectedTextElement();
     if(action==="layer-front") return reorderSelectedElement("front");
     if(action==="layer-back") return reorderSelectedElement("back");
