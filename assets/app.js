@@ -116,7 +116,8 @@
       let item=(groups.Assets||[]).find(x=>x.id===`barcode-data-${element.id||element.name}`);
       try{
         const itf=String(element.symbology||"").toUpperCase()==="ITF14";
-        const model=itf?C.itf14Bars(element.payload||""):C.code128Bars(element.payload||"");
+        const payload=D.resolvedElementPayload(element,artwork,state.factories);
+        const model=itf?C.itf14Bars(payload):C.code128Bars(payload);
         if(item){
           item.status="pass";item.blocking=false;
           item.title=itf?"ITF-14 / GTIN-14 vector encoding":"Code 128-B vector encoding";
@@ -130,6 +131,20 @@
           (groups.Assets||(groups.Assets=[])).push(item);
         }
         item.status="error";item.blocking=true;item.detail=err.message||String(err);
+      }
+    }
+    const customQrs=(Array.isArray(artwork.elements)?artwork.elements:[]).filter(e=>e.visible!==false&&e.type==="qr-generated");
+    for(const element of customQrs){
+      const item=(groups.Assets||[]).find(x=>x.id===`qr-generated-${element.id||element.name}`);
+      try{
+        const payload=D.resolvedElementPayload(element,artwork,state.factories);
+        const model=C.qrMatrix(payload,element.ecc||"M");
+        if(item){
+          item.status="pass";item.blocking=false;
+          item.detail=`Version ${model.version} · ECC ${model.errorCorrectionLevel} · ${model.matrix.length}×${model.matrix.length} modules · data source ${element.bindingKey||"manual"}.`;
+        }
+      }catch(err){
+        if(item){item.status="error";item.blocking=true;item.detail=err.message||String(err);}
       }
     }
     return groups;
@@ -364,6 +379,7 @@
       </button>`;
     }).join("");
     const panelOptions=geometry().panels.map(p=>`<option value="${p.id}" ${selected?.panelId===p.id?"selected":""}>${p.id}</option>`).join("");
+    const bindingOptions=(D.artworkBindings||[]).map(b=>`<option value="${esc(b.key)}" ${selected?.bindingKey===b.key?"selected":""}>${esc(b.label)}</option>`).join("");
     const props=selected?`
       <div class="element-properties">
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
@@ -374,17 +390,23 @@
         </div>
         <label class="toggle-line"><input type="checkbox" data-element-constrain ${selected.constrainToPanel!==false?"checked":""}/> 限制在所属面板内</label>
         ${selected.type==="text"?`
-          <div class="field"><label>Text 文本</label><textarea class="input" rows="3" data-element-prop="text">${esc(selected.text||"")}</textarea></div>
+          <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
+          ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementText(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
+          <div class="field"><label>Text 文本</label><textarea class="input" rows="3" data-element-prop="text" ${selected.bindingKey?"disabled":""}>${esc(selected.text||"")}</textarea></div>
           <div class="row3">
             <div class="field"><label>pt</label><input class="input mono" type="number" min="5" step="0.5" data-element-prop="fontSizePt" value="${esc(selected.fontSizePt||12)}"/></div>
             <div class="field"><label>Weight</label><select class="select" data-element-prop="fontWeight"><option value="normal" ${selected.fontWeight!=="bold"?"selected":""}>Normal</option><option value="bold" ${selected.fontWeight==="bold"?"selected":""}>Bold</option></select></div>
             <div class="field"><label>Align</label><select class="select" data-element-prop="textAlign"><option value="left" ${selected.textAlign==="left"?"selected":""}>Left</option><option value="center" ${selected.textAlign==="center"?"selected":""}>Center</option><option value="right" ${selected.textAlign==="right"?"selected":""}>Right</option></select></div>
           </div>`:""}
         ${selected.type==="qr-generated"?`
-          <div class="field"><label>QR payload</label><textarea class="input" rows="3" data-element-prop="payload">${esc(selected.payload||"")}</textarea></div>
+          <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
+          ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementPayload(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
+          <div class="field"><label>QR payload</label><textarea class="input" rows="3" data-element-prop="payload" ${selected.bindingKey?"disabled":""}>${esc(selected.payload||"")}</textarea></div>
           <div class="field"><label>Error correction</label><select class="select" data-element-prop="ecc">${["L","M","Q","H"].map(x=>`<option ${selected.ecc===x?"selected":""}>${x}</option>`).join("")}</select></div>`:""}
         ${selected.type==="barcode"?`
-          <div class="field"><label>Barcode payload</label><input class="input mono" data-element-prop="payload" value="${esc(selected.payload||"")}"/></div>
+          <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
+          ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementPayload(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
+          <div class="field"><label>Barcode payload</label><input class="input mono" data-element-prop="payload" value="${esc(selected.payload||"")}" ${selected.bindingKey?"disabled":""}/></div>
           <div class="row2">
             <div class="field"><label>Symbology</label><select class="select" data-element-prop="symbology"><option value="CODE128B" ${selected.symbology!=="ITF14"?"selected":""}>Code 128-B</option><option value="ITF14" ${selected.symbology==="ITF14"?"selected":""}>ITF-14 / GTIN-14</option></select></div>
             <label class="toggle-line"><input type="checkbox" data-element-hri ${selected.humanReadable!==false?"checked":""}/> Human readable</label>
@@ -435,6 +457,10 @@
           <option value="FRAGILE">Fragile</option>
         </select>
         <button class="btn small" data-action="add-handling-symbol" ${locked?"disabled":""}>＋ 包装图标</button>
+      </div>
+      <div class="row2" style="margin-top:8px">
+        <div class="field"><label>变量数据字段</label><select id="binding-preset-select" class="select">${(D.artworkBindings||[]).filter(b=>b.key).map(b=>`<option value="${esc(b.key)}">${esc(b.label)}</option>`).join("")}</select></div>
+        <div class="field"><label>&nbsp;</label><button class="btn primary" style="width:100%" data-action="add-bound-text-element" ${locked?"disabled":""}>＋ 数据字段</button></div>
       </div>
       <div class="field" style="margin-top:8px"><label>生成二维码内容</label><textarea id="custom-qr-payload" class="input" rows="2" placeholder="URL / SKU / GS1 Digital Link / 自定义内容">${esc(state.artwork.qr||"")}</textarea></div>
       <div class="row2">
@@ -512,19 +538,20 @@
     return `<rect x="1" y="1" width="${Math.max(1,w-2)}" height="${Math.max(1,h-2)}" fill="none" stroke="#bc2f3b" stroke-width="${sw}"/>`;
   }
 
-  function barcodeSvgBody(element,w,h){
+  function barcodeSvgBody(element,w,h,artwork=state.artwork,factoryList=state.factories){
     try{
+      const payload=D.resolvedElementPayload(element,artwork,factoryList);
       const itf=String(element.symbology||"").toUpperCase()==="ITF14";
       const model=itf
-        ? C.itf14Bars(element.payload||"",{moduleMm:.8,heightMm:30})
-        : C.code128Bars(element.payload||"",{moduleMm:.42,heightMm:28});
+        ? C.itf14Bars(payload,{moduleMm:.8,heightMm:30})
+        : C.code128Bars(payload,{moduleMm:.42,heightMm:28});
       const hri=element.humanReadable!==false;
       const hriH=hri?Math.min(8,h*.22):0;
       const maxW=Math.max(1,w-4),maxH=Math.max(1,h-hriH-3);
       const sx=maxW/Math.max(1,model.widthMm),sy=maxH/Math.max(1,model.heightMm);
       const x0=2,y0=1;
       const bars=model.bars.map(b=>`<rect x="${(x0+b.x*sx).toFixed(3)}" y="${y0}" width="${Math.max(.15,b.w*sx).toFixed(3)}" height="${Math.max(.5,b.h*sy).toFixed(3)}" fill="#000"/>`).join("");
-      const label=itf?(model.payload||element.payload||""):(element.payload||"");
+      const label=itf?(model.payload||payload):payload;
       const text=hri?`<text x="${w/2}" y="${h-1.5}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${Math.max(3,Math.min(5.5,hriH*.65))}" fill="#000">${esc(label)}</text>`:"";
       return `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/>${bars}${text}`;
     }catch(err){
@@ -532,7 +559,7 @@
     }
   }
 
-  function renderCustomElements(artwork=state.artwork,mode="editor"){
+  function renderCustomElements(artwork=state.artwork,mode="editor",factoryList=state.factories){
     const elements=Array.isArray(artwork.elements)?artwork.elements:[];
     return elements.filter((e)=>e.visible!==false).map((e)=>{
       const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
@@ -543,18 +570,18 @@
         body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
       }else if(e.type==="text"){
         const fontMm=Math.max(1,Number(e.fontSizePt||12))*25.4/72;
-        const lines=String(e.text||"").split(/\r?\n/);
+        const lines=D.resolvedElementText(e,artwork,factoryList).split(/\r?\n/);
         const anchor=e.textAlign==="center"?"middle":e.textAlign==="right"?"end":"start";
         const tx=e.textAlign==="center"?w/2:e.textAlign==="right"?w:0;
         const weight=e.fontWeight==="bold"?"700":"400";
         body=`<text x="${tx}" y="${fontMm}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="${fontMm}" font-weight="${weight}" fill="#000">${lines.map((line,i)=>`<tspan x="${tx}" dy="${i===0?0:fontMm*1.2}">${esc(line)}</tspan>`).join("")}</text>`;
       }else if(e.type==="barcode"){
-        body=barcodeSvgBody(e,w,h);
+        body=barcodeSvgBody(e,w,h,artwork,factoryList);
       }else if(e.type==="symbol"){
         body=handlingSymbolSvgBody(e.symbolKey,w,h);
       }else if(e.type==="qr-generated"){
         try{
-          const model=C.qrMatrix(e.payload||"",e.ecc||"M");
+          const model=C.qrMatrix(D.resolvedElementPayload(e,artwork,factoryList),e.ecc||"M");
           const quiet=4,n=model.matrix.length,size=Math.min(w,h),cell=size/(n+quiet*2),ox=(w-size)/2,oy=(h-size)/2;
           const modules=model.matrix.flatMap((row,rr)=>row.map((v,cc)=>v?`<rect x="${(ox+(cc+quiet)*cell).toFixed(3)}" y="${(oy+(rr+quiet)*cell).toFixed(3)}" width="${cell.toFixed(3)}" height="${cell.toFixed(3)}" fill="#000"/>`:"")).join("");
           body=`<rect x="${ox}" y="${oy}" width="${size}" height="${size}" fill="#fff"/>${modules}`;
@@ -585,7 +612,7 @@
     const qrEcc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
     const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118,a.codeBlockProfile,a,{qrEcc});
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
-    const custom=renderCustomElements(a,mode);
+    const custom=renderCustomElements(a,mode,factoryList);
     const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
       <rect x="-50" y="-50" width="${g.totalWidth+100}" height="${g.totalHeight+100}" fill="#fff"/>
@@ -1305,6 +1332,25 @@
     persistLocalDraft();render();toast("包装图标已添加（Review Library）","success");
   }
 
+  function addBoundTextElement(){
+    if(!localArtworkEditable()) return;
+    const bindingKey=String(document.getElementById("binding-preset-select")?.value||"product.sku");
+    const meta=(D.artworkBindings||[]).find(b=>b.key===bindingKey);
+    if(!bindingKey||!D.isKnownArtworkBinding(bindingKey)){toast("请选择有效的数据字段。","error");return;}
+    const w=150,h=30,p=defaultElementPlacement(w,h);
+    const el={
+      id:newElementId(),type:"text",name:meta?.label||bindingKey,
+      x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
+      panelId:p.panelId,constrainToPanel:true,
+      text:"",bindingKey,fontSizePt:12,fontWeight:"bold",textAlign:"left",
+      symbology:"",humanReadable:false,symbolKey:"",
+      payload:"",ecc:"M",sourceType:"bound-variable",mimeType:"",
+      dataUrl:"",pixelWidth:0,pixelHeight:0
+    };
+    artworkElements().push(el);state.selectedElementId=el.id;
+    persistLocalDraft();render();toast(`数据字段已绑定：${meta?.label||bindingKey}`,"success");
+  }
+
   function addTextElement(){
     if(!localArtworkEditable()) return;
     const w=120,h=28,p=defaultElementPlacement(w,h);
@@ -1450,6 +1496,7 @@
     if(action==="upload-image-trigger"){document.getElementById("art-image-file")?.click();return;}
     if(action==="upload-qr-trigger"){document.getElementById("art-qr-image-file")?.click();return;}
     if(action==="add-text-element") return addTextElement();
+    if(action==="add-bound-text-element") return addBoundTextElement();
     if(action==="add-barcode-element") return addBarcodeElement();
     if(action==="add-handling-symbol") return addHandlingSymbol();
     if(action==="add-generated-qr") return addGeneratedQrElement();
@@ -2404,17 +2451,22 @@
 
   function proofPdfElements(artwork=state.artwork){
     return (Array.isArray(artwork.elements)?artwork.elements:[]).map((e)=>{
+      if(e.type==="text"){
+        return {...e,text:D.resolvedElementText(e,artwork,state.factories)};
+      }
       if(e.type==="qr-generated"){
-        try{return {...e,matrix:C.qrMatrix(e.payload||"",e.ecc||"M").matrix};}
-        catch{return {...e,matrix:[]};}
+        const payload=D.resolvedElementPayload(e,artwork,state.factories);
+        try{return {...e,payload,matrix:C.qrMatrix(payload,e.ecc||"M").matrix};}
+        catch{return {...e,payload,matrix:[]};}
       }
       if(e.type==="barcode"){
+        const payload=D.resolvedElementPayload(e,artwork,state.factories);
         try{
           const model=String(e.symbology||"").toUpperCase()==="ITF14"
-            ? C.itf14Bars(e.payload||"",{moduleMm:.8,heightMm:30})
-            : C.code128Bars(e.payload||"",{moduleMm:.42,heightMm:28});
-          return {...e,barcodeModel:model};
-        }catch{return {...e,barcodeModel:null};}
+            ? C.itf14Bars(payload,{moduleMm:.8,heightMm:30})
+            : C.code128Bars(payload,{moduleMm:.42,heightMm:28});
+          return {...e,payload,barcodeModel:model};
+        }catch{return {...e,payload,barcodeModel:null};}
       }
       return {...e};
     });
