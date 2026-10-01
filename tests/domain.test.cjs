@@ -148,6 +148,50 @@ test("barcode and handling symbol metadata round-trip through canonical snapshot
   assert.ok(assets.some(x=>x.id==="symbol-master-sym-1"&&x.status==="warning"));
 });
 
+test("variable-data bindings resolve repeated placements from one source", () => {
+  const a={...D.defaultArtwork,factoryId:"vietnam-c",packageCount:3,currentPackage:2};
+  assert.equal(D.resolveArtworkBinding("product.sku",a),a.sku);
+  assert.equal(D.resolveArtworkBinding("factory.crn",a),"VN-HCM-88021");
+  assert.equal(D.resolveArtworkBinding("origin.text",a),"Made in Vietnam");
+  assert.equal(D.resolveArtworkBinding("package.indexOfTotal",a),"2 / 3");
+  assert.match(D.resolveArtworkBinding("package.note",a),/3 packages/);
+  const first={type:"text",bindingKey:"factory.crn",text:"stale"};
+  const second={type:"text",bindingKey:"factory.crn",text:"different stale"};
+  assert.equal(D.resolvedElementText(first,a),D.resolvedElementText(second,a));
+  const changed={...a,factoryId:"ningbo-a"};
+  assert.notEqual(D.resolvedElementText(first,a),D.resolvedElementText(first,changed));
+});
+
+test("bound element keys round-trip and drive text/barcode/QR payloads", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[
+    {id:"t",type:"text",x:p.x+10,y:p.y+10,w:100,h:25,visible:true,panelId:p.id,constrainToPanel:true,text:"manual",bindingKey:"product.sku",fontSizePt:12},
+    {id:"b",type:"barcode",x:p.x+10,y:p.y+50,w:140,h:45,visible:true,panelId:p.id,constrainToPanel:true,payload:"manual",bindingKey:"codes.barcode",symbology:"CODE128B"},
+    {id:"q",type:"qr-generated",x:p.x+180,y:p.y+50,w:45,h:45,visible:true,panelId:p.id,constrainToPanel:true,payload:"manual",bindingKey:"codes.qr",ecc:"M"}
+  ]};
+  const snapshot=D.canonicalData(a);
+  assert.equal(snapshot.artwork.elements[0].bindingKey,"product.sku");
+  const restored=D.artworkFromCanonical(snapshot);
+  assert.equal(restored.elements[1].bindingKey,"codes.barcode");
+  assert.equal(D.resolvedElementText(restored.elements[0],a),a.sku);
+  assert.equal(D.resolvedElementPayload(restored.elements[1],a),a.barcode);
+  assert.equal(D.resolvedElementPayload(restored.elements[2],a),a.qr);
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="text-binding-t"&&x.status==="pass"));
+});
+
+test("unknown variable-data binding blocks preflight", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[{
+    id:"bad-bind",type:"text",x:p.x+10,y:p.y+10,w:100,h:25,visible:true,panelId:p.id,constrainToPanel:true,
+    text:"",bindingKey:"unknown.field",fontSizePt:12
+  }]};
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="text-binding-bad-bind"&&x.status==="error"&&x.blocking));
+});
+
 test("computed and preflight can use remote factory master", () => {
   const remoteFactories = [{ id: "remote-a", name: "Remote A", crn: "CRN-NEW", country: "Mexico" }];
   const a = { ...D.defaultArtwork, factoryId: "remote-a" };
