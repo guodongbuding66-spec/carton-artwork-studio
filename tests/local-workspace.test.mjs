@@ -95,4 +95,12 @@ assert.ok(app.includes('selected.type==="barcode"?"readonly":""'));
 assert.ok(app.includes('e.type!=="barcode"'));
 assert.ok(app.includes("no fit-to-box scaling"));
 
+assert.ok(app.includes("function snapElementPosition(e,x,y,ignoreIds=[])"));
+assert.ok(app.includes("function updateSmartGuideLayer(svg,guides=[])"));
+assert.ok(app.includes('id="smart-guide-layer"'));
+assert.ok(app.includes("const keepGroup=isElementSelected(id)&&priorSelection.length>1"));
+assert.ok(app.includes("const ignoreIds=dragItems.map(item=>item.id)"));
+assert.ok(app.includes("updateSmartGuideLayer(svg,snapped.guides)"));
+assert.ok(app.includes("跨面板多选不能整体拖动"));
+
 console.log("Local workspace usability regression tests passed.");
