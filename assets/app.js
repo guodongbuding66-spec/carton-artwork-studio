@@ -502,6 +502,9 @@
             <option value="THIS_WAY_UP" ${selected.symbolKey==="THIS_WAY_UP"?"selected":""}>This Way Up</option>
             <option value="KEEP_DRY" ${selected.symbolKey==="KEEP_DRY"?"selected":""}>Keep Dry</option>
             <option value="FRAGILE" ${selected.symbolKey==="FRAGILE"?"selected":""}>Fragile</option>
+            <option value="DO_NOT_STACK" ${selected.symbolKey==="DO_NOT_STACK"?"selected":""}>Do Not Stack</option>
+            <option value="KEEP_AWAY_FROM_HEAT" ${selected.symbolKey==="KEEP_AWAY_FROM_HEAT"?"selected":""}>Keep Away From Heat</option>
+            <option value="NO_HOOKS" ${selected.symbolKey==="NO_HOOKS"?"selected":""}>No Hooks</option>
           </select></div>
           <div class="notice warn">当前为 Review Library 矢量符号。正式生产须绑定客户/工厂批准的受控 Symbol Master。</div>
         `:""}
@@ -539,6 +542,9 @@
           <option value="THIS_WAY_UP">This Way Up</option>
           <option value="KEEP_DRY">Keep Dry</option>
           <option value="FRAGILE">Fragile</option>
+          <option value="DO_NOT_STACK">Do Not Stack</option>
+          <option value="KEEP_AWAY_FROM_HEAT">Keep Away From Heat</option>
+          <option value="NO_HOOKS">No Hooks</option>
         </select>
         <button class="btn small" data-action="add-handling-symbol" ${locked?"disabled":""}>＋ 包装图标</button>
       </div>
@@ -619,6 +625,34 @@
       return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">
         <path d="M ${w*.28} ${h*.12} L ${w*.72} ${h*.12} L ${w*.63} ${h*.48} Q ${w*.58} ${h*.62} ${w*.5} ${h*.62} Q ${w*.42} ${h*.62} ${w*.37} ${h*.48} Z"/>
         <line x1="${w*.5}" y1="${h*.62}" x2="${w*.5}" y2="${h*.84}"/><line x1="${w*.32}" y1="${h*.86}" x2="${w*.68}" y2="${h*.86}"/>
+      </g>`;
+    }
+    if(key==="DO_NOT_STACK"){
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linejoin="round">
+        <rect x="${w*.22}" y="${h*.52}" width="${w*.56}" height="${h*.28}"/>
+        <rect x="${w*.28}" y="${h*.18}" width="${w*.44}" height="${h*.24}"/>
+        <line x1="${w*.15}" y1="${h*.12}" x2="${w*.85}" y2="${h*.88}"/>
+        <line x1="${w*.85}" y1="${h*.12}" x2="${w*.15}" y2="${h*.88}"/>
+      </g>`;
+    }
+    if(key==="KEEP_AWAY_FROM_HEAT"){
+      const cx=w*.72,cy=h*.26,r=Math.min(w,h)*.12;
+      const rays=[0,45,90,135,180,225,270,315].map(deg=>{
+        const a=deg*Math.PI/180;
+        const x1=cx+Math.cos(a)*r*1.35,y1=cy+Math.sin(a)*r*1.35;
+        const x2=cx+Math.cos(a)*r*1.8,y2=cy+Math.sin(a)*r*1.8;
+        return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+      }).join("");
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round">
+        <circle cx="${cx}" cy="${cy}" r="${r}"/>${rays}
+        <rect x="${w*.18}" y="${h*.52}" width="${w*.48}" height="${h*.28}"/>
+        <line x1="${w*.12}" y1="${h*.88}" x2="${w*.88}" y2="${h*.12}"/>
+      </g>`;
+    }
+    if(key==="NO_HOOKS"){
+      return `<g fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M ${w*.55} ${h*.14} L ${w*.55} ${h*.55} Q ${w*.55} ${h*.78} ${w*.38} ${h*.78} Q ${w*.22} ${h*.78} ${w*.22} ${h*.62}"/>
+        <line x1="${w*.14}" y1="${h*.14}" x2="${w*.86}" y2="${h*.86}"/>
       </g>`;
     }
     return `<rect x="1" y="1" width="${Math.max(1,w-2)}" height="${Math.max(1,h-2)}" fill="none" stroke="#bc2f3b" stroke-width="${sw}"/>`;
@@ -1430,7 +1464,7 @@
   function addHandlingSymbol(){
     if(!localArtworkEditable()) return;
     const key=String(document.getElementById("handling-symbol-select")?.value||"THIS_WAY_UP");
-    const names={THIS_WAY_UP:"This Way Up",KEEP_DRY:"Keep Dry",FRAGILE:"Fragile"};
+    const names={THIS_WAY_UP:"This Way Up",KEEP_DRY:"Keep Dry",FRAGILE:"Fragile",DO_NOT_STACK:"Do Not Stack",KEEP_AWAY_FROM_HEAT:"Keep Away From Heat",NO_HOOKS:"No Hooks"};
     const size=48,p=defaultElementPlacement(size,size);
     const el={
       id:newElementId(),type:"symbol",name:names[key]||key,
