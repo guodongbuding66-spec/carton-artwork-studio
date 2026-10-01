@@ -60,3 +60,10 @@ button{cursor:pointer}.app{min-height:100vh;display:grid;grid-template-columns:2
 .revision-overlay-layer{position:absolute;inset:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center}
 .revision-overlay-layer svg{display:block;width:min(980px,100%);height:auto}
 @media(max-width:900px){.revision-visual-grid{grid-template-columns:1fr}}
+
+
+.dropzone.dragging {
+  border-color: #3978b8;
+  background: #eef6ff;
+  box-shadow: 0 0 0 3px rgba(57,120,184,.10);
+}
