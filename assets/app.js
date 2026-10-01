@@ -1975,16 +1975,16 @@
     let out=label(b.left,b.top-7,`Selection ${D.round(b.width,1)} × ${D.round(b.height,1)} mm`,"start");
     if(items.length!==2||!sameSelectionPanel(items)) return out;
     const [a,bx]=items;
-    const ax=Number(a.x||0),ay=Number(a.y||0),aw=Number(a.w||0),ah=Number(a.h||0);
-    const bx0=Number(bx.x||0),by0=Number(bx.y||0),bw=Number(bx.w||0),bh=Number(bx.h||0);
-    const ar=ax+aw,ab=ay+ah,br=bx0+bw,bb=by0+bh;
+    const av=D.elementVisualBounds(a),bv=D.elementVisualBounds(bx);
+    const ax=av.left,ay=av.top,ar=av.right,ab=av.bottom;
+    const bx0=bv.left,by0=bv.top,br=bv.right,bb=bv.bottom;
 
     let x1=null,x2=null;
     if(ar<=bx0){x1=ar;x2=bx0;}
     else if(br<=ax){x1=br;x2=ax;}
     if(x1!==null){
       const y=(Math.max(ay,by0)+Math.min(ab,bb))/2;
-      const yy=Number.isFinite(y)?y:(ay+ah/2+by0+bh/2)/2;
+      const yy=Number.isFinite(y)?y:(av.centerY+bv.centerY)/2;
       out+=`<line x1="${x1}" y1="${yy}" x2="${x2}" y2="${yy}" stroke="#b4235a" stroke-width="1" marker-start="url(#gap-arrow)" marker-end="url(#gap-arrow)" vector-effect="non-scaling-stroke"/>`;
       out+=label((x1+x2)/2,yy-5,`${D.round(x2-x1,1)} mm`);
     }
@@ -1994,7 +1994,7 @@
     else if(bb<=ay){y1=bb;y2=ay;}
     if(y1!==null){
       const x=(Math.max(ax,bx0)+Math.min(ar,br))/2;
-      const xx=Number.isFinite(x)?x:(ax+aw/2+bx0+bw/2)/2;
+      const xx=Number.isFinite(x)?x:(av.centerX+bv.centerX)/2;
       out+=`<line x1="${xx}" y1="${y1}" x2="${xx}" y2="${y2}" stroke="#b4235a" stroke-width="1" marker-start="url(#gap-arrow)" marker-end="url(#gap-arrow)" vector-effect="non-scaling-stroke"/>`;
       out+=label(xx+6,(y1+y2)/2,`${D.round(y2-y1,1)} mm`,"start");
     }
@@ -2064,13 +2064,13 @@
     const b=selectionBounds(items);if(!b)return;
     pushArtworkHistory();
     for(const e of items){
-      const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
-      if(mode==="left") e.x=b.left;
-      if(mode==="hcenter") e.x=b.left+(b.width-w)/2;
-      if(mode==="right") e.x=b.right-w;
-      if(mode==="top") e.y=b.top;
-      if(mode==="vcenter") e.y=b.top+(b.height-h)/2;
-      if(mode==="bottom") e.y=b.bottom-h;
+      const v=D.elementVisualBounds(e);
+      if(mode==="left") e.x=Number(e.x||0)+(b.left-v.left);
+      if(mode==="hcenter") e.x=Number(e.x||0)+(b.left+b.width/2-v.centerX);
+      if(mode==="right") e.x=Number(e.x||0)+(b.right-v.right);
+      if(mode==="top") e.y=Number(e.y||0)+(b.top-v.top);
+      if(mode==="vcenter") e.y=Number(e.y||0)+(b.top+b.height/2-v.centerY);
+      if(mode==="bottom") e.y=Number(e.y||0)+(b.bottom-v.bottom);
       clampElementToBounds(e);
     }
     persistLocalDraft();render();
@@ -2082,21 +2082,31 @@
     if(!sameSelectionPanel(items)){toast("等距分布要求元素位于同一纸箱面板。","error");return;}
     pushArtworkHistory();
     if(axis==="horizontal"){
-      const sorted=[...items].sort((a,b)=>Number(a.x||0)-Number(b.x||0));
-      const first=sorted[0],last=sorted.at(-1);
-      const left=Number(first.x||0),right=Number(last.x||0)+Number(last.w||0);
-      const totalWidth=sorted.reduce((sum,e)=>sum+Number(e.w||0),0);
+      const sorted=[...items].sort((a,b)=>D.elementVisualBounds(a).left-D.elementVisualBounds(b).left);
+      const firstV=D.elementVisualBounds(sorted[0]),lastV=D.elementVisualBounds(sorted.at(-1));
+      const left=firstV.left,right=lastV.right;
+      const totalWidth=sorted.reduce((sum,e)=>sum+D.elementVisualBounds(e).width,0);
       const gap=(right-left-totalWidth)/(sorted.length-1);
-      let x=left;
-      for(const e of sorted){e.x=x;x+=Number(e.w||0)+gap;clampElementToBounds(e);}
+      let targetLeft=left;
+      for(const e of sorted){
+        const v=D.elementVisualBounds(e);
+        e.x=Number(e.x||0)+(targetLeft-v.left);
+        targetLeft+=v.width+gap;
+        clampElementToBounds(e);
+      }
     }else{
-      const sorted=[...items].sort((a,b)=>Number(a.y||0)-Number(b.y||0));
-      const first=sorted[0],last=sorted.at(-1);
-      const top=Number(first.y||0),bottom=Number(last.y||0)+Number(last.h||0);
-      const totalHeight=sorted.reduce((sum,e)=>sum+Number(e.h||0),0);
+      const sorted=[...items].sort((a,b)=>D.elementVisualBounds(a).top-D.elementVisualBounds(b).top);
+      const firstV=D.elementVisualBounds(sorted[0]),lastV=D.elementVisualBounds(sorted.at(-1));
+      const top=firstV.top,bottom=lastV.bottom;
+      const totalHeight=sorted.reduce((sum,e)=>sum+D.elementVisualBounds(e).height,0);
       const gap=(bottom-top-totalHeight)/(sorted.length-1);
-      let y=top;
-      for(const e of sorted){e.y=y;y+=Number(e.h||0)+gap;clampElementToBounds(e);}
+      let targetTop=top;
+      for(const e of sorted){
+        const v=D.elementVisualBounds(e);
+        e.y=Number(e.y||0)+(targetTop-v.top);
+        targetTop+=v.height+gap;
+        clampElementToBounds(e);
+      }
     }
     persistLocalDraft();render();
   }
@@ -2105,13 +2115,13 @@
     const e=selectedArtworkElement();
     if(!e||!localArtworkEditable()) return;
     pushArtworkHistory();
-    const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
-    if(mode==="left")e.x=b.x;
-    if(mode==="hcenter")e.x=b.x+(b.w-w)/2;
-    if(mode==="right")e.x=b.x+b.w-w;
-    if(mode==="top")e.y=b.y;
-    if(mode==="vcenter")e.y=b.y+(b.h-h)/2;
-    if(mode==="bottom")e.y=b.y+b.h-h;
+    const b=elementBounds(e),v=D.elementVisualBounds(e);
+    if(mode==="left")e.x=Number(e.x||0)+(b.x-v.left);
+    if(mode==="hcenter")e.x=Number(e.x||0)+(b.x+b.w/2-v.centerX);
+    if(mode==="right")e.x=Number(e.x||0)+(b.x+b.w-v.right);
+    if(mode==="top")e.y=Number(e.y||0)+(b.y-v.top);
+    if(mode==="vcenter")e.y=Number(e.y||0)+(b.y+b.h/2-v.centerY);
+    if(mode==="bottom")e.y=Number(e.y||0)+(b.y+b.h-v.bottom);
     clampElementToBounds(e);persistLocalDraft();render();
   }
 
@@ -2317,8 +2327,8 @@
           if(moved){
             for(const item of artworkElements()){
               if(item.visible===false) continue;
-              const x=Number(item.x||0),y=Number(item.y||0),w=Number(item.w||0),h=Number(item.h||0);
-              const hit=x<right&&(x+w)>left&&y<bottom&&(y+h)>top;
+              const v=D.elementVisualBounds(item);
+              const hit=v.left<right&&v.right>left&&v.top<bottom&&v.bottom>top;
               if(hit) for(const unitId of selectionUnitIds(item.id)) ids.add(unitId);
             }
           }
