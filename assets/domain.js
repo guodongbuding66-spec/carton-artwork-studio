@@ -278,6 +278,25 @@
     };
   }
 
+  function elementVisualBounds(element) {
+    const x=Number(element?.x||0),y=Number(element?.y||0);
+    const w=Math.max(0,Number(element?.w||0)),h=Math.max(0,Number(element?.h||0));
+    const rotation=Number(element?.rotation||0)*Math.PI/180;
+    const cx=x+w/2,cy=y+h/2;
+    const halfW=Math.abs(Math.cos(rotation))*w/2+Math.abs(Math.sin(rotation))*h/2;
+    const halfH=Math.abs(Math.sin(rotation))*w/2+Math.abs(Math.cos(rotation))*h/2;
+    return {
+      left:cx-halfW,
+      top:cy-halfH,
+      right:cx+halfW,
+      bottom:cy+halfH,
+      width:halfW*2,
+      height:halfH*2,
+      centerX:cx,
+      centerY:cy
+    };
+  }
+
   function calibrationMetrics() {
     const measuredMm = sourceCalibration.reference200mm.measuredMm;
     return {
@@ -480,6 +499,7 @@
     for(const element of customElements){
       const name=element.name||element.type||"element";
       const x=Number(element.x||0),y=Number(element.y||0),w=Number(element.w||0),h=Number(element.h||0);
+      const visual=elementVisualBounds(element);
       const visible=element.visible!==false;
       if(!visible){
         assetChecks.push(check(
@@ -491,12 +511,12 @@
         ));
         continue;
       }
-      const within=x>=0&&y>=0&&w>0&&h>0&&(x+w)<=g.totalWidth&&(y+h)<=g.totalHeight;
+      const within=w>0&&h>0&&visual.left>=0&&visual.top>=0&&visual.right<=g.totalWidth&&visual.bottom<=g.totalHeight;
       assetChecks.push(check(
         `asset-bounds-${element.id||name}`,
         `${name} within artwork bounds`,
         within?"pass":"error",
-        within?`${round(w)}×${round(h)} mm at ${round(x)},${round(y)} mm.`:"Element extends outside the carton artwork bounds.",
+        within?`Visual bounds ${round(visual.width)}×${round(visual.height)} mm at ${round(visual.left)},${round(visual.top)} mm.`:"Rotated element extends outside the carton artwork bounds.",
         "Assets",
         true
       ));
@@ -510,7 +530,7 @@
         true
       ));
       if(panel&&element.constrainToPanel!==false){
-        const inPanel=x>=panel.x&&y>=panel.y&&(x+w)<=panel.x+panel.w&&(y+h)<=panel.y+panel.h;
+        const inPanel=visual.left>=panel.x&&visual.top>=panel.y&&visual.right<=panel.x+panel.w&&visual.bottom<=panel.y+panel.h;
         assetChecks.push(check(
           `asset-panel-bounds-${element.id||name}`,
           `${name} inside ${panel.id}`,
@@ -522,8 +542,8 @@
         if(!element.safeAreaExempt&&safeMarginValid){
           const usableW=panel.w-safeMargin*2,usableH=panel.h-safeMargin*2;
           const inSafe=usableW>=0&&usableH>=0&&
-            x>=panel.x+safeMargin&&y>=panel.y+safeMargin&&
-            (x+w)<=panel.x+panel.w-safeMargin&&(y+h)<=panel.y+panel.h-safeMargin;
+            visual.left>=panel.x+safeMargin&&visual.top>=panel.y+safeMargin&&
+            visual.right<=panel.x+panel.w-safeMargin&&visual.bottom<=panel.y+panel.h-safeMargin;
           assetChecks.push(check(
             `asset-safe-area-${element.id||name}`,
             `${name} inside ${panel.id} safe area`,
@@ -903,6 +923,7 @@
     resolvedElementPayload,
     artworkFromCanonical,
     sideSealGeometry,
+    elementVisualBounds,
     calibrationMetrics,
     codeBlockDimensions,
     estimateTextBox,
