@@ -3799,7 +3799,7 @@
       if(pdfFile) pdfFile.data=serverPdf.blob;
       const svgFile=built.files.find(x=>x.name==="Production.svg");
       if(svgFile) svgFile.name="Reference.svg";
-      built.manifest.rendererVersion=serverPdf.headers?.renderer||"pdfx4-embedded-truetype-2.1.0";
+      built.manifest.rendererVersion=serverPdf.headers?.renderer||"pdfx4-embedded-truetype-2.2.0";
       built.manifest.authoritativePdf=evidence.authoritativePdf;
       built.manifest.sha256.pdf=serverPdf.headers?.artifactSha256||await sha256(serverPdf.blob);
       if(built.manifest.sha256.svg){
@@ -3825,7 +3825,7 @@
         kind:"PRODUCTION_BUNDLE",
         revision:state.artwork.revision,
         filename,
-        renderer:serverPdf.headers?.renderer||"pdfx4-embedded-truetype-2.1.0",
+        renderer:serverPdf.headers?.renderer||"pdfx4-embedded-truetype-2.2.0",
         actor:"web",
         manifest:built.manifest,
         authoritativePdfExportId:serverPdf.headers?.exportId,
