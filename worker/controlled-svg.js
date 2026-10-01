@@ -64,8 +64,6 @@ function blackOrNone(value,defaultValue){
 }
 
 function paint(a,{defaultFill="black",defaultStroke="none"}={}){
-  const allowed=new Set(["id","fill","stroke","stroke-width","fill-rule"]);
-  for(const k of Object.keys(a)) if(!allowed.has(k)) fail("SVG_ATTRIBUTE_NOT_ALLOWED",k);
   const fill=blackOrNone(a.fill,defaultFill);
   const stroke=blackOrNone(a.stroke,defaultStroke);
   const strokeWidth=a["stroke-width"]===undefined?1:num(a["stroke-width"],"stroke-width");
