@@ -163,3 +163,10 @@ assert.match(app,/function selectionMoveLimits\(items\)[\s\S]*D\.elementVisualBo
 assert.match(app,/function alignSelectedElements\(mode\)[\s\S]*D\.elementVisualBounds\(e\)/);
 assert.match(app,/function distributeSelectedElements\(axis\)[\s\S]*D\.elementVisualBounds/);
 assert.match(app,/const v=D\.elementVisualBounds\(item\);\s*const hit=v\.left<right&&v\.right>left&&v\.top<bottom&&v\.bottom>top/);
+
+
+assert.match(app,/function constrainResizeDimensions\(element,desiredW,desiredH,minSize=5\)/);
+assert.match(app,/D\.constrainElementResize\(/);
+assert.match(app,/const resolved=constrainResizeDimensions\(element,Math\.max\(5,p\.x\),Math\.max\(5,p\.y\)\)/);
+assert.match(app,/resizeLimited=resolved\.limited/);
+assert.match(app,/尺寸已限制在旋转后的面板边界内/);
