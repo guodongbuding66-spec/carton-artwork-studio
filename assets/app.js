@@ -842,7 +842,7 @@
           <div class="notice ${selectedImageQuality.isVector?"warn":selectedImageQuality.minDpi>=300?"success":selectedImageQuality.minDpi>=150?"warn":"error"}">
             <strong>${selectedImageQuality.isVector?"SVG Vector Source":"Raster Print Quality"}</strong><br>
             ${selectedImageQuality.isVector
-              ? "清理后的 SVG 源已保留；浏览器预览保持矢量。当前 Proof PDF 使用 JPEG fallback，正式 Production 仍阻止上传型图形。"
+              ? "SVG 矢量源已保留。Authoritative Production 会在服务端按 CAS_SVG_K_ONLY_1 重新验证并转换为原生 PDF vector；不受支持的颜色、脚本、外链或图元会直接 BLOCK。"
               : `${D.round(selectedImageQuality.minDpi||0)} PPI @ ${D.round(Number(selected.w||0),1)}×${D.round(Number(selected.h||0),1)} mm · 300+ PASS / 150–299 WARN / <150 BLOCK`}
           </div>
         `:""}
@@ -1846,7 +1846,7 @@
       selectOnlyElement(el.id);
       const saved=persistLocalDraft();
       render();
-      toast(saved?(normalized.isVector?"SVG 矢量源已保留；Proof PDF 使用独立 raster fallback":type==="qr-image"?"二维码图片已添加":type==="symbol-image"?"自定义包装图标已添加（Review）":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
+      toast(saved?(normalized.isVector?"SVG 矢量源已保留；正式 Production 将由服务端重新验证 K-only 矢量子集":type==="qr-image"?"二维码图片已添加":type==="symbol-image"?"自定义包装图标已添加（Review）":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
     }catch(e){toast(e.message||String(e),"error");}
   }
 
