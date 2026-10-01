@@ -191,3 +191,17 @@ assert.match(app,/D\.effectiveImageDpi\(selected\)/);
 assert.match(app,/D\.productionElementQualification\(selected\)/);
 assert.match(app,/renderLines:layout\.lines/);
 assert.match(app,/renderLineWidthsMm:layout\.widthsMm/);
+
+
+assert.match(app,/productionQualification:\s*null/);
+assert.match(app,/productionQualificationBusy:\s*false/);
+assert.match(app,/async function loadProductionQualification\(renderAfter=true/);
+assert.match(app,/api\.productionQualification\(state\.remoteArtworkId\)/);
+assert.match(app,/Server Production Qualification/);
+assert.match(app,/data-action="server-production-qualification"/);
+assert.match(app,/function controlledBlockItemsFor\(/);
+assert.match(app,/function setSelectedControlledBlockLock\(locked\)/);
+assert.match(app,/data-action="lock-controlled-block"/);
+assert.match(app,/data-action="unlock-controlled-block"/);
+assert.match(app,/受控 Block 不能解除组合/);
+assert.match(app,/受控 Block 不能用普通 Group 重组/);
