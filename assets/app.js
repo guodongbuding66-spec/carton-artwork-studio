@@ -439,7 +439,7 @@
     const selectedMany=selectedArtworkElements();
     const locked=isArtworkLocked();
     const rows=[...elements].reverse().map((e)=>{
-      const label=e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":e.type==="text"?"TEXT":e.type==="barcode"?"BAR":e.type==="symbol"?"SYM":"IMG";
+      const label=e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":e.type==="symbol-image"?"SYM IMG":e.type==="text"?"TEXT":e.type==="barcode"?"BAR":e.type==="symbol"?"SYM":"IMG";
       return `<button type="button" class="element-row ${isElementSelected(e.id)?"active":""} ${e.visible===false?"muted":""}" data-select-element="${esc(e.id)}">
         <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
@@ -482,6 +482,19 @@
           ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementPayload(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
           <div class="field"><label>QR payload</label><textarea class="input" rows="3" data-element-prop="payload" ${selected.bindingKey?"disabled":""}>${esc(selected.payload||"")}</textarea></div>
           <div class="field"><label>Error correction</label><select class="select" data-element-prop="ecc">${["L","M","Q","H"].map(x=>`<option ${selected.ecc===x?"selected":""}>${x}</option>`).join("")}</select></div>`:""}
+        ${selected.type==="qr-image"?`
+          <div class="field"><label>Expected QR payload 预期内容</label><textarea class="input" rows="3" data-element-prop="expectedPayload" placeholder="可选；填写后 Preflight 会比较扫码结果">${esc(selected.expectedPayload||"")}</textarea></div>
+          <div class="notice ${selected.decodeStatus==="PASS"?"success":selected.decodeStatus==="UNAVAILABLE"?"warn":""}">
+            <strong>Digital Decode</strong><br>
+            Status: <span class="mono">${esc(selected.decodeStatus||"NOT_CHECKED")}</span><br>
+            ${selected.decodedValue?`Decoded: <span class="mono">${esc(selected.decodedValue)}</span><br>`:""}
+            ${selected.verifiedAt?`Checked: ${esc(selected.verifiedAt)}`:""}
+          </div>
+          <button class="btn small" data-action="verify-uploaded-qr">验证二维码内容</button>
+        `:""}
+        ${selected.type==="symbol-image"?`
+          <div class="notice warn"><strong>Custom Symbol · Review Asset</strong><br>该图标可以用于布局和审核稿，但正式生产前必须绑定经过批准的客户/工厂 Symbol Master。</div>
+        `:""}
         ${selected.type==="barcode"?`
           <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
           ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementPayload(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
@@ -534,10 +547,12 @@
       <div class="toolbar element-tools">
         <input id="art-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <input id="art-qr-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
+        <input id="art-symbol-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <button class="btn small" data-action="add-text-element" ${locked?"disabled":""}>＋ 文字</button>
         <button class="btn small" data-action="add-barcode-element" ${locked?"disabled":""}>＋ 条码</button>
         <button class="btn small" data-action="upload-image-trigger" ${locked?"disabled":""}>＋ 图片 / Logo</button>
         <button class="btn small" data-action="upload-qr-trigger" ${locked?"disabled":""}>＋ 上传二维码</button>
+        <button class="btn small" data-action="upload-symbol-trigger" ${locked?"disabled":""}>＋ 自定义图标</button>
         <select id="handling-symbol-select" class="select compact-select" ${locked?"disabled":""}>
           <option value="THIS_WAY_UP">This Way Up</option>
           <option value="KEEP_DRY">Keep Dry</option>
@@ -689,7 +704,7 @@
       const border=selected?`<rect data-element-selection x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
       const resizeHandle=selected&&selectedArtworkElements().length===1&&!e.locked?`<rect data-element-resize="${esc(e.id)}" x="${Math.max(0,w-4)}" y="${Math.max(0,h-4)}" width="8" height="8" rx="1.5" fill="#fff" stroke="#e13b6b" stroke-width="2" vector-effect="non-scaling-stroke" style="cursor:nwse-resize"/>`:"";
       let body="";
-      if((e.type==="image"||e.type==="qr-image")&&e.dataUrl){
+      if((e.type==="image"||e.type==="qr-image"||e.type==="symbol-image")&&e.dataUrl){
         body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
       }else if(e.type==="text"){
         const fontMm=Math.max(1,Number(e.fontSizePt||12))*25.4/72;
@@ -1308,8 +1323,10 @@
     bindEditorKeyboard();
     const artImageFile=document.getElementById("art-image-file");
     const artQrImageFile=document.getElementById("art-qr-image-file");
+    const artSymbolFile=document.getElementById("art-symbol-file");
     if(artImageFile) artImageFile.onchange=async()=>{const file=artImageFile.files?.[0];if(file)await addUploadedArtworkElement(file,"image");};
     if(artQrImageFile) artQrImageFile.onchange=async()=>{const file=artQrImageFile.files?.[0];if(file)await addUploadedArtworkElement(file,"qr-image");};
+    if(artSymbolFile) artSymbolFile.onchange=async()=>{const file=artSymbolFile.files?.[0];if(file)await addUploadedArtworkElement(file,"symbol-image");};
     const file=document.getElementById("batch-file");
     const dropzone=document.getElementById("batch-dropzone");
     if(file) file.onchange=async()=>{ if(file.files?.[0]) await importBatch(file.files[0]); };
@@ -1374,14 +1391,14 @@
     try{
       const normalized=await normalizeArtworkImageFile(file);
       const ratio=normalized.pixelWidth/Math.max(1,normalized.pixelHeight);
-      let w=type==="qr-image"?45:Math.min(90,Math.max(35,60));
-      let h=type==="qr-image"?45:w/Math.max(.1,ratio);
+      let w=(type==="qr-image"||type==="symbol-image")?45:Math.min(90,Math.max(35,60));
+      let h=(type==="qr-image"||type==="symbol-image")?45:w/Math.max(.1,ratio);
       if(h>90){h=90;w=h*ratio;}
       const p=defaultElementPlacement(w,h);
       const el={
         id:newElementId(),
         type,
-        name:type==="qr-image"?`QR image · ${file.name}`:file.name,
+        name:type==="qr-image"?`QR image · ${file.name}`:type==="symbol-image"?`Custom symbol · ${file.name}`:file.name,
         x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
         panelId:p.panelId,constrainToPanel:true,
         text:"",fontSizePt:12,fontWeight:"normal",textAlign:"left",
@@ -1391,15 +1408,74 @@
         mimeType:normalized.mimeType,
         dataUrl:normalized.dataUrl,
         pixelWidth:normalized.pixelWidth,
-        pixelHeight:normalized.pixelHeight
+        pixelHeight:normalized.pixelHeight,
+        assetRole:type==="symbol-image"?"symbol-review":"",
+        expectedPayload:"",
+        decodedValue:"",
+        decodeStatus:"",
+        verifiedAt:""
       };
       pushArtworkHistory();
       artworkElements().push(el);
       selectOnlyElement(el.id);
       const saved=persistLocalDraft();
       render();
-      toast(saved?(type==="qr-image"?"二维码图片已添加":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
+      toast(saved?(type==="qr-image"?"二维码图片已添加":type==="symbol-image"?"自定义包装图标已添加（Review）":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
     }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  async function decodeUploadedQrElement(element){
+    if(!element||element.type!=="qr-image"||!element.dataUrl) throw new Error("请选择上传的二维码图片元素。");
+    if(typeof globalThis.BarcodeDetector!=="function"){
+      element.decodeStatus="UNAVAILABLE";
+      element.decodedValue="";
+      element.verifiedAt=new Date().toISOString();
+      return {status:"UNAVAILABLE",value:""};
+    }
+    try{
+      if(typeof globalThis.BarcodeDetector.getSupportedFormats==="function"){
+        const formats=await globalThis.BarcodeDetector.getSupportedFormats();
+        if(Array.isArray(formats)&&!formats.includes("qr_code")){
+          element.decodeStatus="UNAVAILABLE";
+          element.decodedValue="";
+          element.verifiedAt=new Date().toISOString();
+          return {status:"UNAVAILABLE",value:""};
+        }
+      }
+      const response=await fetch(element.dataUrl);
+      const blob=await response.blob();
+      const source=typeof createImageBitmap==="function"?await createImageBitmap(blob):await loadImageElement(element.dataUrl);
+      const detector=new globalThis.BarcodeDetector({formats:["qr_code"]});
+      const results=await detector.detect(source);
+      const value=String(results?.[0]?.rawValue||"");
+      element.decodedValue=value;
+      element.decodeStatus=value?"PASS":"FAIL";
+      element.verifiedAt=new Date().toISOString();
+      return {status:element.decodeStatus,value};
+    }catch(err){
+      element.decodedValue="";
+      element.decodeStatus="FAIL";
+      element.verifiedAt=new Date().toISOString();
+      throw err;
+    }
+  }
+
+  async function verifySelectedQrImage(){
+    const element=selectedArtworkElement();
+    if(!element||element.type!=="qr-image"){toast("请先选择上传的二维码图片。","error");return;}
+    pushArtworkHistory();
+    try{
+      const result=await decodeUploadedQrElement(element);
+      persistLocalDraft();render();
+      if(result.status==="PASS"){
+        const expected=String(element.expectedPayload||"").trim();
+        toast(expected&&expected!==result.value?"二维码可解码，但内容与预期不一致":"二维码数字解码通过",expected&&expected!==result.value?"error":"success");
+      }else{
+        toast("当前浏览器不支持 BarcodeDetector QR 解码；Preflight 将保持未验证警告。","error");
+      }
+    }catch(err){
+      persistLocalDraft();render();toast("二维码数字解码失败："+(err.message||String(err)),"error");
+    }
   }
 
   function addGeneratedQrElement(){
@@ -1802,6 +1878,8 @@
     if(action==="redo-artwork") return redoArtwork();
     if(action==="upload-image-trigger"){document.getElementById("art-image-file")?.click();return;}
     if(action==="upload-qr-trigger"){document.getElementById("art-qr-image-file")?.click();return;}
+    if(action==="upload-symbol-trigger"){document.getElementById("art-symbol-file")?.click();return;}
+    if(action==="verify-uploaded-qr") return verifySelectedQrImage();
     if(action==="add-text-element") return addTextElement();
     if(action==="add-bound-text-element") return addBoundTextElement();
     if(action==="add-barcode-element") return addBarcodeElement();
