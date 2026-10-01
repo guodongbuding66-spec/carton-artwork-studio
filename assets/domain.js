@@ -131,6 +131,9 @@
           fontSizePt:Number(e.fontSizePt||12),
           fontWeight:String(e.fontWeight||"normal"),
           textAlign:String(e.textAlign||"left"),
+          symbology:String(e.symbology||""),
+          humanReadable:e.humanReadable!==false,
+          symbolKey:String(e.symbolKey||""),
           payload:e.payload||"",
           ecc:e.ecc||"M",
           sourceType:e.sourceType||"",
@@ -398,6 +401,37 @@
           "Assets"
         ));
       }
+      if(element.type==="barcode"){
+        const supported=["CODE128B","ITF14"].includes(String(element.symbology||"").toUpperCase());
+        assetChecks.push(check(
+          `barcode-type-${element.id||name}`,
+          `${name} barcode symbology`,
+          supported?"pass":"error",
+          supported?`Symbology: ${String(element.symbology).toUpperCase()}.`:"Unsupported custom barcode symbology.",
+          "Assets",
+          true
+        ));
+        assetChecks.push(check(
+          `barcode-data-${element.id||name}`,
+          `${name} barcode data`,
+          String(element.payload||"").trim()?"pass":"error",
+          String(element.payload||"").trim()?`Payload: ${String(element.payload)}`:"Barcode payload is empty.",
+          "Assets",
+          true
+        ));
+      }
+      if(element.type==="symbol"){
+        assetChecks.push(check(
+          `symbol-master-${element.id||name}`,
+          `${name} handling symbol master`,
+          String(element.symbolKey||"").trim()?"warning":"error",
+          String(element.symbolKey||"").trim()
+            ? `Built-in review symbol ${element.symbolKey}; production must bind to an approved controlled symbol master.`
+            : "Handling symbol key is missing.",
+          "Assets",
+          !String(element.symbolKey||"").trim()
+        ));
+      }
       if(element.type==="qr-generated"){
         const size=Math.min(w,h);
         assetChecks.push(check(
@@ -523,6 +557,9 @@
         fontSizePt:Number(e.fontSizePt||12),
         fontWeight:["normal","bold"].includes(String(e.fontWeight||"normal"))?String(e.fontWeight||"normal"):"normal",
         textAlign:["left","center","right"].includes(String(e.textAlign||"left"))?String(e.textAlign||"left"):"left",
+        symbology:String(e.symbology||""),
+        humanReadable:e.humanReadable!==false,
+        symbolKey:String(e.symbolKey||""),
         payload:String(e.payload||""),
         ecc:["L","M","Q","H"].includes(String(e.ecc||"M").toUpperCase())?String(e.ecc||"M").toUpperCase():"M",
         sourceType:String(e.sourceType||""),
