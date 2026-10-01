@@ -1950,16 +1950,55 @@ export default {
           currentPackage:Number(b.currentPackage ?? current.current_package),
           canonicalData:b.canonicalData ?? JSON.parse(current.canonical_data_json||"{}")
         };
-        await env.DB.prepare(`
-          UPDATE artworks SET sku=?,contract_no=?,factory_id=?,package_count=?,current_package=?,
-            canonical_data_json=?,status='DRAFT',updated_at=CURRENT_TIMESTAMP WHERE id=?
-        `).bind(next.sku,next.contractNo,next.factoryId,next.packageCount,next.currentPackage,JSON.stringify(next.canonicalData),id).run();
+        const linkedImportRow=await env.DB.prepare(`
+          SELECT id,job_id AS jobId,batch_preflight_status AS batchPreflightStatus,
+                 batch_submit_status AS batchSubmitStatus
+          FROM import_rows WHERE artwork_id=? LIMIT 1
+        `).bind(id).first();
+
+        const statements=[
+          env.DB.prepare(`
+            UPDATE artworks SET sku=?,contract_no=?,factory_id=?,package_count=?,current_package=?,
+              canonical_data_json=?,status='DRAFT',updated_at=CURRENT_TIMESTAMP WHERE id=?
+          `).bind(next.sku,next.contractNo,next.factoryId,next.packageCount,next.currentPackage,JSON.stringify(next.canonicalData),id)
+        ];
+        if(linkedImportRow){
+          statements.push(env.DB.prepare(`
+            UPDATE import_rows
+            SET batch_preflight_status=NULL,batch_preflight_run_id=NULL,batch_preflight_at=NULL,
+                batch_submit_status=NULL,batch_submitted_at=NULL,
+                batch_process_error='STALE_AFTER_ARTWORK_EDIT'
+            WHERE id=?
+          `).bind(linkedImportRow.id));
+          statements.push(env.DB.prepare(`
+            UPDATE import_jobs SET status='PROCESSING_REQUIRED',updated_at=CURRENT_TIMESTAMP WHERE id=?
+          `).bind(linkedImportRow.jobId));
+        }
+        await env.DB.batch(statements);
         await audit(env, identity, "ARTWORK", id, "UPDATE_DRAFT", {
           oldValue:{sku:current.sku,contractNo:current.contract_no,factoryId:current.factory_id},
-          newValue:{sku:next.sku,contractNo:next.contractNo,factoryId:next.factoryId},
+          newValue:{
+            sku:next.sku,contractNo:next.contractNo,factoryId:next.factoryId,
+            batchPreflightInvalidated:Boolean(linkedImportRow),
+            importJobId:linkedImportRow?.jobId||null
+          },
           reason:b.reason||"Save draft"
         });
-        return json({data:{id,status:"DRAFT",revision:current.current_revision}});
+        if(linkedImportRow){
+          await audit(env,identity,"IMPORT_JOB",linkedImportRow.jobId,"INVALIDATE_BATCH_PREFLIGHT",{
+            oldValue:{
+              artworkId:id,
+              batchPreflightStatus:linkedImportRow.batchPreflightStatus||null,
+              batchSubmitStatus:linkedImportRow.batchSubmitStatus||null
+            },
+            newValue:{artworkId:id,status:"PROCESSING_REQUIRED",reason:"STALE_AFTER_ARTWORK_EDIT"},
+            reason:"Linked Artwork Draft changed after Batch processing"
+          });
+        }
+        return json({data:{
+          id,status:"DRAFT",revision:current.current_revision,
+          batchPreflightInvalidated:Boolean(linkedImportRow)
+        }});
       }
 
       const submitMatch=/^\/api\/artworks\/([^/]+)\/submit$/.exec(url.pathname);
