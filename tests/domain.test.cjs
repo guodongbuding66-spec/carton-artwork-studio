@@ -451,7 +451,7 @@ test("raster below 150 PPI is a blocking preflight error", () => {
   assert.equal(quality.blocking,true);
 });
 
-test("preserved SVG source is vector-qualified for quality reporting but not production", () => {
+test("preserved SVG source is a production candidate pending server vector validation", () => {
   const g=D.sideSealGeometry(D.defaultArtwork);
   const p=g.panels.find(x=>x.id==="TOP_FACE");
   const el={
@@ -463,10 +463,37 @@ test("preserved SVG source is vector-qualified for quality reporting but not pro
     vectorDataUrl:"data:image/svg+xml;base64,PHN2Zy8+",pixelWidth:1800,pixelHeight:900
   };
   const assets=D.runPreflight({...D.defaultArtwork,elements:[el]}).Assets;
-  assert.ok(assets.some(x=>x.id==="asset-vector-source-svg-logo"&&x.status==="warning"));
+  assert.ok(assets.some(x=>x.id==="asset-vector-source-svg-logo"&&x.status==="pass"));
   const qualification=D.productionElementQualification(el);
-  assert.equal(qualification.qualified,false);
-  assert.equal(qualification.reason,"UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED");
+  assert.equal(qualification.qualified,true);
+  assert.equal(qualification.mode,"CONTROLLED_K_ONLY_SVG");
+  assert.equal(qualification.requiresServerVectorValidation,true);
+});
+
+test("production graphic qualification distinguishes raster quality and color-pipeline gates", () => {
+  const low=D.productionElementQualification({
+    type:"image",sourceType:"uploaded-raster",sourceMimeType:"image/jpeg",
+    w:50.8,h:50.8,pixelWidth:100,pixelHeight:100
+  });
+  assert.equal(low.qualified,false);
+  assert.equal(low.reason,"RASTER_GRAPHIC_BELOW_MINIMUM_PPI");
+
+  const medium=D.productionElementQualification({
+    type:"image",sourceType:"uploaded-raster",sourceMimeType:"image/jpeg",
+    w:50.8,h:50.8,pixelWidth:400,pixelHeight:400
+  });
+  assert.equal(medium.qualified,false);
+  assert.equal(medium.reason,"RASTER_GRAPHIC_BELOW_PRODUCTION_PPI");
+
+  const high=D.productionElementQualification({
+    type:"image",sourceType:"uploaded-raster",sourceMimeType:"image/jpeg",
+    w:50.8,h:50.8,pixelWidth:800,pixelHeight:800
+  });
+  assert.equal(high.qualified,false);
+  assert.equal(high.reason,"RASTER_GRAPHIC_COLOR_PIPELINE_NOT_QUALIFIED");
+
+  assert.equal(D.productionElementQualification({type:"qr-image"}).reason,"UPLOADED_QR_NOT_CONTROLLED_PRODUCTION_ASSET");
+  assert.equal(D.productionElementQualification({type:"symbol-image"}).reason,"UPLOADED_SYMBOL_NOT_APPROVED_MASTER");
 });
 
 test("new text and source metadata round-trip through canonical snapshot", () => {
