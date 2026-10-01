@@ -314,6 +314,81 @@
     return ops;
   }
 
+  function controlledSvgPrimitiveOps(element) {
+    const model=element?.vectorModel;
+    const vb=model?.viewBox;
+    const primitives=Array.isArray(model?.primitives)?model.primitives:[];
+    if(!vb||!primitives.length) return [];
+    const boxW=Math.max(0.001,Number(element.w||1));
+    const boxH=Math.max(0.001,Number(element.h||1));
+    const sx=boxW/Number(vb.w||1),sy=boxH/Number(vb.h||1);
+    const mapX=(x)=>(Number(x)-Number(vb.x||0))*sx;
+    const mapY=(y)=>boxH-(Number(y)-Number(vb.y||0))*sy;
+    const strokeScale=Math.min(Math.abs(sx),Math.abs(sy));
+    const K=.5522847498307936;
+    const out=[];
+
+    const paintOp=(p)=>{
+      const fill=p.fill!=="none",stroke=p.stroke!=="none";
+      if(fill) out.push("0 g");
+      if(stroke){
+        out.push("0 G");
+        out.push(`${mm(Math.max(.01,Number(p.strokeWidth||1)*strokeScale)).toFixed(3)} w`);
+      }
+      if(fill&&stroke) return p.fillRule==="evenodd"?"B*":"B";
+      if(fill) return p.fillRule==="evenodd"?"f*":"f";
+      return "S";
+    };
+    const pathOps=(commands,p)=>{
+      for(const cmd of commands){
+        if(cmd.op==="M") out.push(`${mm(mapX(cmd.x)).toFixed(3)} ${mm(mapY(cmd.y)).toFixed(3)} m`);
+        else if(cmd.op==="L") out.push(`${mm(mapX(cmd.x)).toFixed(3)} ${mm(mapY(cmd.y)).toFixed(3)} l`);
+        else if(cmd.op==="C") out.push(
+          `${mm(mapX(cmd.x1)).toFixed(3)} ${mm(mapY(cmd.y1)).toFixed(3)} `+
+          `${mm(mapX(cmd.x2)).toFixed(3)} ${mm(mapY(cmd.y2)).toFixed(3)} `+
+          `${mm(mapX(cmd.x)).toFixed(3)} ${mm(mapY(cmd.y)).toFixed(3)} c`
+        );
+        else if(cmd.op==="Z") out.push("h");
+      }
+      out.push(paintOp(p));
+    };
+
+    out.push("q");
+    out.push(`0 0 ${mm(boxW).toFixed(3)} ${mm(boxH).toFixed(3)} re W n`);
+    for(const p of primitives){
+      if(p.kind==="path"){
+        pathOps(p.commands,p);
+      }else if(p.kind==="rect"){
+        const x=mapX(p.x),y=mapY(Number(p.y)+Number(p.h));
+        out.push(`${mm(x).toFixed(3)} ${mm(y).toFixed(3)} ${mm(Number(p.w)*sx).toFixed(3)} ${mm(Number(p.h)*sy).toFixed(3)} re`);
+        out.push(paintOp(p));
+      }else if(p.kind==="line"){
+        out.push(`${mm(mapX(p.x1)).toFixed(3)} ${mm(mapY(p.y1)).toFixed(3)} m ${mm(mapX(p.x2)).toFixed(3)} ${mm(mapY(p.y2)).toFixed(3)} l`);
+        out.push(paintOp({...p,fill:"none"}));
+      }else if(p.kind==="polyline"||p.kind==="polygon"){
+        const pts=Array.isArray(p.points)?p.points:[];
+        if(!pts.length) continue;
+        out.push(`${mm(mapX(pts[0][0])).toFixed(3)} ${mm(mapY(pts[0][1])).toFixed(3)} m`);
+        for(let i=1;i<pts.length;i+=1) out.push(`${mm(mapX(pts[i][0])).toFixed(3)} ${mm(mapY(pts[i][1])).toFixed(3)} l`);
+        if(p.kind==="polygon") out.push("h");
+        out.push(paintOp(p.kind==="polyline"?{...p,fill:"none"}:p));
+      }else if(p.kind==="ellipse"){
+        const cx=mapX(p.cx),cy=mapY(p.cy);
+        const rx=Math.abs(Number(p.rx)*sx),ry=Math.abs(Number(p.ry)*sy);
+        const x0=cx-rx,x1=cx-rx*K,x2=cx+rx*K,x3=cx+rx;
+        const y0=cy-ry,y1=cy-ry*K,y2=cy+ry*K,y3=cy+ry;
+        out.push(`${mm(x3).toFixed(3)} ${mm(cy).toFixed(3)} m`);
+        out.push(`${mm(x3).toFixed(3)} ${mm(y2).toFixed(3)} ${mm(x2).toFixed(3)} ${mm(y3).toFixed(3)} ${mm(cx).toFixed(3)} ${mm(y3).toFixed(3)} c`);
+        out.push(`${mm(x1).toFixed(3)} ${mm(y3).toFixed(3)} ${mm(x0).toFixed(3)} ${mm(y2).toFixed(3)} ${mm(x0).toFixed(3)} ${mm(cy).toFixed(3)} c`);
+        out.push(`${mm(x0).toFixed(3)} ${mm(y1).toFixed(3)} ${mm(x1).toFixed(3)} ${mm(y0).toFixed(3)} ${mm(cx).toFixed(3)} ${mm(y0).toFixed(3)} c`);
+        out.push(`${mm(x2).toFixed(3)} ${mm(y0).toFixed(3)} ${mm(x3).toFixed(3)} ${mm(y1).toFixed(3)} ${mm(x3).toFixed(3)} ${mm(cy).toFixed(3)} c h`);
+        out.push(paintOp(p));
+      }
+    }
+    out.push("Q");
+    return out;
+  }
+
   function customElementOps(elements, geometry, writeText) {
     const ops=[];
     for(const element of Array.isArray(elements)?elements:[]) {
@@ -342,6 +417,11 @@
           const y=boxH-fontSizeMm-(i*lineHeightMm);
           ops.push(writeText(x,y,fontSizePt,line,0));
         }
+        ops.push("Q");
+      } else if(element.type==="image"&&element.vectorModel?.profile==="CAS_SVG_K_ONLY_1") {
+        ops.push("q");
+        ops.push(`${m.co.toFixed(8)} ${m.si.toFixed(8)} ${(-m.si).toFixed(8)} ${m.co.toFixed(8)} ${m.e.toFixed(3)} ${m.f.toFixed(3)} cm`);
+        ops.push(...controlledSvgPrimitiveOps(element));
         ops.push("Q");
       } else if(element.type==="barcode"&&element.barcodeModel?.bars?.length) {
         const model=element.barcodeModel;
