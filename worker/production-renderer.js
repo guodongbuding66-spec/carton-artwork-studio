@@ -237,8 +237,8 @@ export function renderEmbeddedArtworkPdf({
   const customElements=productionArtwork.elements||[];
   const geometry=D.sideSealGeometry(productionArtwork);
   const computed=D.computed(productionArtwork,factories);
-  const codeModel=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
-  const qrModel=C.qrMatrix(artwork.qr,qrEcc);
+  const codeModel=C.code128Bars(productionArtwork.barcode,{moduleMm:.42,heightMm:25});
+  const qrModel=C.qrMatrix(productionArtwork.qr,qrEcc);
   const bytes=P.createPdfBytes({
     artwork:productionArtwork,
     geometry,
@@ -251,7 +251,7 @@ export function renderEmbeddedArtworkPdf({
     iccBytes,
     pdfxProfile,
     outputConditionIdentifier,
-    documentTitle:`${artwork.sku} ${artwork.revision}`
+    documentTitle:`${productionArtwork.sku} ${productionArtwork.revision}`
   });
   return {
     bytes,
