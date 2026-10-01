@@ -415,7 +415,7 @@ test("wrapped text layout shares deterministic line breaking", () => {
   assert.ok(wrapped.lines.length>1);
   assert.equal(wrapped.fits,true);
   assert.ok(wrapped.lines.every(line=>D.measureTextLineMm(line,12,"normal")<=45.01));
-  assert.deepEqual(D.wrapTextLines("A\nB",100,12,"normal"),["A","B"]);
+  assert.equal(JSON.stringify(D.wrapTextLines("A\nB",100,12,"normal")),JSON.stringify(["A","B"]));
 });
 
 test("line height participates in text fit metrics", () => {
