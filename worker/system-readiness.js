@@ -1,4 +1,4 @@
-export const EXPECTED_LATEST_MIGRATION = "0008_pdfx_validation_runs.sql";
+export const EXPECTED_LATEST_MIGRATION = "0009_pdfx_promotion_evidence.sql";
 export const R2_PROBE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function gate(id, label, ok, detail, category="STAGING", blocking=true) {
@@ -67,6 +67,11 @@ export function buildSystemReadiness(input = {}) {
       `${Number(counts.approvedIccProfiles||0)} approved ICC_PROFILE asset(s).`,"PRODUCTION"),
     gate("PDFX_VALIDATOR_CONFIGURED","Trusted PDF/X validator bridge configured",input.pdfxValidatorConfigured===true,
       input.pdfxValidatorConfigured?"Trusted validator URL + bearer secret are configured; response identity/ruleset is still verified per v2 policy.":"Trusted validator bridge is incomplete: HTTPS URL and PDFX_VALIDATOR_TOKEN are required.","PRODUCTION"),
+    gate("PDFX_PROMOTION_EVIDENCE","PDF/X promotion qualification evidence",input.pdfxPromotionReadiness?.ok===true,
+      input.pdfxPromotionReadiness?.ok
+        ? `Promotion evidence passes policy ${input.pdfxPromotionReadiness.policyVersion||"unknown"}: ${input.pdfxPromotionReadiness.sharedRegressionArtifacts||0} same-byte validator artifacts + RIP + production trial.`
+        : (input.pdfxPromotionReadiness?.errors||["Promotion evidence has not been qualified."]).join(" · "),
+      "PRODUCTION"),
     ...((prod.gates||[]).map((x)=>gate(
       x.code,
       x.displayName||x.code,
@@ -87,6 +92,7 @@ export function buildSystemReadiness(input = {}) {
     stagingChecks,
     productionChecks,
     rendererCapabilities:prod.rendererCapabilities||null,
+    pdfxPromotionReadiness:input.pdfxPromotionReadiness||null,
     summary:{
       stagingPassed:stagingChecks.filter((x)=>x.ok).length,
       stagingTotal:stagingChecks.length,
