@@ -371,6 +371,17 @@
           method:"POST", body:"{}"
         });
       },
+      async processImportDrafts(jobId, options = {}) {
+        return request(`/api/import-jobs/${encodeURIComponent(jobId)}/process-drafts`, {
+          method:"POST",
+          body:JSON.stringify({
+            submitPassed:Boolean(options.submitPassed),
+            retryFailed:Boolean(options.retryFailed),
+            limit:Math.max(1,Math.min(100,Number(options.limit||100))),
+            reason:options.reason||""
+          })
+        });
+      },
       async uploadExport(artworkId, blob, meta = {}) {
         const q = new URLSearchParams();
         q.set("kind", meta.kind || "PRODUCTION_BUNDLE");
