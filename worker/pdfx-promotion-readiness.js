@@ -17,7 +17,7 @@ export async function collectPdfxPromotionReadiness(db, nowMs=Date.now()) {
       LIMIT 250
     `).all(),
     db.prepare(`
-      SELECT id,evidence_type AS evidenceType,profile,artifact_sha256 AS artifactSha256,
+      SELECT id,evidence_type AS evidenceType,profile,policy_version AS policyVersion,artifact_sha256 AS artifactSha256,
              validator_name AS validatorName,validator_version AS validatorVersion,
              ruleset_id AS rulesetId,ruleset_version AS rulesetVersion,ruleset_sha256 AS rulesetSha256,
              print_service_provider AS printServiceProvider,rip_product AS ripProduct,rip_version AS ripVersion,
@@ -27,10 +27,10 @@ export async function collectPdfxPromotionReadiness(db, nowMs=Date.now()) {
              evidence_sha256 AS evidenceSha256,metadata_json AS metadataJson,
              status,approved_by AS approvedBy,approved_at AS approvedAt,created_at AS createdAt
       FROM pdfx_promotion_evidence
-      WHERE status='APPROVED'
+      WHERE status='APPROVED' AND policy_version=?
       ORDER BY created_at DESC
       LIMIT 500
-    `).all()
+    `).bind(PDFX_PRODUCTION_PROMOTION_POLICY.version).all()
   ]);
 
   const primaryRuns=(primaryResult.results||[]).map((row)=>{
