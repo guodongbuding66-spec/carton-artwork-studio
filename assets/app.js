@@ -118,6 +118,12 @@
   function canonical() { return D.canonicalData(state.artwork,state.factories); }
   function hasRole(role){return Boolean(state.identity?.roles?.includes(role));}
   function permitted(key){return Boolean(state.identity?.permissions?.[key]);}
+  function localArtworkEditable(){return !["in_review","approved"].includes(state.artwork.status);}
+  function cloudArtworkWritable(){return state.apiOnline&&permitted("artworkWrite");}
+  function cloudBatchWritable(){return state.apiOnline&&permitted("batchWrite");}
+  function persistLocalDraft(){
+    try{localStorage.setItem("cas:draft",JSON.stringify(state.artwork));}catch{}
+  }
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
   function productionPolicy(code){return state.productionPolicies.find(x=>x.code===code)||null;}
   function approvedQrEcc(){
@@ -210,14 +216,16 @@
   function renderArtwork() {
     const s = summary();
     const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && state.apiBindings.r2 && Boolean(state.remoteArtworkId) && Boolean(state.productionReadiness?.ready);
+    const cloudWrite=cloudArtworkWritable();
     return `
+      ${!cloudWrite?`<div class="notice warn" style="margin-bottom:12px"><strong>本地编辑模式</strong>：现在可以正常编辑、运行检查、导入文件和导出审核稿；“同步云端 / 提交审核 / 审批 / 正式生产”需要 Cloudflare Access 身份。</div>`:""}
       <div class="artwork-header">
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
         <div class="spacer"></div>
         <span class="badge ${state.artwork.status==="approved"?"green":state.artwork.status==="in_review"?"blue":state.artwork.status==="rejected"?"red":"amber"}">${esc(state.artwork.status.replace("_"," ").toUpperCase())}</span>
-        <button class="btn" data-action="save" ${state.apiBusy||!permitted("artworkWrite")?"disabled":""}>保存草稿</button>
-        <button class="btn" data-action="preflight" ${state.apiBusy||!permitted("artworkWrite")?"disabled":""}>运行检查</button>
-        <button class="btn primary" data-action="submit" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy||!permitted("artworkWrite")?"disabled":""}>提交审核</button>
+        <button class="btn" data-action="save" ${state.apiBusy||!localArtworkEditable()?"disabled":""}>${cloudWrite?"保存草稿":"保存本地草稿"}</button>
+        <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
+        <button class="btn primary" data-action="submit" title="${cloudWrite?"":"需要 Cloudflare Access + Artwork Write 权限"}" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy||!cloudWrite?"disabled":""}>${cloudWrite?"提交审核":"提交审核（需登录）"}</button>
         ${state.artwork.status==="in_review"&&permitted("review")?`<button class="btn success" data-action="approve" ${!blockingCommentsResolved()||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
         ${state.artwork.status==="approved"&&permitted("artworkWrite")?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
         <button class="btn" data-action="proof">导出审核稿</button>
@@ -231,7 +239,7 @@
   }
 
   function sel(v){ return state.artwork.status===v?"selected":""; }
-  function isArtworkLocked(){return ["in_review","approved"].includes(state.artwork.status)||!permitted("artworkWrite");}
+  function isArtworkLocked(){return !localArtworkEditable();}
 
   function renderForm() {
     const a = state.artwork, f = factory(), c = computed();
@@ -359,8 +367,9 @@
     return `
       <div class="stepper">${steps.map((x,i)=>`<div class="step ${i<state.batchStep?"done":i===state.batchStep?"active":""}">${i+1}. ${x}</div>`).join("")}</div>
       <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><span class="badge blue">US Packing List Default</span></div><div class="card-body">
-        <label class="dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
-        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length&&permitted("batchWrite")?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&state.apiOnline&&permitted("batchWrite")?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating&&permitted("batchWrite")?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
+        ${!cloudBatchWritable()?'<div class="notice warn" style="margin-bottom:10px"><strong>本地批量模式</strong>：文件解析、Dry Run、错误下载和 Proof ZIP 生成均可直接使用；只有保存 Mapping / Import Job 到 D1 需要登录权限。</div>':""}
+        <label class="dropzone" id="batch-dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
+        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&cloudBatchWritable()?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button></div>
       </div></section>
       ${state.batchSource?`<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="kpi-label">TOTAL</div><div class="kpi-value">${stats.total}</div></div><div class="kpi"><div class="kpi-label">PASSED</div><div class="kpi-value" style="color:#16835d">${stats.passed}</div></div><div class="kpi"><div class="kpi-label">FAILED</div><div class="kpi-value" style="color:#bc2f3b">${stats.failed}</div></div><div class="kpi"><div class="kpi-label">MAPPING</div><div class="kpi-value">${mapping.length}</div><div class="kpi-foot">fields detected</div></div></div>`:""}
       ${mapping.length?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Detected Mapping</h3><span class="subtle">自动表头映射，可保存为 Mapping Profile（D1 schema 已预留）</span></div>${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}</section>`:""}
@@ -851,6 +860,7 @@
       el.oninput=el.onchange=()=>{
         const k=el.dataset.art;
         state.artwork[k]=el.type==="number"?Number(el.value):el.value;
+        persistLocalDraft();
         render();
       };
     });
@@ -879,7 +889,18 @@
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
     const file=document.getElementById("batch-file");
+    const dropzone=document.getElementById("batch-dropzone");
     if(file) file.onchange=async()=>{ if(file.files?.[0]) await importBatch(file.files[0]); };
+    if(dropzone){
+      dropzone.ondragover=(e)=>{e.preventDefault();dropzone.classList.add("dragging");};
+      dropzone.ondragleave=()=>dropzone.classList.remove("dragging");
+      dropzone.ondrop=async(e)=>{
+        e.preventDefault();
+        dropzone.classList.remove("dragging");
+        const dropped=e.dataTransfer?.files?.[0];
+        if(dropped) await importBatch(dropped);
+      };
+    }
   }
 
   async function handleAction(action){
@@ -1687,16 +1708,21 @@
   }
 
   async function saveDraft(){
-    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
-    if(["in_review","approved"].includes(state.artwork.status)){
+    if(!localArtworkEditable()){
       toast("已提交或已批准的 Revision 不允许原地修改；需要创建新 Revision。","error");return;
+    }
+    persistLocalDraft();
+    if(!cloudArtworkWritable()){
+      toast("本地草稿已保存。登录后可同步到 D1。","success");
+      return;
     }
     state.apiBusy=true;render();
     try{
       const remote=await ensureRemoteArtwork();
-      toast(remote?"草稿已同步到 D1":"Cloud API 未连接，草稿仅保存到本地","success");
-    }catch(e){toast(e.message||String(e),"error");}
-    finally{state.apiBusy=false;render();}
+      toast(remote?"草稿已同步到 D1":"本地草稿已保存","success");
+    }catch(e){
+      toast("云端同步失败，本地草稿已保留："+(e.message||String(e)),"error");
+    }finally{state.apiBusy=false;render();}
   }
 
   async function persistPreflight(){
@@ -1713,12 +1739,14 @@
   }
 
   async function runPreflightAction(){
-    if(!permitted("artworkWrite")){toast("需要 Artwork Write 权限。","error");return;}
     state.pfBusy=true;state.apiBusy=true;render();
     try{
-      if(!state.remoteArtworkId&&state.apiOnline)await ensureRemoteArtwork();
-      await new Promise(r=>setTimeout(r,280));
-      await persistPreflight();
+      persistLocalDraft();
+      if(cloudArtworkWritable()){
+        if(!state.remoteArtworkId) await ensureRemoteArtwork();
+        await persistPreflight();
+      }
+      await new Promise(r=>setTimeout(r,180));
       const s=summary();
       toast(`Preflight: ${s.pass} pass / ${s.warning} warning / ${s.error} error`,s.error?"error":"success");
     }catch(e){toast(e.message||String(e),"error");}
@@ -1985,7 +2013,6 @@
   }
 
   async function importBatch(file){
-    if(!permitted("batchWrite")){toast("需要 Batch Write 权限。","error");return;}
     try{
       const parsed=await X.parseFile(file);
       const result=X.rowsToRecords(parsed.rows,{fillDown:true});
@@ -2000,7 +2027,7 @@
       render();
       const s=B.summarize(review);
       toast(`读取 ${s.total} 行：${s.passed} passed / ${s.failed} failed`,s.failed?"error":"success");
-      if(state.apiOnline&&permitted("batchWrite")){
+      if(cloudBatchWritable()){
         try{await persistBatchJob(file,parsed.source);toast(`Import Job 已同步 D1：${state.remoteImportJobId}`,"success");}
         catch(e){toast("Batch 已在本地解析，但 D1 同步失败："+(e.message||e),"error");}
       }
