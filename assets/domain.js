@@ -516,7 +516,12 @@
 
   function productionElementQualification(element) {
     const type=String(element?.type||"");
-    if(type==="text") return {qualified:true,mode:"EMBEDDED_VECTOR_TEXT"};
+    if(type==="text"){
+      if(String(element?.fontWeight||"normal")==="bold"){
+        return {qualified:false,mode:"BLOCKED",reason:"CUSTOM_BOLD_FONT_NOT_QUALIFIED"};
+      }
+      return {qualified:true,mode:"EMBEDDED_VECTOR_TEXT"};
+    }
     if(type==="barcode") return {qualified:true,mode:"VECTOR_BARCODE"};
     if(type==="qr-generated") return {qualified:true,mode:"VECTOR_QR"};
     return {
