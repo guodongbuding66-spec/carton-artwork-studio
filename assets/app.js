@@ -1239,6 +1239,177 @@
       ]),true):`<div class="card-body"><div class="notice">尚未载入文件。导入后系统会先做 Excel 解析，再将每一行转换为 Canonical Artwork Data 并运行阻断检查。</div></div>`}</section>`;
   }
 
+  function reviewerSelected(){
+    return (state.reviewerQueue||[]).find((x)=>x.artworkId===state.reviewerSelectedId)||null;
+  }
+
+  function reviewerStatusBadge(status){
+    const value=String(status||"MISSING").toUpperCase();
+    const color=value==="PASS"?"green":value==="WARNING"?"amber":value==="ERROR"||value==="MISSING"?"red":"gray";
+    return `<span class="badge ${color}">${esc(value)}</span>`;
+  }
+
+  function renderReviewerDiff(selected){
+    if(!selected?.previousRevision){
+      return '<div class="notice">当前 Revision 没有上一版持久化快照（通常为 R01），因此没有历史差异可比较。</div>';
+    }
+    if(!state.reviewerDiff){
+      return '<div class="notice">正在读取冻结的 Revision 差异证据…</div>';
+    }
+    const compare=state.reviewerDiff;
+    const rows=(compare.changes||[]).slice(0,120).map((x)=>[
+      `<span class="mono">${esc(x.path)}</span>`,
+      `<span class="mono subtle">${esc(compareValue(x.from))}</span>`,
+      `<span class="mono subtle">${esc(compareValue(x.to))}</span>`,
+      `<span class="badge ${x.change==="ADDED"?"green":x.change==="REMOVED"?"red":"amber"}">${esc(x.change)}</span>`
+    ]);
+    return `
+      <div class="reviewer-diff-head">
+        <span class="badge gray">${esc(selected.previousRevision)}</span><span>→</span><span class="badge blue">${esc(selected.revision)}</span>
+        <span class="subtle">${Number(compare.total||0)} canonical changes</span>
+      </div>
+      ${renderCompareVisual(compare)}
+      ${rows.length?table(["Canonical Path","From","To","Change"],rows,true):'<div class="notice">两个冻结 Revision 的 Canonical Data 完全一致。</div>'}
+    `;
+  }
+
+  function renderReviewer(){
+    if(!state.apiOnline||!state.identity){
+      return '<div class="notice warn"><strong>Reviewer Center 需要 Cloudflare Access / D1。</strong><br>离线模式不展示伪造审核队列，也不能作出审批决定。</div>';
+    }
+    if(!permitted("review")){
+      return '<div class="notice warn"><strong>需要 Reviewer / Admin 权限。</strong><br>审核队列只向具备 REVIEW 权限的身份开放。</div>';
+    }
+
+    const selected=reviewerSelected();
+    const summary=state.reviewerSummary||{inReview:0,approvable:0,fourEyesBlocked:0,blockingComments:0,preflightBlocked:0};
+    const jobs=state.reviewerJobs||[];
+    const queue=state.reviewerQueue||[];
+    const currentJob=jobs.find((x)=>x.id===state.reviewerJobId)||null;
+
+    const queueHtml=queue.map((item)=>{
+      const active=item.artworkId===state.reviewerSelectedId;
+      const gate=item.canApprove
+        ? '<span class="badge green">APPROVABLE</span>'
+        : item.fourEyesBlocked
+          ? '<span class="badge amber">4-EYES WAIT</span>'
+          : item.comments?.unresolvedBlocking
+            ? `<span class="badge red">${item.comments.unresolvedBlocking} BLOCKING</span>`
+            : '<span class="badge amber">GATE CHECK</span>';
+      return `<button class="reviewer-item ${active?"active":""}" data-reviewer-artwork="${esc(item.artworkId)}">
+        <div class="reviewer-item-top"><strong>#${esc(item.rowNo)} · ${esc(item.artworkNo||"—")}</strong>${reviewerStatusBadge(item.preflight?.status)}</div>
+        <div class="reviewer-item-meta"><span>${esc(item.sku||"—")}</span><span>${esc(item.revision||"—")}</span></div>
+        <div class="reviewer-item-foot">${gate}<span class="subtle">${esc(item.contractNo||"")}</span></div>
+      </button>`;
+    }).join("");
+
+    let detail='<section class="card"><div class="card-body"><div class="empty">选择一稿开始审核。</div></div></section>';
+    if(selected){
+      const model=frozenModel({snapshot:selected.snapshot,revision:selected.revision,status:"SUBMITTED"});
+      const preview=dielineSvg("proof",model.artwork,{factories:model.factories,qrEcc:"M"});
+      const pf=selected.preflight||{};
+      const pfs=pf.summary||{};
+      const unresolved=Number(selected.comments?.unresolvedBlocking||0);
+      const commentRows=(state.reviewerComments||[]).map((c)=>`
+        <div class="reviewer-comment ${c.blocking&&!c.resolved?"blocking":""}">
+          <div><strong>${esc(c.author||"—")}</strong><span class="subtle"> · ${esc(c.createdAt||"")}</span></div>
+          <div>${esc(c.body||"")}</div>
+          <div class="toolbar">${c.blocking?`<span class="badge ${c.resolved?"green":"red"}">${c.resolved?"BLOCKING RESOLVED":"BLOCKING OPEN"}</span>`:'<span class="badge gray">COMMENT</span>'}</div>
+        </div>`).join("");
+      const blockingChecks=(pf.blockingChecks||[]).map((x)=>`
+        <div class="pf-item"><i class="pf-dot error"></i><div><div class="pf-title">${esc(x.title||x.id||"Blocking check")}</div><div class="pf-detail">${esc(x.detail||"")}</div></div></div>`).join("");
+      const warningChecks=(pf.warningChecks||[]).map((x)=>`
+        <div class="pf-item"><i class="pf-dot warning"></i><div><div class="pf-title">${esc(x.title||x.id||"Warning")}</div><div class="pf-detail">${esc(x.detail||"")}</div></div></div>`).join("");
+      const approveDisabled=state.reviewerDecisionBusy||!selected.canApprove;
+      const rejectDisabled=state.reviewerDecisionBusy||selected.fourEyesBlocked;
+      detail=`
+        <div class="reviewer-detail">
+          <section class="card">
+            <div class="card-head"><h3>${esc(selected.artworkNo||"Artwork")} · ${esc(selected.revision||"")}</h3><span class="badge blue">IN REVIEW</span><span class="spacer"></span><button class="btn small" data-action="reviewer-open-artwork">Open Full Artwork</button></div>
+            <div class="reviewer-meta-grid">
+              <div><span>SKU</span><strong>${esc(selected.sku||"—")}</strong></div>
+              <div><span>Contract</span><strong>${esc(selected.contractNo||"—")}</strong></div>
+              <div><span>Submitted by</span><strong>${esc(selected.submittedBy||"—")}</strong></div>
+              <div><span>Submitted at</span><strong>${esc(selected.submittedAt||"—")}</strong></div>
+            </div>
+            <div class="reviewer-preview">${preview}</div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h3>Independent Approval Gate</h3><span class="subtle">每一稿独立四眼审批；无批量批准</span></div>
+            <div class="card-body">
+              <div class="reviewer-gates">
+                <div class="reviewer-gate ${selected.approvalGate?.preflightReady?"pass":"fail"}"><strong>Preflight</strong><span>${selected.approvalGate?.preflightReady?"READY":"BLOCKED"}</span></div>
+                <div class="reviewer-gate ${selected.approvalGate?.blockingCommentsResolved?"pass":"fail"}"><strong>Blocking Comments</strong><span>${selected.approvalGate?.blockingCommentsResolved?"CLEAR":unresolved+" OPEN"}</span></div>
+                <div class="reviewer-gate ${selected.approvalGate?.fourEyesSatisfied?"pass":"fail"}"><strong>Four Eyes</strong><span>${selected.approvalGate?.fourEyesSatisfied?"SATISFIED":"SELF-REVIEW BLOCKED"}</span></div>
+              </div>
+              ${selected.fourEyesBlocked?'<div class="notice warn" style="margin-top:10px">当前登录 Reviewer 是此 Revision 的提交人。Approve 与 Reject 都必须由另一位 Reviewer / Admin 完成。</div>':""}
+              <div class="field" style="margin-top:12px"><label>Reviewer Comment / Reject Reason</label><textarea id="reviewer-decision-comment" class="input reviewer-textarea" placeholder="Approve 可选备注；Reject 必须填写明确退回原因。"></textarea></div>
+              <div class="toolbar reviewer-decision-actions">
+                <button class="btn success" data-action="reviewer-approve" ${approveDisabled?"disabled":""}>${state.reviewerDecisionBusy?"Processing…":"Approve This Revision"}</button>
+                <button class="btn danger" data-action="reviewer-reject" ${rejectDisabled?"disabled":""}>Reject This Revision</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h3>Authoritative Preflight</h3>${reviewerStatusBadge(pf.status)}<span class="subtle">Run ${esc(pf.runId||"—")}</span></div>
+            <div class="card-body">
+              <div class="preflight-summary reviewer-preflight-summary">
+                <div class="pf-stat"><div class="pf-num" style="color:#bc2f3b">${Number(pfs.error||0)}</div><div class="pf-label">Errors</div></div>
+                <div class="pf-stat"><div class="pf-num" style="color:#a86b00">${Number(pfs.warning||0)}</div><div class="pf-label">Warnings</div></div>
+                <div class="pf-stat"><div class="pf-num" style="color:#16835d">${Number(pfs.pass||0)}</div><div class="pf-label">Passed</div></div>
+                <div class="pf-stat"><div class="pf-num">${Number(pfs.blocking||0)}</div><div class="pf-label">Blocking</div></div>
+              </div>
+              ${blockingChecks||warningChecks?`<div class="reviewer-checks">${blockingChecks}${warningChecks}</div>`:'<div class="notice">当前权威 Preflight 没有返回 Blocking / Warning 明细。</div>'}
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h3>Review Comments</h3><span class="badge ${unresolved?"red":"green"}">${unresolved} unresolved blocking</span></div>
+            <div class="card-body">${commentRows||'<div class="notice">当前 Revision 暂无审核评论。</div>'}</div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h3>Revision Difference</h3><span class="subtle">Frozen Canonical Snapshot</span></div>
+            <div class="card-body">${renderReviewerDiff(selected)}</div>
+          </section>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="reviewer-toolbar card">
+        <div class="card-body reviewer-toolbar-inner">
+          <div>
+            <div class="subtle">Import Job</div>
+            <select id="reviewer-job-select" class="select">
+              ${jobs.map((j)=>`<option value="${esc(j.id)}" ${j.id===state.reviewerJobId?"selected":""}>${esc(j.sourceName||j.id)} · ${esc(j.status||"")}</option>`).join("")}
+            </select>
+          </div>
+          <div><div class="subtle">Queue scope</div><strong>${esc(currentJob?.sourceName||"No Import Job selected")}</strong></div>
+          <span class="spacer"></span>
+          <button class="btn" data-action="reviewer-refresh" ${state.reviewerLoading?"disabled":""}>${state.reviewerLoading?"Loading…":"Refresh Queue"}</button>
+        </div>
+      </div>
+      ${state.reviewerError?`<div class="notice warn" style="margin:10px 0">${esc(state.reviewerError)}</div>`:""}
+      <div class="kpis reviewer-kpis">
+        <div class="kpi"><div class="kpi-label">IN REVIEW</div><div class="kpi-value">${Number(summary.inReview||0)}</div><div class="kpi-foot">当前 Import Job</div></div>
+        <div class="kpi"><div class="kpi-label">APPROVABLE</div><div class="kpi-value">${Number(summary.approvable||0)}</div><div class="kpi-foot">仍需逐稿点击批准</div></div>
+        <div class="kpi"><div class="kpi-label">FOUR-EYES WAIT</div><div class="kpi-value">${Number(summary.fourEyesBlocked||0)}</div><div class="kpi-foot">当前身份不能审批</div></div>
+        <div class="kpi"><div class="kpi-label">BLOCKED</div><div class="kpi-value">${Number(summary.blockingComments||0)+Number(summary.preflightBlocked||0)}</div><div class="kpi-foot">评论 / Preflight 门禁</div></div>
+      </div>
+      <div class="notice reviewer-safety-note"><strong>Safety rule:</strong> Reviewer Center 只集中展示队列，不提供“Approve All”、多选审批或跨稿件合并决策。每一次决定都绑定单独 Artwork + Revision 并调用服务端四眼审批门禁。</div>
+      <div class="reviewer-layout">
+        <section class="card reviewer-queue-card">
+          <div class="card-head"><h3>Review Queue</h3><span class="subtle">${queue.length} items</span></div>
+          <div class="reviewer-list">${queueHtml||'<div class="card-body"><div class="notice">这个 Import Job 当前没有 IN_REVIEW 稿件。</div></div>'}</div>
+        </section>
+        ${detail}
+      </div>
+    `;
+  }
+
   function renderTemplates(){
     const tabs=["overview","variables","rules","layers","tests","versions"];
     const latest=state.templateVersions[0]||state.templates[0]||null;
