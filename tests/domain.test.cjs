@@ -279,4 +279,65 @@ test("out-of-profile barcode physical dimensions block preflight", () => {
   assert.ok(assets.some(x=>x.id==="barcode-gs1128-quiet-bad-gs1"&&x.status==="error"&&x.blocking));
 });
 
+test("safe margin, group and text-fit metadata round-trip", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const a={...D.defaultArtwork,safeMarginMm:30,elements:[{
+    id:"txt-meta",type:"text",name:"Grouped text",x:p.x+40,y:p.y+40,w:120,h:30,
+    rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    text:"GROUPED TEXT",fontSizePt:12,fontWeight:"bold",textAlign:"left",
+    groupId:"grp-1",safeAreaExempt:true,autoFitText:true,minFontSizePt:6.5
+  }]};
+  const snapshot=D.canonicalData(a);
+  assert.equal(snapshot.artwork.safeMarginMm,30);
+  assert.equal(snapshot.artwork.elements[0].groupId,"grp-1");
+  assert.equal(snapshot.artwork.elements[0].safeAreaExempt,true);
+  assert.equal(snapshot.artwork.elements[0].autoFitText,true);
+  assert.equal(snapshot.artwork.elements[0].minFontSizePt,6.5);
+  const restored=D.artworkFromCanonical(snapshot);
+  assert.equal(restored.safeMarginMm,30);
+  assert.equal(restored.elements[0].groupId,"grp-1");
+  assert.equal(restored.elements[0].autoFitText,true);
+});
+
+test("safe margin blocks edge artwork unless explicitly exempted", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const base={
+    id:"edge-text",type:"text",name:"Edge text",x:p.x+2,y:p.y+2,w:80,h:20,
+    rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    text:"EDGE",fontSizePt:10,fontWeight:"normal",textAlign:"left"
+  };
+  const blocked=D.runPreflight({...D.defaultArtwork,safeMarginMm:22,elements:[base]}).Assets;
+  assert.ok(blocked.some(x=>x.id==="asset-safe-area-edge-text"&&x.status==="error"&&x.blocking));
+  const exempt=D.runPreflight({...D.defaultArtwork,safeMarginMm:22,elements:[{...base,safeAreaExempt:true}]}).Assets;
+  assert.ok(!exempt.some(x=>x.id==="asset-safe-area-edge-text"));
+});
+
+test("text overflow is blocking and auto-fit can resolve it", () => {
+  const text="THIS IS A VERY LONG CARTON MARK THAT SHOULD NOT FIT";
+  const element={type:"text",w:90,h:16,fontSizePt:18,fontWeight:"bold",minFontSizePt:7};
+  const overflow=D.textFitMetrics(element,text);
+  assert.equal(overflow.fits,false);
+  const fitted=D.fitTextToBox(element,text,{minPt:7,maxPt:18});
+  assert.equal(fitted.fits,true);
+  assert.ok(fitted.fontSizePt<18);
+  assert.ok(fitted.fontSizePt>=7);
+
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const assets=D.runPreflight({...D.defaultArtwork,elements:[{
+    id:"overflow-text",name:"Overflow",...element,text,
+    x:p.x+30,y:p.y+30,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true
+  }]}).Assets;
+  assert.ok(assets.some(x=>x.id==="text-overflow-overflow-text"&&x.status==="error"&&x.blocking));
+});
+
+test("auto-fit reports failure when minimum font still cannot fit", () => {
+  const element={type:"text",w:8,h:4,fontSizePt:20,fontWeight:"bold",minFontSizePt:12};
+  const result=D.fitTextToBox(element,"IMPOSSIBLY LONG TEXT",{minPt:12,maxPt:20});
+  assert.equal(result.fits,false);
+  assert.equal(result.fontSizePt,12);
+});
+
 console.log("Domain tests passed.");

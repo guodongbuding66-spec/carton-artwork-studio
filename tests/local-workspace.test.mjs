@@ -86,7 +86,7 @@ assert.match(app,/data-element-prop="wideRatio"/);
 assert.match(app,/data-element-bearer/);
 assert.match(app,/ITF-14 Review Profile/);
 assert.match(app,/GS1-128 Logistics Review Profile/);
-assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*persistLocalDraft\(\);/);
+assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*refreshAutoFitTextElements\(\);\s*persistLocalDraft\(\);/);
 
 assert.ok(app.includes("function barcodeModelForElement(element"));
 assert.ok(app.includes("function barcodePhysicalSize(element"));
@@ -133,3 +133,24 @@ assert.match(app,/function moveSelectionBy\(items,dx,dy\)/);
 assert.match(app,/const alreadySelected=isElementSelected\(id\)/);
 assert.match(app,/const dragItems=selectedArtworkElements\(\)\.filter/);
 assert.match(app,/updateSnapGuides\(svg,snapped\.guides\)/);
+
+
+assert.match(app,/function selectionUnitIds\(id\)/);
+assert.match(app,/function newGroupId\(\)/);
+assert.match(app,/function groupSelectedElements\(\)/);
+assert.match(app,/function ungroupSelectedElements\(\)/);
+assert.match(app,/data-action="group-selection"/);
+assert.match(app,/data-action="ungroup-selection"/);
+assert.match(app,/function clonePanelLayout\(sourcePanelId,targetPanelId\)/);
+assert.match(app,/data-action="copy-panel-layout"/);
+assert.match(app,/data-art="safeMarginMm"/);
+assert.match(app,/data-element-safe-exempt/);
+assert.match(app,/function fitTextElementInPlace\(element\)/);
+assert.match(app,/data-element-autofit/);
+assert.match(app,/data-action="fit-text-element"/);
+assert.match(app,/function selectionSpacingSvg\(elements=selectedArtworkElements\(\)\)/);
+assert.match(app,/data-spacing-overlay/);
+assert.match(app,/data-marquee-surface/);
+assert.match(app,/data-marquee-box/);
+assert.match(app,/selectionUnitIds\(item\.id\)/);
+assert.match(app,/updateSpacingOverlay\(svg\)/);

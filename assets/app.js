@@ -244,15 +244,31 @@
   function isElementSelected(id){
     return selectedArtworkElements().some((e)=>e.id===id);
   }
+  function selectionUnitIds(id){
+    const element=artworkElements().find(e=>e.id===id);
+    if(!element) return [];
+    const groupId=String(element.groupId||"");
+    return groupId
+      ? artworkElements().filter(e=>String(e.groupId||"")===groupId).map(e=>e.id)
+      : [id];
+  }
   function selectOnlyElement(id){
+    const ids=id?selectionUnitIds(id):[];
     state.selectedElementId=id||null;
-    state.selectedElementIds=id?[id]:[];
+    state.selectedElementIds=ids;
   }
   function toggleElementSelection(id){
+    const unit=selectionUnitIds(id);
     const ids=new Set(state.selectedElementIds||[]);
-    if(ids.has(id)) ids.delete(id); else ids.add(id);
+    const allSelected=unit.length>0&&unit.every(x=>ids.has(x));
+    for(const unitId of unit){
+      if(allSelected) ids.delete(unitId); else ids.add(unitId);
+    }
     state.selectedElementIds=[...ids];
     state.selectedElementId=ids.has(id)?id:(state.selectedElementIds.at(-1)||null);
+  }
+  function newGroupId(){
+    return "grp-"+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36));
   }
   function newElementId(){
     return "el-"+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36));
@@ -314,23 +330,26 @@
       ry:freeY>0?Math.max(0,Math.min(1,(Number(element.y||0)-panel.y)/freeY)):.5
     };
   }
-  function cloneSelectionToPanel(targetPanelId){
-    const items=selectedArtworkElements();
-    if(!items.length||!localArtworkEditable()) return;
-    if(!sameSelectionPanel(items)){toast("复制到面板前，请先选择同一面板内的元素。","error");return;}
+  function cloneElementsToPanel(items,targetPanelId,options={}){
+    if(!items.length||!localArtworkEditable()) return [];
+    if(!sameSelectionPanel(items)){toast("复制到面板前，请先选择同一面板内的元素。","error");return [];}
     const source=panelById(items[0].panelId),target=panelById(targetPanelId);
-    if(!source||!target){toast("目标面板无效。","error");return;}
+    if(!source||!target){toast("目标面板无效。","error");return [];}
     const oversized=items.find(e=>Number(e.w||0)>target.w||Number(e.h||0)>target.h);
-    if(oversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return;}
-    pushArtworkHistory();
+    if(oversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return [];}
+    const groupMap=new Map();
     const clones=[];
     for(const item of items){
       const copy=JSON.parse(JSON.stringify(item));
       const rel=panelRelativePosition(item,source);
       copy.id=newElementId();
-      copy.name=(item.name||item.type)+" · "+target.id;
+      copy.name=(item.name||item.type)+(options.nameSuffix||(" · "+target.id));
       copy.panelId=target.id;
-      copy.locked=false;
+      if(options.unlockCopies!==false) copy.locked=false;
+      if(copy.groupId){
+        if(!groupMap.has(copy.groupId)) groupMap.set(copy.groupId,newGroupId());
+        copy.groupId=groupMap.get(copy.groupId);
+      }
       copy.x=target.x+rel.rx*Math.max(0,target.w-Number(copy.w||0));
       copy.y=target.y+rel.ry*Math.max(0,target.h-Number(copy.h||0));
       clampElementToBounds(copy);
@@ -339,9 +358,27 @@
     artworkElements().push(...clones);
     state.selectedElementIds=clones.map(e=>e.id);
     state.selectedElementId=clones.at(-1)?.id||null;
-    persistLocalDraft();render();
-    toast(`已复制 ${clones.length} 个元素到 ${target.id}`,"success");
+    return clones;
   }
+  function cloneSelectionToPanel(targetPanelId){
+    const items=selectedArtworkElements();
+    if(!items.length||!localArtworkEditable()) return;
+    pushArtworkHistory();
+    const clones=cloneElementsToPanel(items,targetPanelId);
+    if(!clones.length){state.historyPast.pop();return;}
+    persistLocalDraft();render();
+    toast(`已复制 ${clones.length} 个元素到 ${targetPanelId}`,"success");
+  }
+  function clonePanelLayout(sourcePanelId,targetPanelId){
+    const items=artworkElements().filter(e=>String(e.panelId||"")===String(sourcePanelId||""));
+    if(!items.length){toast(`${sourcePanelId} 没有可复制的自定义元素。`,"error");return;}
+    pushArtworkHistory();
+    const clones=cloneElementsToPanel(items,targetPanelId,{nameSuffix:" · "+targetPanelId,unlockCopies:false});
+    if(!clones.length){state.historyPast.pop();return;}
+    persistLocalDraft();render();
+    toast(`已复制 ${sourcePanelId} 的整套布局（${clones.length} 个元素）到 ${targetPanelId}`,"success");
+  }
+
   function cloneSelectionToOppositePanel(){
     const items=selectedArtworkElements();
     if(!items.length||!sameSelectionPanel(items)){toast("对称面复制要求选择同一面板内的元素。","error");return;}
@@ -594,6 +631,10 @@
         ${field("CodeBlock Profile","locked component",`<select class="select" data-art="codeBlockProfile" ${isArtworkLocked()?"disabled":""}><option value="250x80" ${a.codeBlockProfile==="250x80"?"selected":""}>250 × 80 mm</option><option value="200x64" ${a.codeBlockProfile==="200x64"?"selected":""}>200 × 64 mm</option></select>`)}
         <div class="notice">模板自带 Barcode + QR 仍作为锁定 CodeBlock。下面“元素”区可额外上传 Logo/图片、上传二维码，或生成独立矢量 QR。</div>
       `)}
+      ${formSection("Layout Safety 安全区", `
+        ${field("Safe Margin","mm",`<input class="input mono" type="number" min="0" max="100" step="1" data-art="safeMarginMm" value="${esc(Number(a.safeMarginMm??22))}" ${isArtworkLocked()?"disabled":""}/>`)}
+        <div class="notice">对每个面板从折线/切线向内缩进。默认 22 mm。文字、条码、QR、图标等越过安全区会在 Preflight 中 BLOCK；确有贴边需求时可对单个对象显式豁免。</div>
+      `)}
       ${renderElementEditor()}
     `;
   }
@@ -609,6 +650,7 @@
         <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
         <span class="mono subtle">${esc(e.panelId||"—")}</span>
+        ${e.groupId?'<span class="badge blue">GROUP</span>':""}
         ${e.visible===false?'<span class="badge gray">HIDE</span>':e.locked?'<span class="badge amber">LOCK</span>':""}
       </button>`;
     }).join("");
@@ -623,8 +665,9 @@
         ${selectionSourcePanel?`
           <div class="row2">
             <select class="select" id="copy-panel-target">${copyPanelOptions}</select>
-            <button class="btn small" data-action="copy-selection-panel">复制到指定面板</button>
+            <button class="btn small" data-action="copy-selection-panel">复制所选</button>
           </div>
+          <button class="btn small" style="width:100%;margin-top:6px" data-action="copy-panel-layout">复制当前面板全部元素 → 目标面板</button>
           <button class="btn small" style="width:100%;margin-top:6px" data-action="copy-opposite-panel" ${OPPOSITE_PANEL_MAP[selectionSourcePanel]?"":"disabled"}>
             复制到对称面 ${OPPOSITE_PANEL_MAP[selectionSourcePanel]?"→ "+OPPOSITE_PANEL_MAP[selectionSourcePanel]:""}
           </button>
@@ -639,9 +682,16 @@
           <button class="tool" data-action="distribute-horizontal" ${selectedMany.length<3?"disabled":""}>水平等距</button>
           <button class="tool" data-action="distribute-vertical" ${selectedMany.length<3?"disabled":""}>垂直等距</button>
         </div>
-        <div class="toolbar" style="justify-content:flex-end;margin-top:8px"><button class="btn danger small" data-action="delete-selection">删除所选</button></div>
+        <div class="toolbar" style="justify-content:flex-end;margin-top:8px">
+          <button class="btn small" data-action="group-selection" ${sameSelectionPanel(selectedMany)?"":"disabled"}>Group 组合</button>
+          <button class="btn small" data-action="ungroup-selection" ${selectedMany.some(e=>e.groupId)?"":"disabled"}>Ungroup</button>
+          <button class="btn danger small" data-action="delete-selection">删除所选</button>
+        </div>
       </div>`:"";
     const bindingOptions=(D.artworkBindings||[]).map(b=>`<option value="${esc(b.key)}" ${selected?.bindingKey===b.key?"selected":""}>${esc(b.label)}</option>`).join("");
+    const selectedTextFit=selected?.type==="text"
+      ? D.textFitMetrics(selected,D.resolvedElementText(selected,state.artwork,state.factories))
+      : null;
     const props=selected?`
       <div class="element-properties">
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
@@ -651,14 +701,26 @@
           <label class="toggle-line"><input type="checkbox" data-element-lock ${selected.locked?"checked":""}/> Lock</label>
         </div>
         <label class="toggle-line"><input type="checkbox" data-element-constrain ${selected.constrainToPanel!==false?"checked":""}/> 限制在所属面板内</label>
+        <label class="toggle-line"><input type="checkbox" data-element-safe-exempt ${selected.safeAreaExempt?"checked":""}/> 允许超出 Safe Margin（显式豁免）</label>
         ${selected.type==="text"?`
           <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
           ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementText(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
           <div class="field"><label>Text 文本</label><textarea class="input" rows="3" data-element-prop="text" ${selected.bindingKey?"disabled":""}>${esc(selected.text||"")}</textarea></div>
           <div class="row3">
-            <div class="field"><label>pt</label><input class="input mono" type="number" min="5" step="0.5" data-element-prop="fontSizePt" value="${esc(selected.fontSizePt||12)}"/></div>
+            <div class="field"><label>pt</label><input class="input mono" type="number" min="1" step="0.25" data-element-prop="fontSizePt" value="${esc(selected.fontSizePt||12)}"/></div>
             <div class="field"><label>Weight</label><select class="select" data-element-prop="fontWeight"><option value="normal" ${selected.fontWeight!=="bold"?"selected":""}>Normal</option><option value="bold" ${selected.fontWeight==="bold"?"selected":""}>Bold</option></select></div>
             <div class="field"><label>Align</label><select class="select" data-element-prop="textAlign"><option value="left" ${selected.textAlign==="left"?"selected":""}>Left</option><option value="center" ${selected.textAlign==="center"?"selected":""}>Center</option><option value="right" ${selected.textAlign==="right"?"selected":""}>Right</option></select></div>
+          </div>
+          <div class="row2">
+            <label class="toggle-line"><input type="checkbox" data-element-autofit ${selected.autoFitText?"checked":""}/> Auto Fit 自动缩小</label>
+            <div class="field"><label>Minimum pt</label><input class="input mono" type="number" min="1" step="0.25" data-element-prop="minFontSizePt" value="${esc(Number(selected.minFontSizePt||7))}"/></div>
+          </div>
+          <button class="btn small" style="width:100%" data-action="fit-text-element">Fit Text Now</button>
+          <div class="notice ${selectedTextFit?.fits?"success":"warn"}">
+            <strong>Text Box Check</strong><br>
+            ${selectedTextFit?.fits
+              ? `预计文字 ${D.round(selectedTextFit.widthMm,1)}×${D.round(selectedTextFit.heightMm,1)} mm，可放入 ${D.round(selectedTextFit.boxWidthMm,1)}×${D.round(selectedTextFit.boxHeightMm,1)} mm。`
+              : `文字预计需要 ${D.round(selectedTextFit?.widthMm||0,1)}×${D.round(selectedTextFit?.heightMm||0,1)} mm，当前文本框 ${D.round(selectedTextFit?.boxWidthMm||0,1)}×${D.round(selectedTextFit?.boxHeightMm||0,1)} mm；Preflight 会 BLOCK。`}
           </div>`:""}
         ${selected.type==="qr-generated"?`
           <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
@@ -935,7 +997,7 @@
     const g=D.sideSealGeometry(a);
     const factoryList=options.factories||state.factories;
     const c=D.computed(a,factoryList);
-    const safe=22;
+    const safe=Math.max(0,Number(a.safeMarginMm??22));
     const proof=mode==="proof", production=mode==="production";
     const showD=production?false:(proof?true:state.showDieline);
     const showS=production?false:(proof?true:state.showSafe);
@@ -943,20 +1005,27 @@
     const vb=`-50 -50 ${g.totalWidth+100} ${g.totalHeight+100}`;
     const cut=showD?`<g fill="none" stroke="#202a34" stroke-width="1.2"><rect x="${g.H}" y="0" width="${g.L}" height="${g.totalHeight}"/><rect x="0" y="${g.H}" width="${g.totalWidth}" height="${g.W}"/><rect x="0" y="${g.H+g.W+g.H}" width="${g.totalWidth}" height="${g.W}"/></g>`:"";
     const crease=showD?`<g stroke="#3978b8" stroke-width=".8" stroke-dasharray="8 5"><line x1="${g.H}" y1="0" x2="${g.H}" y2="${g.totalHeight}"/><line x1="${g.H+g.L}" y1="0" x2="${g.H+g.L}" y2="${g.totalHeight}"/>${[g.H,g.H+g.W,g.H+g.W+g.H,g.H+g.W+g.H+g.W].map(y=>`<line x1="0" y1="${y}" x2="${g.totalWidth}" y2="${y}"/>`).join("")}</g>`:"";
-    const safeBox=showS?`<rect x="${g.H+safe}" y="${g.H+g.W+g.H+safe}" width="${g.L-safe*2}" height="${g.W-safe*2}" fill="none" stroke="#15976d" stroke-dasharray="6 4"/>`:"";
+    const safeBox=showS?g.panels.map(p=>{
+      const w=Math.max(0,p.w-safe*2),h=Math.max(0,p.h-safe*2);
+      return `<rect x="${p.x+safe}" y="${p.y+safe}" width="${w}" height="${h}" fill="none" stroke="#15976d" stroke-dasharray="6 4" opacity=".78"/>`;
+    }).join(""):"";
     const labels=showP?g.panels.map(p=>`<text x="${p.x+p.w/2}" y="${p.y+p.h/2}" text-anchor="middle" fill="#aab4be" font-size="16" font-family="Arial">${p.id}</text>`).join(""):"";
     const bx=g.H+45, by=g.H+g.W+g.H+68;
     const qrEcc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
     const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118,a.codeBlockProfile,a,{qrEcc});
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
     const custom=renderCustomElements(a,mode,factoryList);
-    const guideLayer=mode==="editor"?`<g data-snap-guides pointer-events="none">
+    const guideLayer=mode==="editor"?`<defs><marker id="gap-arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto"><path d="M6 0 L0 3 L6 6" fill="none" stroke="#b4235a" stroke-width="1"/></marker></defs>
+    <g data-snap-guides pointer-events="none">
       <line data-snap-guide-x x1="0" y1="0" x2="0" y2="${g.totalHeight}" stroke="#e13b6b" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity="0"/>
       <line data-snap-guide-y x1="0" y1="0" x2="${g.totalWidth}" y2="0" stroke="#e13b6b" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity="0"/>
+      <g data-spacing-overlay>${selectionSpacingSvg()}</g>
+      <rect data-marquee-box x="0" y="0" width="0" height="0" fill="#3978b8" fill-opacity=".08" stroke="#3978b8" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity="0"/>
     </g>`:"";
     const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
+    const marqueeAttr=mode==="editor"?'data-marquee-surface style="cursor:crosshair"':"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
-      <rect x="-50" y="-50" width="${g.totalWidth+100}" height="${g.totalHeight+100}" fill="#fff"/>
+      <rect ${marqueeAttr} x="-50" y="-50" width="${g.totalWidth+100}" height="${g.totalHeight+100}" fill="#fff"/>
       ${cut}${crease}${safeBox}${labels}
       <g fill="#000" font-family="Arial,Helvetica,sans-serif">
         <text x="${bx}" y="${by}" font-size="22" font-weight="700">${esc(a.sku)}</text>
@@ -1490,6 +1559,7 @@
       const apply=()=>{
         const k=el.dataset.art;
         state.artwork[k]=el.type==="number"?Number(el.value):el.value;
+        refreshAutoFitTextElements();
         persistLocalDraft();
       };
       el.oninput=apply;
@@ -1775,8 +1845,9 @@
     const el={
       id:newElementId(),type:"text",name:meta?.label||bindingKey,
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
-      panelId:p.panelId,constrainToPanel:true,
+      panelId:p.panelId,constrainToPanel:true,safeAreaExempt:false,groupId:"",
       text:"",bindingKey,fontSizePt:12,fontWeight:"bold",textAlign:"left",
+      autoFitText:true,minFontSizePt:7,
       symbology:"",humanReadable:false,symbolKey:"",
       payload:"",ecc:"M",sourceType:"bound-variable",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
@@ -1786,14 +1857,40 @@
     persistLocalDraft();render();toast(`数据字段已绑定：${meta?.label||bindingKey}`,"success");
   }
 
+  function fitTextElementInPlace(element){
+    if(!element||element.type!=="text") return {fits:true};
+    const text=D.resolvedElementText(element,state.artwork,state.factories);
+    const result=D.fitTextToBox(element,text,{
+      minPt:Number(element.minFontSizePt||7),
+      maxPt:Number(element.fontSizePt||12)
+    });
+    if(result.fits) element.fontSizePt=result.fontSizePt;
+    return result;
+  }
+  function fitSelectedTextElement(){
+    const element=selectedArtworkElement();
+    if(!element||element.type!=="text"||!localArtworkEditable()) return;
+    pushArtworkHistory();
+    const result=fitTextElementInPlace(element);
+    persistLocalDraft();render();
+    if(result.fits) toast(`文字已适配到 ${Number(element.fontSizePt).toFixed(2)} pt`,"success");
+    else toast(`在最小字号 ${Number(element.minFontSizePt||7).toFixed(2)} pt 下仍无法放入当前文本框，请增大文本框。`,"error");
+  }
+  function refreshAutoFitTextElements(){
+    for(const element of artworkElements()){
+      if(element.type==="text"&&element.autoFitText) fitTextElementInPlace(element);
+    }
+  }
+
   function addTextElement(){
     if(!localArtworkEditable()) return;
     const w=120,h=28,p=defaultElementPlacement(w,h);
     const el={
       id:newElementId(),type:"text",name:"Text",
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
-      panelId:p.panelId,constrainToPanel:true,
+      panelId:p.panelId,constrainToPanel:true,safeAreaExempt:false,groupId:"",
       text:"NEW MARK TEXT",fontSizePt:12,fontWeight:"bold",textAlign:"left",
+      autoFitText:true,minFontSizePt:7,
       payload:"",ecc:"M",sourceType:"generated-text",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
@@ -1808,9 +1905,14 @@
     if(!items.length||!localArtworkEditable()) return;
     pushArtworkHistory();
     const copies=[];
+    const groupMap=new Map();
     for(const current of items){
       const copy=JSON.parse(JSON.stringify(current));
       copy.id=newElementId();copy.name=(current.name||current.type)+" copy";
+      if(copy.groupId){
+        if(!groupMap.has(copy.groupId)) groupMap.set(copy.groupId,newGroupId());
+        copy.groupId=groupMap.get(copy.groupId);
+      }
       copy.locked=false;
       copy.x=Number(current.x||0)+8;copy.y=Number(current.y||0)+8;
       clampElementToBounds(copy);
@@ -1846,9 +1948,67 @@
     return {left,top,right,bottom,width:right-left,height:bottom-top};
   }
 
+  function selectionSpacingSvg(elements=selectedArtworkElements()){
+    const items=elements.filter(e=>e.visible!==false);
+    if(!items.length) return "";
+    const b=selectionBounds(items);
+    const label=(x,y,text,anchor="middle")=>`<text x="${x}" y="${y}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#b4235a" stroke="#fff" stroke-width="4" paint-order="stroke" vector-effect="non-scaling-stroke">${esc(text)}</text>`;
+    let out=label(b.left,b.top-7,`Selection ${D.round(b.width,1)} × ${D.round(b.height,1)} mm`,"start");
+    if(items.length!==2||!sameSelectionPanel(items)) return out;
+    const [a,bx]=items;
+    const ax=Number(a.x||0),ay=Number(a.y||0),aw=Number(a.w||0),ah=Number(a.h||0);
+    const bx0=Number(bx.x||0),by0=Number(bx.y||0),bw=Number(bx.w||0),bh=Number(bx.h||0);
+    const ar=ax+aw,ab=ay+ah,br=bx0+bw,bb=by0+bh;
+
+    let x1=null,x2=null;
+    if(ar<=bx0){x1=ar;x2=bx0;}
+    else if(br<=ax){x1=br;x2=ax;}
+    if(x1!==null){
+      const y=(Math.max(ay,by0)+Math.min(ab,bb))/2;
+      const yy=Number.isFinite(y)?y:(ay+ah/2+by0+bh/2)/2;
+      out+=`<line x1="${x1}" y1="${yy}" x2="${x2}" y2="${yy}" stroke="#b4235a" stroke-width="1" marker-start="url(#gap-arrow)" marker-end="url(#gap-arrow)" vector-effect="non-scaling-stroke"/>`;
+      out+=label((x1+x2)/2,yy-5,`${D.round(x2-x1,1)} mm`);
+    }
+
+    let y1=null,y2=null;
+    if(ab<=by0){y1=ab;y2=by0;}
+    else if(bb<=ay){y1=bb;y2=ay;}
+    if(y1!==null){
+      const x=(Math.max(ax,bx0)+Math.min(ar,br))/2;
+      const xx=Number.isFinite(x)?x:(ax+aw/2+bx0+bw/2)/2;
+      out+=`<line x1="${xx}" y1="${y1}" x2="${xx}" y2="${y2}" stroke="#b4235a" stroke-width="1" marker-start="url(#gap-arrow)" marker-end="url(#gap-arrow)" vector-effect="non-scaling-stroke"/>`;
+      out+=label(xx+6,(y1+y2)/2,`${D.round(y2-y1,1)} mm`,"start");
+    }
+    return out;
+  }
+  function updateSpacingOverlay(svg){
+    const layer=svg?.querySelector("[data-spacing-overlay]");
+    if(layer) layer.innerHTML=selectionSpacingSvg();
+  }
+
   function sameSelectionPanel(elements=selectedArtworkElements()){
     const panels=new Set(elements.map(e=>String(e.panelId||"")));
     return panels.size<=1;
+  }
+
+  function groupSelectedElements(){
+    const items=selectedArtworkElements();
+    if(items.length<2||!localArtworkEditable()) return;
+    if(!sameSelectionPanel(items)){toast("Group 要求元素位于同一纸箱面板。","error");return;}
+    pushArtworkHistory();
+    const groupId=newGroupId();
+    for(const item of items) item.groupId=groupId;
+    persistLocalDraft();render();toast(`已组合 ${items.length} 个元素`,"success");
+  }
+  function ungroupSelectedElements(){
+    const ids=new Set(selectedArtworkElements().map(e=>String(e.groupId||"")).filter(Boolean));
+    if(!ids.size||!localArtworkEditable()) return;
+    pushArtworkHistory();
+    let count=0;
+    for(const item of artworkElements()){
+      if(ids.has(String(item.groupId||""))){item.groupId="";count+=1;}
+    }
+    persistLocalDraft();render();toast(`已解除 ${count} 个元素的组合`,"success");
   }
 
   function selectionMoveLimits(items){
@@ -2005,12 +2165,15 @@
         if(key==="panelId"){
           placeElementInPanel(e,el.value);
         }else{
-          e[key]=["x","y","w","h","rotation","fontSizePt","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
+          e[key]=["x","y","w","h","rotation","fontSizePt","minFontSizePt","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
           if(key==="symbology") ensureBarcodePhysicalSettings(e,true);
           if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
           if(key==="fontSizePt") e[key]=Math.max(5,Number(e[key]||5));
           if(e.type==="barcode"&&["payload","bindingKey","symbology","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)) syncBarcodeElementSize(e);
-          else clampElementToBounds(e);
+          else {
+            clampElementToBounds(e);
+            if(e.type==="text"&&e.autoFitText&&["text","bindingKey","w","h","fontWeight","minFontSizePt"].includes(key)) fitTextElementInPlace(e);
+          }
         }
         persistLocalDraft();
       };
@@ -2047,6 +2210,20 @@
       pushArtworkHistory();
       e.constrainToPanel=Boolean(constrain.checked);clampElementToBounds(e);persistLocalDraft();render();
     };
+    const safeExempt=document.querySelector("[data-element-safe-exempt]");
+    if(safeExempt) safeExempt.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      pushArtworkHistory();
+      e.safeAreaExempt=Boolean(safeExempt.checked);persistLocalDraft();render();
+    };
+    const autoFit=document.querySelector("[data-element-autofit]");
+    if(autoFit) autoFit.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable())return;
+      pushArtworkHistory();
+      e.autoFitText=Boolean(autoFit.checked);
+      if(e.autoFitText) fitTextElementInPlace(e);
+      persistLocalDraft();render();
+    };
 
     document.querySelectorAll("[data-element-resize]").forEach((handle)=>{
       handle.onpointerdown=(ev)=>{
@@ -2079,11 +2256,62 @@
         const finish=()=>{
           handle.onpointermove=null;handle.onpointerup=null;handle.onpointercancel=null;
           element.w=nextW;element.h=nextH;clampElementToBounds(element);
+          if(element.type==="text"&&element.autoFitText) fitTextElementInPlace(element);
           persistLocalDraft();render();
         };
         handle.onpointerup=finish;handle.onpointercancel=finish;
       };
     });
+
+    const marqueeSurface=document.querySelector("[data-marquee-surface]");
+    if(marqueeSurface){
+      marqueeSurface.onpointerdown=(ev)=>{
+        if(!localArtworkEditable()) return;
+        const svg=marqueeSurface.ownerSVGElement;
+        const box=svg?.querySelector("[data-marquee-box]");
+        if(!svg?.createSVGPoint||!box) return;
+        ev.preventDefault();
+        const point=(event)=>{
+          const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;
+          return p.matrixTransform(svg.getScreenCTM().inverse());
+        };
+        const start=point(ev);
+        const baseIds=ev.shiftKey?new Set(state.selectedElementIds||[]):new Set();
+        let current=start;
+        try{marqueeSurface.setPointerCapture(ev.pointerId);}catch{}
+        const draw=()=>{
+          const x=Math.min(start.x,current.x),y=Math.min(start.y,current.y);
+          const w=Math.abs(current.x-start.x),h=Math.abs(current.y-start.y);
+          box.setAttribute("x",String(x));box.setAttribute("y",String(y));
+          box.setAttribute("width",String(w));box.setAttribute("height",String(h));
+          box.setAttribute("opacity",w>1||h>1?"1":"0");
+        };
+        marqueeSurface.onpointermove=(move)=>{
+          if(move.pointerId!==ev.pointerId) return;
+          current=point(move);draw();
+        };
+        const finish=()=>{
+          marqueeSurface.onpointermove=null;marqueeSurface.onpointerup=null;marqueeSurface.onpointercancel=null;
+          const left=Math.min(start.x,current.x),right=Math.max(start.x,current.x);
+          const top=Math.min(start.y,current.y),bottom=Math.max(start.y,current.y);
+          const moved=(right-left)>2||(bottom-top)>2;
+          const ids=new Set(baseIds);
+          if(moved){
+            for(const item of artworkElements()){
+              if(item.visible===false) continue;
+              const x=Number(item.x||0),y=Number(item.y||0),w=Number(item.w||0),h=Number(item.h||0);
+              const hit=x<right&&(x+w)>left&&y<bottom&&(y+h)>top;
+              if(hit) for(const unitId of selectionUnitIds(item.id)) ids.add(unitId);
+            }
+          }
+          state.selectedElementIds=[...ids];
+          state.selectedElementId=state.selectedElementIds.at(-1)||null;
+          box.setAttribute("opacity","0");
+          render();
+        };
+        marqueeSurface.onpointerup=finish;marqueeSurface.onpointercancel=finish;
+      };
+    }
 
     document.querySelectorAll("[data-art-element]").forEach((group)=>{
       group.onpointerdown=(ev)=>{
@@ -2145,6 +2373,7 @@
             if(node) node.setAttribute("transform",elementTransform(item));
           }
           updateSnapGuides(svg,snapped.guides);
+          updateSpacingOverlay(svg);
         };
         const finish=()=>{
           group.onpointermove=null;group.onpointerup=null;group.onpointercancel=null;
@@ -2175,7 +2404,17 @@
       if(target) return cloneSelectionToPanel(target);
       return;
     }
+    if(action==="copy-panel-layout"){
+      const items=selectedArtworkElements();
+      const source=items.length&&sameSelectionPanel(items)?String(items[0].panelId||""):"";
+      const target=document.getElementById("copy-panel-target")?.value||"";
+      if(source&&target) return clonePanelLayout(source,target);
+      return;
+    }
     if(action==="copy-opposite-panel") return cloneSelectionToOppositePanel();
+    if(action==="group-selection") return groupSelectedElements();
+    if(action==="ungroup-selection") return ungroupSelectedElements();
+    if(action==="fit-text-element") return fitSelectedTextElement();
     if(action==="layer-front") return reorderSelectedElement("front");
     if(action==="layer-back") return reorderSelectedElement("back");
     if(action==="layer-up") return reorderSelectedElement("up");
