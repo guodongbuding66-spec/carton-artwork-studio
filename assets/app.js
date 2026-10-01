@@ -350,8 +350,13 @@
     if(!sameSelectionPanel(items)){toast("复制到面板前，请先选择同一面板内的元素。","error");return [];}
     const source=panelById(items[0].panelId),target=panelById(targetPanelId);
     if(!source||!target){toast("目标面板无效。","error");return [];}
-    const oversized=items.find(e=>{const v=D.elementVisualBounds(e);return v.width>target.w||v.height>target.h;});
-    if(oversized&&!options.allowOversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return [];}
+    const oversized=items.find(e=>{
+      const v=D.elementVisualBounds(e);
+      const over=v.width>target.w||v.height>target.h;
+      const controlled=String(e.blockType||"")==="SHIPPING_MARK_STANDARD"&&String(e.blockVersion||"")==="1.1.0";
+      return over&&!(options.allowControlledOversized&&controlled);
+    });
+    if(oversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return [];}
     const groupMap=new Map();
     const clones=[];
     for(const item of items){
@@ -384,7 +389,7 @@
     if(!items.length||!localArtworkEditable()) return;
     pushArtworkHistory();
     const controlled=items.some(e=>String(e.blockType||"")==="SHIPPING_MARK_STANDARD"&&String(e.blockVersion||"")==="1.1.0");
-    const clones=cloneElementsToPanel(items,targetPanelId,{allowOversized:controlled,unlockCopies:false});
+    const clones=cloneElementsToPanel(items,targetPanelId,{allowControlledOversized:controlled,unlockCopies:controlled?false:true});
     if(!clones.length){state.historyPast.pop();return;}
     const reflow=reflowControlledBlockGroups(clones);
     if(!reflow.ok){
@@ -400,7 +405,7 @@
     const items=artworkElements().filter(e=>String(e.panelId||"")===String(sourcePanelId||""));
     if(!items.length){toast(`${sourcePanelId} 没有可复制的自定义元素。`,"error");return;}
     pushArtworkHistory();
-    const clones=cloneElementsToPanel(items,targetPanelId,{nameSuffix:" · "+targetPanelId,unlockCopies:false,allowOversized:true});
+    const clones=cloneElementsToPanel(items,targetPanelId,{nameSuffix:" · "+targetPanelId,unlockCopies:false,allowControlledOversized:true});
     if(!clones.length){state.historyPast.pop();return;}
     const reflow=reflowControlledBlockGroups(clones);
     if(!reflow.ok){
