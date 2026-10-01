@@ -1503,7 +1503,7 @@ export default {
           artworkId,
           revision:artwork.currentRevision,
           artworkStatus:String(artwork.status||"").toUpperCase(),
-          rendererVersion:"pdfx4-embedded-truetype-2.1.0",
+          rendererVersion:"pdfx4-embedded-truetype-2.2.0",
           qualification:qualification.report,
           productionReadiness:readiness,
           gates,
@@ -1609,7 +1609,7 @@ export default {
         const sha256=[...new Uint8Array(digest)].map((b)=>b.toString(16).padStart(2,"0")).join("");
         const objectKey=`artworks/${artworkId}/${artwork.currentRevision}/Production-${sha256.slice(0,16)}.pdf`;
         const manifest={
-          rendererVersion:"pdfx4-embedded-truetype-2.1.0",
+          rendererVersion:"pdfx4-embedded-truetype-2.2.0",
           artworkId,
           revision:artwork.currentRevision,
           artifactSha256:sha256,
@@ -1626,7 +1626,7 @@ export default {
         await env.DB.prepare(`
           INSERT INTO exports(id,artwork_id,revision,kind,object_key,sha256,renderer_version,manifest_json,created_at)
           VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP)
-        `).bind(exportId,artworkId,artwork.currentRevision,"PRODUCTION_PDF",objectKey,sha256,"pdfx4-embedded-truetype-2.1.0",JSON.stringify(manifest)).run();
+        `).bind(exportId,artworkId,artwork.currentRevision,"PRODUCTION_PDF",objectKey,sha256,"pdfx4-embedded-truetype-2.2.0",JSON.stringify(manifest)).run();
         await audit(env,identity,"EXPORT",exportId,"SERVER_RENDER_PRODUCTION_PDF",{
           newValue:{artworkId,revision:artwork.currentRevision,objectKey,sha256,fontAssetId:fontAsset.id,iccAssetId:iccAsset.id,pdfxProfile:pdfxPolicy.profile},
           reason:"Authoritative server-side embedded-font production PDF"
@@ -1640,7 +1640,7 @@ export default {
             "cache-control":"no-store",
             "x-cas-export-id":exportId,
             "x-cas-artifact-sha256":sha256,
-            "x-cas-renderer":"pdfx4-embedded-truetype-2.1.0",
+            "x-cas-renderer":"pdfx4-embedded-truetype-2.2.0",
             "x-cas-font-sha256":fontAsset.sha256,
             "x-cas-icc-sha256":iccAsset.sha256,
             "x-cas-pdfx-profile":String(pdfxPolicy.profile||"")
