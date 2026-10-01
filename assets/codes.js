@@ -51,7 +51,7 @@
     const wideRatio=Number(options.wideRatio??2.5);
     const heightMm=Number(options.heightMm??32);
     const quietModules=Number(options.quietModules??10);
-    if(!(moduleMm>0)&&Number.isFinite(moduleMm)) throw new Error("ITF-14 module width must be positive.");
+    if(!Number.isFinite(moduleMm)||moduleMm<=0) throw new Error("ITF-14 module width must be positive.");
     const widthFor=(kind)=>kind==="w"?moduleMm*wideRatio:moduleMm;
     let x=quietModules*moduleMm;
     const bars=[];
