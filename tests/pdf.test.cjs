@@ -105,4 +105,26 @@ const baseRects=(text.match(/ re f/g)||[]).length;
 const itfRects=(itfBearerText.match(/ re f/g)||[]).length;
 assert.ok(itfRects>=baseRects+itfPhysical.bars.length+2,"ITF-14 Proof PDF should include vector bars plus top/bottom bearer bars");
 
+const physicalItf=C.itf14Bars("1001234500001",{moduleMm:1.016,heightMm:32,quietModules:10,wideRatio:2.5,bearerBars:true,bearerBarThicknessMm:2.032});
+const physicalItfHriFont=4;
+const physicalItfHriBlock=1.02+physicalItfHriFont*1.35;
+const physicalItfProof=P.createPdfBytes({
+  artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
+  customElements:[{
+    id:"itf-1to1",type:"barcode",symbology:"ITF14",
+    x:300,y:900,w:physicalItf.widthMm,h:physicalItf.heightMm+physicalItf.bearerBarThicknessMm*2+physicalItfHriBlock,
+    rotation:0,visible:true,humanReadable:true,payload:physicalItf.payload,barcodeModel:physicalItf
+  }]
+});
+const physicalItfText=Buffer.from(physicalItfProof).toString("latin1");
+const firstItfBar=physicalItf.bars[0];
+const expectedPhysicalBar=P.rectOp(
+  firstItfBar.x,
+  physicalItfHriBlock+physicalItf.bearerBarThicknessMm+firstItfBar.y,
+  firstItfBar.w,
+  firstItfBar.h,
+  true
+);
+assert.ok(physicalItfText.includes(expectedPhysicalBar),"Proof PDF must preserve true physical ITF bar width/height instead of fitting to an arbitrary box");
+
 console.log("PDF tests passed.");
