@@ -244,4 +244,39 @@ test("custom uploaded symbol is review-only in preflight", () => {
   assert.ok(assets.some(x=>x.id==="symbol-upload-sym-img"&&x.status==="warning"));
 });
 
+test("barcode physical settings round-trip and preflight", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[
+    {id:"itf-physical",type:"barcode",name:"Case GTIN",x:p.x+20,y:p.y+20,w:170,h:55,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+      symbology:"ITF14",humanReadable:true,payload:"10012345000017",moduleMm:1.016,barHeightMm:32,quietModules:10,wideRatio:2.5,bearerBars:true,bearerBarThicknessMm:2.032},
+    {id:"gs1-physical",type:"barcode",name:"SSCC",x:p.x+220,y:p.y+20,w:190,h:55,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+      symbology:"GS1_128",humanReadable:true,payload:"(00)123456789012345675",moduleMm:.495,barHeightMm:31.75,quietModules:10}
+  ]};
+  const snapshot=D.canonicalData(a);
+  assert.equal(snapshot.artwork.elements[0].moduleMm,1.016);
+  assert.equal(snapshot.artwork.elements[0].bearerBars,true);
+  assert.equal(snapshot.artwork.elements[1].barHeightMm,31.75);
+  const restored=D.artworkFromCanonical(snapshot);
+  assert.equal(restored.elements[0].wideRatio,2.5);
+  assert.equal(restored.elements[1].quietModules,10);
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="barcode-itf-height-itf-physical"&&x.status==="pass"));
+  assert.ok(assets.some(x=>x.id==="barcode-itf-bearer-itf-physical"&&x.status==="pass"));
+  assert.ok(assets.some(x=>x.id==="barcode-gs1128-x-gs1-physical"&&x.status==="pass"));
+});
+
+test("out-of-profile barcode physical dimensions block preflight", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[{
+    id:"bad-gs1",type:"barcode",name:"Bad GS1",x:p.x+20,y:p.y+20,w:180,h:50,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    symbology:"GS1_128",humanReadable:true,payload:"(00)123456789012345675",moduleMm:.4,barHeightMm:20,quietModules:8
+  }]};
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="barcode-gs1128-x-bad-gs1"&&x.status==="error"&&x.blocking));
+  assert.ok(assets.some(x=>x.id==="barcode-gs1128-height-bad-gs1"&&x.status==="error"&&x.blocking));
+  assert.ok(assets.some(x=>x.id==="barcode-gs1128-quiet-bad-gs1"&&x.status==="error"&&x.blocking));
+});
+
 console.log("Domain tests passed.");
