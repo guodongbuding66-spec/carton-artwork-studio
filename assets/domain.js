@@ -165,6 +165,8 @@
     { key:"product.sku", label:"SKU / Item No." },
     { key:"order.contractNo", label:"Contract / PO" },
     { key:"order.market", label:"Market" },
+    { key:"codes.barcode", label:"Primary Barcode Data" },
+    { key:"codes.qr", label:"Primary QR Data" },
     { key:"package.total", label:"Package Count" },
     { key:"package.index", label:"Current Package" },
     { key:"package.indexOfTotal", label:"Package X of Y" },
@@ -191,6 +193,8 @@
     if(k==="product.sku") return String(a.sku??"");
     if(k==="order.contractNo") return String(a.contractNo??"");
     if(k==="order.market") return String(a.market??"");
+    if(k==="codes.barcode") return String(a.barcode??"");
+    if(k==="codes.qr") return String(a.qr??"");
     if(k==="package.total") return formatNumber(a.packageCount);
     if(k==="package.index") return formatNumber(a.currentPackage);
     if(k==="package.indexOfTotal") return `${formatNumber(a.currentPackage)} / ${formatNumber(a.packageCount)}`;
@@ -208,6 +212,11 @@
   function resolvedElementText(element, artwork, factoryList = factories) {
     const binding=String(element?.bindingKey||"");
     return binding ? resolveArtworkBinding(binding,artwork,factoryList) : String(element?.text||"");
+  }
+
+  function resolvedElementPayload(element, artwork, factoryList = factories) {
+    const binding=String(element?.bindingKey||"");
+    return binding ? resolveArtworkBinding(binding,artwork,factoryList) : String(element?.payload||"");
   }
 
   function sideSealGeometry(artwork) {
@@ -477,8 +486,8 @@
         assetChecks.push(check(
           `barcode-data-${element.id||name}`,
           `${name} barcode data`,
-          String(element.payload||"").trim()?"pass":"error",
-          String(element.payload||"").trim()?`Payload: ${String(element.payload)}`:"Barcode payload is empty.",
+          resolvedElementPayload(element,a,factoryList).trim()?"pass":"error",
+          resolvedElementPayload(element,a,factoryList).trim()?`Payload: ${resolvedElementPayload(element,a,factoryList)}`:"Barcode payload is empty.",
           "Assets",
           true
         ));
@@ -500,8 +509,8 @@
         assetChecks.push(check(
           `qr-generated-${element.id||name}`,
           "Generated QR vector source",
-          String(element.payload||"").trim()?"pass":"error",
-          String(element.payload||"").trim()
+          resolvedElementPayload(element,a,factoryList).trim()?"pass":"error",
+          resolvedElementPayload(element,a,factoryList).trim()
             ? `ECC ${String(element.ecc||"M").toUpperCase()} · ${round(size)} mm · vector matrix with quiet zone.`
             : "Generated QR payload is empty.",
           "Assets",
@@ -665,6 +674,7 @@
     isKnownArtworkBinding,
     resolveArtworkBinding,
     resolvedElementText,
+    resolvedElementPayload,
     artworkFromCanonical,
     sideSealGeometry,
     calibrationMetrics,
