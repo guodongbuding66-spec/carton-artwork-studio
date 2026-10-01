@@ -1851,6 +1851,34 @@
     return panels.size<=1;
   }
 
+  function selectionMoveLimits(items){
+    let minDx=-Infinity,maxDx=Infinity,minDy=-Infinity,maxDy=Infinity;
+    for(const item of items){
+      const b=elementBounds(item),w=Math.max(1,Number(item.w||1)),h=Math.max(1,Number(item.h||1));
+      const x=Number(item.x||0),y=Number(item.y||0);
+      minDx=Math.max(minDx,b.x-x);
+      maxDx=Math.min(maxDx,b.x+b.w-w-x);
+      minDy=Math.max(minDy,b.y-y);
+      maxDy=Math.min(maxDy,b.y+b.h-h-y);
+    }
+    return {minDx,maxDx,minDy,maxDy};
+  }
+  function clampedSelectionDelta(items,dx,dy){
+    const lim=selectionMoveLimits(items);
+    return {
+      dx:Math.max(lim.minDx,Math.min(lim.maxDx,dx)),
+      dy:Math.max(lim.minDy,Math.min(lim.maxDy,dy))
+    };
+  }
+  function moveSelectionBy(items,dx,dy){
+    const delta=clampedSelectionDelta(items,dx,dy);
+    for(const item of items){
+      item.x=Number(item.x||0)+delta.dx;
+      item.y=Number(item.y||0)+delta.dy;
+    }
+    return delta;
+  }
+
   function alignSelectedElements(mode){
     const items=selectedArtworkElements().filter(e=>!e.locked);
     if(items.length<2||!localArtworkEditable()) return;
@@ -1949,13 +1977,12 @@
         event.preventDefault();
         if(!event.repeat) pushArtworkHistory();
         const step=event.altKey?0.1:(event.shiftKey?5:1);
-        for(const item of selection){
-          if(event.key==="ArrowLeft") item.x=Number(item.x||0)-step;
-          if(event.key==="ArrowRight") item.x=Number(item.x||0)+step;
-          if(event.key==="ArrowUp") item.y=Number(item.y||0)-step;
-          if(event.key==="ArrowDown") item.y=Number(item.y||0)+step;
-          clampElementToBounds(item);
-        }
+        let dx=0,dy=0;
+        if(event.key==="ArrowLeft") dx=-step;
+        if(event.key==="ArrowRight") dx=step;
+        if(event.key==="ArrowUp") dy=-step;
+        if(event.key==="ArrowDown") dy=step;
+        moveSelectionBy(selection,dx,dy);
         persistLocalDraft();render();
       }
     };
@@ -2069,8 +2096,17 @@
           render();
           return;
         }
-        selectOnlyElement(id);
-        if(element.locked||!localArtworkEditable()){render();return;}
+
+        const alreadySelected=isElementSelected(id);
+        if(!alreadySelected) selectOnlyElement(id);
+        const dragItems=selectedArtworkElements().filter(e=>!e.locked);
+        if(element.locked||!dragItems.length||!localArtworkEditable()){render();return;}
+        if(dragItems.length>1&&!sameSelectionPanel(dragItems)){
+          toast("整组拖动要求所选元素位于同一面板。","error");
+          render();
+          return;
+        }
+
         pushArtworkHistory();
         ev.preventDefault();
         const svg=group.ownerSVGElement;
@@ -2079,17 +2115,40 @@
           const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;
           return p.matrixTransform(svg.getScreenCTM().inverse());
         };
-        const start=point(ev),startX=Number(element.x||0),startY=Number(element.y||0);
+        const startPoint=point(ev);
+        const starts=new Map(dragItems.map(item=>[item.id,{x:Number(item.x||0),y:Number(item.y||0)}]));
+        const anchorStart=starts.get(element.id);
+        const dragIds=dragItems.map(item=>item.id);
+        const lim=selectionMoveLimits(dragItems);
+
         try{group.setPointerCapture(ev.pointerId);}catch{}
         group.onpointermove=(move)=>{
           if(move.pointerId!==ev.pointerId) return;
           const p=point(move);
-          const snapped=snapElementPosition(element,startX+(p.x-start.x),startY+(p.y-start.y));
-          element.x=snapped.x;element.y=snapped.y;
-          group.setAttribute("transform",elementTransform(element));
+          let dx=Math.max(lim.minDx,Math.min(lim.maxDx,p.x-startPoint.x));
+          let dy=Math.max(lim.minDy,Math.min(lim.maxDy,p.y-startPoint.y));
+
+          const snapped=smartSnapElementPosition(
+            element,
+            anchorStart.x+dx,
+            anchorStart.y+dy,
+            dragIds
+          );
+          dx=Math.max(lim.minDx,Math.min(lim.maxDx,snapped.x-anchorStart.x));
+          dy=Math.max(lim.minDy,Math.min(lim.maxDy,snapped.y-anchorStart.y));
+
+          for(const item of dragItems){
+            const initial=starts.get(item.id);
+            item.x=initial.x+dx;
+            item.y=initial.y+dy;
+            const node=svg.querySelector(`[data-art-element="${CSS.escape(item.id)}"]`);
+            if(node) node.setAttribute("transform",elementTransform(item));
+          }
+          updateSnapGuides(svg,snapped.guides);
         };
         const finish=()=>{
           group.onpointermove=null;group.onpointerup=null;group.onpointercancel=null;
+          updateSnapGuides(svg,[]);
           persistLocalDraft();render();
         };
         group.onpointerup=finish;group.onpointercancel=finish;
