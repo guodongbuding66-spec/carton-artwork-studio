@@ -142,6 +142,18 @@
               ? `${model.hri} · ${model.elements.length} GS1 AI element(s) · FNC1 applied · vector bars generated.`
               : `Encodable payload · ${model.bars.length} vector bars.`;
         }
+        const physical=barcodePhysicalSize(element,model);
+        const sizeOk=Math.abs(Number(element.w||0)-physical.w)<.05&&Math.abs(Number(element.h||0)-physical.h)<.05;
+        (groups.Assets||(groups.Assets=[])).push({
+          id:`barcode-physical-size-${element.id||element.name}`,
+          title:"Barcode 1:1 physical footprint",
+          status:sizeOk?"pass":"error",
+          detail:sizeOk
+            ? `${physical.w.toFixed(2)} × ${physical.h.toFixed(2)} mm · no fit-to-box scaling.`
+            : `Element box ${Number(element.w||0).toFixed(2)}×${Number(element.h||0).toFixed(2)} mm differs from required ${physical.w.toFixed(2)}×${physical.h.toFixed(2)} mm.`,
+          category:"Assets",
+          blocking:!sizeOk
+        });
       }catch(err){
         if(!item){
           item={id:`barcode-data-${element.id}`,title:"Barcode encoding",category:"Assets"};
@@ -771,6 +783,7 @@
   function renderCustomElements(artwork=state.artwork,mode="editor",factoryList=state.factories){
     const elements=Array.isArray(artwork.elements)?artwork.elements:[];
     return elements.filter((e)=>e.visible!==false).map((e)=>{
+      if(e.type==="barcode") syncBarcodeElementSize(e);
       const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
       const selected=mode==="editor"&&isElementSelected(e.id);
       const border=selected?`<rect data-element-selection x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
@@ -2949,15 +2962,9 @@
         try{
           const sym=String(e.symbology||"").toUpperCase();
           ensureBarcodePhysicalSettings(e);
-          const model=sym==="ITF14"
-            ? C.itf14Bars(payload,{
-                moduleMm:Number(e.moduleMm),heightMm:Number(e.barHeightMm),quietModules:Number(e.quietModules),
-                wideRatio:Number(e.wideRatio),bearerBars:e.bearerBars!==false,bearerBarThicknessMm:Number(e.bearerBarThicknessMm)
-              })
-            : sym==="GS1_128"
-              ? C.gs1_128Bars(payload,{moduleMm:Number(e.moduleMm),heightMm:Number(e.barHeightMm),quietModules:Number(e.quietModules)})
-              : C.code128Bars(payload,{moduleMm:Number(e.moduleMm),heightMm:Number(e.barHeightMm),quietModules:Number(e.quietModules)});
-          return {...e,payload,barcodeModel:model};
+          const model=barcodeModelForElement(e,artwork,state.factories);
+          const size=barcodePhysicalSize(e,model);
+          return {...e,w:size.w,h:size.h,payload,barcodeModel:model};
         }catch{return {...e,payload,barcodeModel:null};}
       }
       return {...e};
