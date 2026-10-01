@@ -69,7 +69,7 @@ const gs1Proof=P.createPdfBytes({
   ]
 });
 const gs1Text=Buffer.from(gs1Proof).toString("latin1");
-assert.ok(gs1Text.includes("((00)123456789012345675) Tj"),"GS1-128 HRI should retain AI parentheses");
+assert.ok(gs1Text.includes("(\\(00\\)123456789012345675) Tj"),"GS1-128 HRI should retain AI parentheses with PDF string escaping");
 assert.ok((gs1Text.match(/ re f/g)||[]).length>(text.match(/ re f/g)||[]).length,"GS1-128 should add vector bar rectangles");
 
 console.log("PDF tests passed.");
