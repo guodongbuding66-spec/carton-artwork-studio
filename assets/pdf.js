@@ -320,7 +320,7 @@
       if(element.visible===false) continue;
       const m=elementRotationMatrix(element,geometry);
       if(element.type==="text") {
-        const fontSizePt=Math.max(5,Number(element.fontSizePt||12));
+        const fontSizePt=Math.max(1,Number(element.fontSizePt||12));
         const fontSizeMm=fontSizePt*25.4/72;
         const lines=Array.isArray(element.renderLines)&&element.renderLines.length
           ? element.renderLines.map(x=>String(x??""))
