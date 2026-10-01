@@ -106,3 +106,14 @@ console.log("Local workspace usability regression tests passed.");
   assert.match(deployWorkflow,/Post-deploy staging smoke test/);
   assert.match(deployWorkflow,/Upload staging acceptance evidence/);
 }
+
+
+{
+  const fs = await import("node:fs");
+  const deployWorkflow=fs.readFileSync(".github/workflows/deploy-staging.yml","utf8");
+  assert.match(deployWorkflow,/Check staging fallback configuration/);
+  assert.match(deployWorkflow,/CLOUDFLARE_API_TOKEN/);
+  assert.match(deployWorkflow,/steps\.fallback-config\.outputs\.configured == 'true'/);
+  assert.match(deployWorkflow,/FALLBACK_NOT_CONFIGURED/);
+  assert.match(deployWorkflow,/if: always\(\)/);
+}
