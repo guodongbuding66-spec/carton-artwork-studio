@@ -57,6 +57,11 @@ export function permissionForRequest(method, pathname) {
   if (p === "/api/factories" && m === "POST") return "ADMIN";
   if (/^\/api\/factories\/[^/]+$/.test(p) && m === "PATCH") return "ADMIN";
   if (p === "/api/audit") return "AUDIT_READ";
+  if (p === "/api/pdfx/promotion/readiness" || p === "/api/pdfx/promotion/evidence") return "AUDIT_READ";
+  if (/^\/api\/pdfx\/promotion\/evidence\/[^/]+\/file$/.test(p) && m === "GET") return "AUDIT_READ";
+  if (p === "/api/pdfx/promotion/evidence/upload") return "PRODUCTION_POLICY_WRITE";
+  if (/^\/api\/pdfx\/promotion\/evidence\/[^/]+\/submit$/.test(p)) return "PRODUCTION_POLICY_WRITE";
+  if (/^\/api\/pdfx\/promotion\/evidence\/[^/]+\/approval$/.test(p)) return "PRODUCTION_POLICY_APPROVE";
 
   if (p === "/api/reference-records" && m === "POST") return "REFERENCE_WRITE";
   if (/^\/api\/reference-records\/[^/]+$/.test(p) && m === "PATCH") return "REFERENCE_WRITE";
