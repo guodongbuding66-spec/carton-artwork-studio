@@ -20,6 +20,13 @@ export function renderEmbeddedArtworkPdf({
   mode="production"
 }) {
   const s=snapshot||{};
+  const visibleCustomElements=(Array.isArray(s.artwork?.elements)?s.artwork.elements:[]).filter((e)=>e?.visible!==false);
+  if(visibleCustomElements.length){
+    const error=new Error("PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED");
+    error.code="PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED";
+    error.detail=visibleCustomElements.map((e)=>({id:e.id||"",type:e.type||"",name:e.name||""}));
+    throw error;
+  }
   const artwork=D.artworkFromCanonical(s,{
     sku:metadata.sku,
     contractNo:metadata.contractNo,
