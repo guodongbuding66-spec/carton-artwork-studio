@@ -2,13 +2,26 @@ import "../assets/vendor/qrcode-generator.js";
 import "../assets/domain.js";
 import "../assets/codes.js";
 import "../assets/pdf.js";
-import { parseControlledSvgDataUrl } from "./controlled-svg.js";
+import { CONTROLLED_SVG_PROFILE, parseControlledSvgDataUrl } from "./controlled-svg.js";
 
 const D=globalThis.CartonDomain;
 const C=globalThis.CartonCodes;
 const P=globalThis.CartonPdf;
 
 if(!D||!C||!P) throw new Error("PRODUCTION_RENDERER_MODULE_LOAD_FAILED");
+
+export const PRODUCTION_RENDERER_VERSION="pdfx4-embedded-truetype-2.2.0";
+
+export function productionCapabilityDescriptor(){
+  const shipping=D.controlledBlockDefinition?.("SHIPPING_MARK_STANDARD")||null;
+  return Object.freeze({
+    rendererVersion:PRODUCTION_RENDERER_VERSION,
+    controlledSvgProfile:CONTROLLED_SVG_PROFILE,
+    shippingMarkStandardVersion:String(shipping?.currentVersion||shipping?.version||""),
+    domainTemplateCode:String(D.defaultArtwork?.templateCode||""),
+    domainTemplateVersion:String(D.defaultArtwork?.templateVersion||"")
+  });
+}
 
 function productionBarcodeModel(element,artwork,factories){
   const payload=D.resolvedElementPayload(element,artwork,factories);
@@ -196,7 +209,7 @@ export function qualifyProductionArtwork({snapshot,metadata={}}){
     ok:unqualified.length===0&&preflightSummary.blocking===0,
     report:{
       ok:unqualified.length===0&&preflightSummary.blocking===0,
-      rendererVersion:"pdfx4-embedded-truetype-2.2.0",
+      rendererVersion:PRODUCTION_RENDERER_VERSION,
       revision:String(productionArtwork.revision||""),
       customElements:{
         visible:visible.length,
