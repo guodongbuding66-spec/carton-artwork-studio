@@ -51,7 +51,12 @@ Use a narrowly scoped Cloudflare API token. Do not commit it.
 
 ## 3. Deploy staging
 
-Primary staging deployment now uses Cloudflare Workers Builds connected directly to GitHub. The GitHub Actions workflow `.github/workflows/deploy-staging.yml` is retained as a manual fallback only.
+Staging now has two independent deployment paths:
+
+1. Cloudflare Workers Builds connected directly to GitHub.
+2. GitHub Actions `.github/workflows/deploy-staging.yml`, triggered automatically whenever the reviewed `staging` branch advances and still available through `workflow_dispatch`.
+
+This removes Cloudflare Workers Builds as a single point of deployment failure.
 
 1. runs `npm run check`;
 2. generates a staging Wrangler config;
@@ -61,7 +66,7 @@ Primary staging deployment now uses Cloudflare Workers Builds connected directly
 6. runs an Access-authenticated post-deploy smoke test for service identity, version, D1, R2, Assets, auth-bypass state, and trusted-validator configuration;
 7. uploads `staging-acceptance.json` as a GitHub Actions artifact.
 
-Advance `staging` only to a reviewed commit already merged into `main`. Configure Cloudflare Workers Builds to watch the `staging` branch and use deploy command `npm run deploy:staging`. This command runs repository checks, applies remote D1 migrations, deploys the Worker with D1 + KV bindings, and executes the staging smoke test.
+Advance `staging` only to a reviewed commit already merged into `main`. Both deployment paths watch the same reviewed `staging` ref. Configure Cloudflare Workers Builds to watch the `staging` branch and use deploy command `npm run deploy:staging`. This command runs repository checks, applies remote D1 migrations, deploys the Worker with D1 + KV bindings, and executes the staging smoke test.
 
 ## 4. Configure Cloudflare Access
 
