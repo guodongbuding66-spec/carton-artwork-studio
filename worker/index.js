@@ -2228,11 +2228,14 @@ export default {
         `).bind(id).first();
         if(!job)return err(404,"NOT_FOUND","Import job not found.");
         const {results:rows}=await env.DB.prepare(`
-          SELECT id,row_no AS rowNo,sku,status,canonical_data_json AS canonicalDataJson,
-                 issues_json AS issuesJson,artwork_id AS artworkId,
-                 draft_created_by AS draftCreatedBy,draft_created_at AS draftCreatedAt,
-                 created_at AS createdAt
-          FROM import_rows WHERE job_id=? ORDER BY row_no LIMIT 1000
+          SELECT r.id,r.row_no AS rowNo,r.sku,r.status,r.canonical_data_json AS canonicalDataJson,
+                 r.issues_json AS issuesJson,r.artwork_id AS artworkId,
+                 r.draft_created_by AS draftCreatedBy,r.draft_created_at AS draftCreatedAt,
+                 r.created_at AS createdAt,a.artwork_no AS artworkNo
+          FROM import_rows r
+          LEFT JOIN artworks a ON a.id=r.artwork_id
+          WHERE r.job_id=?
+          ORDER BY r.row_no LIMIT 1000
         `).bind(id).all();
         return json({data:{job,rows}});
       }
