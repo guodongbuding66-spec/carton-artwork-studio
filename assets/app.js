@@ -2846,6 +2846,9 @@
     if(action==="download-errors"){downloadText("failed_rows.csv",B.failedRowsCsv(state.batchReview),"text/csv;charset=utf-8");}
     if(action==="batch-generate") return exportBatchProofs();
     if(action==="batch-create-drafts") return createBatchDrafts();
+    if(action==="batch-server-preflight") return processBatchDrafts({submitPassed:false,retryFailed:false});
+    if(action==="batch-preflight-submit") return processBatchDrafts({submitPassed:true,retryFailed:false});
+    if(action==="batch-retry-failed") return processBatchDrafts({submitPassed:false,retryFailed:true});
     if(action==="refresh-batch-jobs") return loadBatchJobs();
     if(action==="save-mapping") return saveMappingProfile();
     if(action==="close-dialog"){state.dialog=null;state.impact=null;render();}
@@ -4080,7 +4083,7 @@
     }
   }
 
-  async function resumeImportJob(jobId){
+  async function resumeImportJob(jobId,{preserveProcessResult=false,silent=false}={}){
     if(!jobId||!state.apiOnline||!state.identity) return;
     state.batchJobLoading=true;render();
     try{
@@ -4093,6 +4096,7 @@
       state.batchIssues=[];
       state.batchMapping=null;
       state.batchDraftResult=null;
+      if(!preserveProcessResult) state.batchProcessResult=null;
       state.batchReview=rows.map((row)=>{
         let snapshot={},issues=[];
         try{snapshot=JSON.parse(row.canonicalDataJson||"{}");}catch{}
@@ -4118,13 +4122,21 @@
           warnings,
           controlledPreset:block?{type:block.blockType,version:block.blockVersion,panelId:block.panelId,groupId:block.groupId}:null,
           draftArtworkId:row.artworkId||null,
-          draftArtworkNo:row.artworkNo||""
+          draftArtworkNo:row.artworkNo||"",
+          serverPreflightStatus:row.batchPreflightStatus||"",
+          serverPreflightRunId:row.batchPreflightRunId||"",
+          serverPreflightAt:row.batchPreflightAt||"",
+          batchSubmitStatus:row.batchSubmitStatus||"",
+          batchSubmittedAt:row.batchSubmittedAt||"",
+          batchProcessError:row.batchProcessError||"",
+          artworkStatus:row.artworkStatus||"",
+          artworkRevision:row.artworkRevision||""
         };
       });
       state.batchRows=state.batchReview.slice(0,100);
       state.batchStep=3;
       render();
-      toast(`已恢复 Import Job：${state.batchReview.length} 行`,"success");
+      if(!silent) toast(`已恢复 Import Job：${state.batchReview.length} 行`,"success");
     }catch(e){
       toast(e.message||String(e),"error");
     }finally{
@@ -4152,7 +4164,15 @@
         return linked?{
           ...row,
           draftArtworkId:linked.artworkId,
-          draftArtworkNo:linked.artworkNo||row.draftArtworkNo||""
+          draftArtworkNo:linked.artworkNo||row.draftArtworkNo||"",
+          artworkStatus:"DRAFT",
+          artworkRevision:linked.revision||row.artworkRevision||"R01",
+          serverPreflightStatus:"",
+          serverPreflightRunId:"",
+          serverPreflightAt:"",
+          batchSubmitStatus:"",
+          batchSubmittedAt:"",
+          batchProcessError:""
         }:row;
       });
       state.batchRows=state.batchReview.slice(0,100);
@@ -4166,6 +4186,39 @@
       toast(e.message||String(e),"error");
     }finally{
       state.batchDraftBusy=false;render();
+    }
+  }
+
+  async function processBatchDrafts({submitPassed=false,retryFailed=false}={}){
+    if(!state.remoteImportJobId||!cloudBatchWritable()||!cloudArtworkWritable()){
+      toast("Server Batch Processing 需要 Import Job、Batch Write 和 Artwork Write 权限。","error");
+      return;
+    }
+    if(state.batchProcessBusy) return;
+    state.batchProcessBusy=true;render();
+    const jobId=state.remoteImportJobId;
+    try{
+      const response=await api.processImportDrafts(jobId,{
+        submitPassed,
+        retryFailed,
+        limit:100,
+        reason:submitPassed
+          ?"Authoritative batch preflight passed; submit Drafts for reviewer."
+          :"Authoritative server batch preflight."
+      });
+      const result=response.data||{};
+      state.batchProcessResult=result;
+      await resumeImportJob(jobId,{preserveProcessResult:true,silent:true});
+      await loadBatchJobs(false);
+      const failed=result.failed?.length||0,skipped=result.skipped?.length||0;
+      toast(
+        `${result.mode||"Batch"}: ${result.passed?.length||0} pass · ${failed} fail · ${result.submitted?.length||0} submitted · ${skipped} skipped`,
+        failed||skipped?"error":"success"
+      );
+    }catch(e){
+      toast(e.message||String(e),"error");
+    }finally{
+      state.batchProcessBusy=false;render();
     }
   }
 
