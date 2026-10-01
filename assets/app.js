@@ -567,23 +567,46 @@
   }
 
   function shell(body, titleZh, titleEn) {
+    const cloudReady=state.apiOnline&&state.identity;
+    const envTone=cloudReady?"online":state.apiChecked?"local":"connecting";
     return `
       <div class="app">
         <aside class="sidebar">
-          <div class="brand"><div class="brand-mark">CAS</div><div class="brand-copy"><div class="brand-title">CARTON ARTWORK</div><div class="brand-sub">Studio · 包装印刷稿系统</div></div></div>
+          <div class="brand">
+            <div class="brand-mark"><span>CA</span></div>
+            <div class="brand-copy">
+              <div class="brand-title">Carton Artwork</div>
+              <div class="brand-sub">Production Studio</div>
+            </div>
+          </div>
+          <div class="nav-label">Workspace</div>
           <nav class="nav">
-            ${navItems.map(([id,ic,zh,en]) => `<button class="nav-btn ${state.page===id?"active":""}" data-page="${id}"><span class="nav-icon">${ic}</span><span>${zh}</span><span>${en}</span></button>`).join("")}
+            ${navItems.map(([id,ic,zh,en]) => `<button class="nav-btn ${state.page===id?"active":""}" data-page="${id}">
+              <span class="nav-icon">${ic}</span>
+              <span class="nav-copy"><strong>${zh}</strong><small>${en}</small></span>
+            </button>`).join("")}
           </nav>
-          <div class="sidebar-foot">Environment<br><strong>STAGING · Cloudflare Workers</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline&&state.identity?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline&&state.identity?"Cloud Connected":state.apiChecked?"Local Editing · Cloud Login Required":"Connecting…"}</span><div class="subtle" style="margin-top:6px;word-break:break-word">${esc(identityLabel())}</div></div>
+          <div class="sidebar-foot">
+            <div class="sidebar-status-row"><span class="status-dot ${envTone}"></span><strong>${cloudReady?"Cloud connected":state.apiChecked?"Local workspace":"Connecting"}</strong></div>
+            <div class="sidebar-env">STAGING · Geometry mm</div>
+            <div class="sidebar-identity">${esc(identityLabel())}</div>
+          </div>
         </aside>
         <section class="main">
           <header class="topbar">
-            <div class="breadcrumb">Carton Artwork Studio /</div><div class="page-title">${esc(titleZh)}</div><div class="breadcrumb">${esc(titleEn)}</div>
+            <div class="topbar-title">
+              <span class="topbar-kicker">Carton Artwork Studio</span>
+              <div><strong>${esc(titleZh)}</strong><span>${esc(titleEn)}</span></div>
+            </div>
             <div class="spacer"></div>
             <label class="search"><input id="global-search" placeholder="搜索 SKU / Contract / Artwork…" /></label>
-            <span class="dev">STAGING</span><span class="subtle mono">${state.identity?esc(state.identity.email):"Local workspace"}</span><button class="icon-btn" title="Notifications">◔</button><div class="avatar">${state.identity?esc((state.identity.displayName||state.identity.email).slice(0,2).toUpperCase()):"—"}</div>
+            <div class="topbar-env"><span class="status-dot ${envTone}"></span><span>STAGING</span></div>
+            <div class="topbar-user">
+              <div class="avatar">${state.identity?esc((state.identity.displayName||state.identity.email).slice(0,2).toUpperCase()):"—"}</div>
+              <div class="topbar-user-copy"><strong>${state.identity?esc(state.identity.displayName||state.identity.email.split("@")[0]):"Local"}</strong><span>${state.identity?esc(state.identity.email):"Local workspace"}</span></div>
+            </div>
           </header>
-          <main class="content">${body}</main>
+          <main class="content page-${esc(state.page)}"><div class="page-enter">${body}</div></main>
         </section>
       </div>`;
   }
@@ -607,35 +630,79 @@
     const rows=state.remoteArtworks||[];
     const count=(status)=>rows.filter(x=>String(x.status||"").toUpperCase()===status).length;
     const cards=[
-      ["Draft",count("DRAFT"),"待完善"],
-      ["Pending Review",count("IN_REVIEW"),"等待审核"],
-      ["Rejected",count("REJECTED"),"需要修订"],
-      ["Approved",count("APPROVED"),"可生产"]
+      ["Draft",count("DRAFT"),"待完善","draft"],
+      ["Pending Review",count("IN_REVIEW"),"等待审核","review"],
+      ["Rejected",count("REJECTED"),"需要修订","rejected"],
+      ["Approved",count("APPROVED"),"可生产","approved"]
     ];
     const recent=rows.slice(0,8).map(x=>[
-      x.artworkNo||"—",
-      x.sku||"—",
-      x.contractNo||"—",
-      x.currentRevision||"—",
+      `<strong>${esc(x.artworkNo||"—")}</strong>`,
+      `<span class="mono">${esc(x.sku||"—")}</span>`,
+      esc(x.contractNo||"—"),
+      `<span class="badge gray">${esc(x.currentRevision||"—")}</span>`,
       `<span class="badge ${String(x.status).toUpperCase()==="APPROVED"?"green":String(x.status).toUpperCase()==="IN_REVIEW"?"blue":String(x.status).toUpperCase()==="REJECTED"?"red":"amber"}">${esc(x.status||"—")}</span>`,
-      `<button class="btn small" data-open-artwork="${esc(x.id)}">Open</button>`
+      `<button class="btn small" data-open-artwork="${esc(x.id)}">Open →</button>`
     ]);
     const s=summary();
     const tpl=state.templates[0];
+    const total=rows.length;
+    const completion=total?Math.round((count("APPROVED")/total)*100):0;
     return `
-      ${state.apiOnline&&state.identity?"":'<div class="notice warn" style="margin-bottom:12px">当前未连接 Cloudflare Access/D1，工作台不会显示伪造业务数据。</div>'}
-      <div class="kpis">${cards.map(c=>`<div class="kpi"><div class="kpi-label">${c[0]}</div><div class="kpi-value">${c[1]}</div><div class="kpi-foot">${c[2]}</div></div>`).join("")}</div>
-      <div class="grid2">
-        <section class="card"><div class="card-head"><h3>Recent Artwork</h3><span class="subtle">D1 实时数据</span><span class="spacer"></span><button class="btn small" data-action="refresh-dashboard">Refresh</button></div>${recent.length?table(["Artwork","SKU","Contract","Rev","Status",""],recent,true):'<div class="card-body"><div class="notice">当前没有远程 Artwork 数据。</div></div>'}</section>
-        <div>
-          <section class="card"><div class="card-head"><h3>Current Preflight</h3><span class="subtle">当前工作稿</span></div><div class="card-body">
-            <div class="kpis" style="grid-template-columns:repeat(3,1fr);margin:0"><div class="kpi"><div class="kpi-label">Errors</div><div class="kpi-value" style="color:#bc2f3b">${s.error}</div></div><div class="kpi"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:#a86b00">${s.warning}</div></div><div class="kpi"><div class="kpi-label">Passed</div><div class="kpi-value" style="color:#16835d">${s.pass}</div></div></div>
-          </div></section>
-          <section class="card"><div class="card-head"><h3>Template Status</h3></div><div class="card-body"><strong>${esc(tpl?.displayName||state.artwork.templateName)}</strong><div class="subtle" style="margin-top:4px">${esc(tpl?.version||state.artwork.templateVersion)} · ${esc(tpl?.status||"Local")} · ${esc(tpl?.preflightProfile||"US_SIDE_SEAL_K_ONLY_V1")}</div></div></section>
+      ${state.apiOnline&&state.identity?"":'<div class="notice warn dashboard-connect-note">当前未连接 Cloudflare Access / D1，工作台不会显示伪造业务数据。</div>'}
+      <section class="page-hero dashboard-hero">
+        <div class="page-hero-copy">
+          <div class="page-eyebrow">Production overview</div>
+          <h1>包装印刷稿工作台</h1>
+          <p>查看待处理稿件、审核状态与当前工作稿的印前质量。</p>
         </div>
+        <div class="dashboard-hero-status">
+          <div><span>Approved ratio</span><strong>${completion}%</strong></div>
+          <div class="dashboard-hero-progress"><i style="width:${completion}%"></i></div>
+          <small>${count("APPROVED")} approved / ${total} artworks</small>
+        </div>
+      </section>
+
+      <div class="dashboard-kpis">
+        ${cards.map(c=>`<div class="dashboard-kpi is-${c[3]}">
+          <div class="dashboard-kpi-top"><span>${c[0]}</span><i></i></div>
+          <strong>${c[1]}</strong>
+          <small>${c[2]}</small>
+        </div>`).join("")}
+      </div>
+
+      <div class="dashboard-grid">
+        <section class="card dashboard-recent">
+          <div class="card-head card-head-roomy">
+            <div><div class="page-eyebrow">Live D1</div><h3>Recent Artwork</h3></div>
+            <span class="spacer"></span>
+            <button class="btn small" data-action="refresh-dashboard">Refresh</button>
+          </div>
+          ${recent.length?table(["Artwork","SKU","Contract","Rev","Status",""],recent,true):'<div class="card-body"><div class="empty-state"><strong>No remote artwork</strong><span>当前没有可显示的远程 Artwork 数据。</span></div></div>'}
+        </section>
+
+        <aside class="dashboard-side">
+          <section class="card dashboard-preflight">
+            <div class="card-head card-head-roomy"><div><div class="page-eyebrow">Current draft</div><h3>Preflight health</h3></div></div>
+            <div class="card-body">
+              <div class="quality-stat-grid">
+                <div class="quality-stat is-error"><span>Errors</span><strong>${s.error}</strong></div>
+                <div class="quality-stat is-warning"><span>Warnings</span><strong>${s.warning}</strong></div>
+                <div class="quality-stat is-pass"><span>Passed</span><strong>${s.pass}</strong></div>
+              </div>
+              <div class="dashboard-health-note ${s.blocking?"is-blocked":"is-clear"}"><i></i><span>${s.blocking?`${s.blocking} blocking checks require attention`:"No blocking checks in current draft"}</span></div>
+            </div>
+          </section>
+          <section class="card dashboard-template">
+            <div class="card-head card-head-roomy"><div><div class="page-eyebrow">Controlled source</div><h3>Template Status</h3></div></div>
+            <div class="card-body">
+              <div class="template-status-main"><strong>${esc(tpl?.displayName||state.artwork.templateName)}</strong><span class="badge ${String(tpl?.status||"").toUpperCase()==="APPROVED"?"green":"gray"}">${esc(tpl?.status||"Local")}</span></div>
+              <div class="template-status-meta"><span>Version</span><strong class="mono">${esc(tpl?.version||state.artwork.templateVersion)}</strong></div>
+              <div class="template-status-meta"><span>Preflight</span><strong class="mono">${esc(tpl?.preflightProfile||"US_SIDE_SEAL_K_ONLY_V1")}</strong></div>
+            </div>
+          </section>
+        </aside>
       </div>`;
   }
-
 
   function health(name,v){ return `<div style="margin:9px 0"><div style="display:flex;justify-content:space-between"><span>${name}</span><span class="mono">${v}%</span></div><div style="height:5px;background:#edf1f4;border-radius:5px;margin-top:5px"><i style="display:block;width:${v}%;height:100%;background:#16835d;border-radius:5px"></i></div></div>`; }
 
@@ -643,25 +710,42 @@
     const s = summary();
     const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && state.apiBindings.r2 && Boolean(state.remoteArtworkId) && Boolean(state.productionReadiness?.ready);
     const cloudWrite=cloudArtworkWritable();
+    const statusClass=state.artwork.status==="approved"?"green":state.artwork.status==="in_review"?"blue":state.artwork.status==="rejected"?"red":"amber";
     return `
-      ${!cloudWrite?`<div class="notice warn" style="margin-bottom:12px"><strong>本地编辑模式</strong>：现在可以正常编辑、运行检查、导入文件和导出审核稿；“同步云端 / 提交审核 / 审批 / 正式生产”需要 Cloudflare Access 身份。</div>`:""}
-      <div class="artwork-header">
-        <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
-        <div class="spacer"></div>
-        <span class="badge ${state.artwork.status==="approved"?"green":state.artwork.status==="in_review"?"blue":state.artwork.status==="rejected"?"red":"amber"}">${esc(state.artwork.status.replace("_"," ").toUpperCase())}</span>
-        <button class="btn" data-action="new-local">新建本地稿</button>
-        <button class="btn" data-action="save" ${state.apiBusy||!localArtworkEditable()?"disabled":""}>${cloudWrite?"保存草稿":"保存本地草稿"}</button>
-        <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
-        <button class="btn primary" data-action="submit" title="${cloudWrite?"":"需要 Cloudflare Access + Artwork Write 权限"}" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy||!cloudWrite?"disabled":""}>${cloudWrite?"提交审核":"提交审核（需登录）"}</button>
-        ${state.artwork.status==="in_review"&&permitted("review")?`<button class="btn success" data-action="approve" ${!blockingCommentsResolved()||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
-        ${state.artwork.status==="approved"&&permitted("artworkWrite")?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
-        <button class="btn" data-action="proof">导出审核稿</button>
-        <button class="btn success" data-action="production" ${prod?"":"disabled"}>下载生产稿</button>
-      </div>
-      <div class="workspace">
-        <aside class="left-panel">${renderForm()}</aside>
+      ${!cloudWrite?`<div class="notice warn artwork-mode-note"><strong>本地编辑模式</strong><span>可正常编辑、运行检查、导入与导出审核稿；同步、提交审核与正式生产需要 Cloudflare Access。</span></div>`:""}
+      <section class="artwork-commandbar">
+        <div class="artwork-command-main">
+          <div class="artwork-command-title">
+            <div class="page-eyebrow">Controlled artwork</div>
+            <div class="artwork-title-row"><h1>美线侧封箱</h1><span class="badge blue">US_SIDE_SEAL</span><span class="badge ${statusClass}">${esc(state.artwork.status.replace("_"," ").toUpperCase())}</span></div>
+            <div class="artwork-command-meta"><span>Template 2026.05.20</span><i></i><span>Revision <strong>${esc(state.artwork.revision)}</strong></span><i></i><span>SKU <strong class="mono">${esc(state.artwork.sku)}</strong></span></div>
+          </div>
+          <div class="artwork-command-actions">
+            <button class="btn" data-action="new-local">新建本地稿</button>
+            <button class="btn" data-action="save" ${state.apiBusy||!localArtworkEditable()?"disabled":""}>${cloudWrite?"保存草稿":"保存本地草稿"}</button>
+            <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
+            <button class="btn primary" data-action="submit" title="${cloudWrite?"":"需要 Cloudflare Access + Artwork Write 权限"}" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy||!cloudWrite?"disabled":""}>${cloudWrite?"提交审核":"提交审核（需登录）"}</button>
+            ${state.artwork.status==="in_review"&&permitted("review")?`<button class="btn success" data-action="approve" ${!blockingCommentsResolved()||state.apiBusy?"disabled":""}>Reviewer Approve</button><button class="btn danger" data-action="reject" ${state.apiBusy?"disabled":""}>Reject</button>`:""}
+            ${state.artwork.status==="approved"&&permitted("artworkWrite")?`<button class="btn" data-action="new-revision" ${state.apiBusy?"disabled":""}>创建新 Revision</button>`:""}
+          </div>
+        </div>
+        <div class="artwork-command-bottom">
+          <div class="artwork-health">
+            <span class="${s.error?"is-error":""}"><b>${s.error}</b> errors</span>
+            <span class="${s.warning?"is-warning":""}"><b>${s.warning}</b> warnings</span>
+            <span class="is-pass"><b>${s.pass}</b> passed</span>
+          </div>
+          <div class="spacer"></div>
+          <div class="artwork-export-actions">
+            <button class="btn" data-action="proof">导出审核稿</button>
+            <button class="btn success" data-action="production" ${prod?"":"disabled"}>下载生产稿</button>
+          </div>
+        </div>
+      </section>
+      <div class="workspace artwork-workspace">
+        <aside class="left-panel"><div class="panel-head"><span>Artwork data</span><small>编辑字段与元素</small></div>${renderForm()}</aside>
         <section class="center-panel">${renderTabs()}${renderTools()}${renderCenter()}</section>
-        <aside class="right-panel">${renderPreflight()}</aside>
+        <aside class="right-panel"><div class="panel-head"><span>Preflight</span><small>实时印前门禁</small></div>${renderPreflight()}</aside>
       </div>`;
   }
 
@@ -1202,41 +1286,120 @@
     const linkedDrafts=state.batchReview.filter(r=>r.status==="PASS"&&r.draftArtworkId).length;
     const failedServerPf=state.batchReview.filter(r=>r.serverPreflightStatus==="ERROR").length;
     const reviewReady=state.batchReview.filter(r=>["IN_REVIEW","APPROVED"].includes(String(r.artworkStatus||"").toUpperCase())).length;
+    const activeStep=Math.min(steps.length-1,Math.max(0,Number(state.batchStep||0)));
+    const completion=steps.length>1?Math.round((activeStep/(steps.length-1))*100):0;
+
+    const statCards=state.batchSource?[
+      ["Total",stats.total,"neutral"],
+      ["Local pass",stats.passed,"pass"],
+      ["Failed",stats.failed,"error"],
+      ["Drafts",linkedDrafts,"neutral"],
+      ["Review ready",reviewReady,"pass"],
+      ["Mapping",mapping.length,"neutral"]
+    ]:[];
+
     return `
-      <div class="stepper">${steps.map((x,i)=>`<div class="step ${i<state.batchStep?"done":i===state.batchStep?"active":""}">${i+1}. ${x}</div>`).join("")}</div>
-      <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><span class="badge blue">US Packing List Default</span><span class="badge green">Shipping Mark 1.1 · TOP_FACE</span></div><div class="card-body">
-        ${!cloudBatchWritable()?'<div class="notice warn" style="margin-bottom:10px"><strong>本地批量模式</strong>：文件解析、Dry Run、错误下载和 Proof ZIP 生成均可直接使用；只有保存 Mapping / Import Job 到 D1 需要登录权限。</div>':""}
-        <label class="dropzone" id="batch-dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors · Controlled Shipping Mark per row</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
-        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&cloudBatchWritable()?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button><button class="btn primary" data-action="batch-create-drafts" ${pendingDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchDraftBusy?"":"disabled"}>${state.batchDraftBusy?"Creating Drafts…":`Create Remaining Drafts (${pendingDrafts})`}</button></div>
-        <div class="toolbar" style="margin-top:8px">
-          <button class="btn" data-action="batch-server-preflight" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>${state.batchProcessBusy?"Processing…":"Server Preflight"}</button>
-          <button class="btn success" data-action="batch-preflight-submit" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Preflight + Submit Passed</button>
-          <button class="btn" data-action="batch-retry-failed" ${failedServerPf&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Retry Failed (${failedServerPf})</button>
-          <span class="subtle">每次最多处理 100 个 Draft；服务端直接读取 D1 Canonical Snapshot，不信任浏览器 PASS。</span>
+      <section class="page-hero batch-hero">
+        <div class="page-hero-copy">
+          <div class="page-eyebrow">Controlled batch workflow</div>
+          <h1>Packing List → Artwork</h1>
+          <p>从 Excel / CSV 解析、映射、校验到 Draft、权威 Preflight 和提交审核，每一步保留可追溯状态。</p>
         </div>
-        ${state.batchDraftResult?`<div class="notice ${state.batchDraftResult.failed?.length?"warn":"success"}" style="margin-top:10px"><strong>Batch Draft Promotion</strong><br>Created ${state.batchDraftResult.created?.length||0} · Skipped ${state.batchDraftResult.skipped?.length||0} · Failed ${state.batchDraftResult.failed?.length||0} · Linked ${state.batchDraftResult.counts?.linked||0}/${state.batchDraftResult.counts?.passed||0}</div>`:""}
-        ${state.batchProcessResult?`<div class="notice ${state.batchProcessResult.failed?.length||state.batchProcessResult.skipped?.length?"warn":"success"}" style="margin-top:10px"><strong>Server Batch Processing · ${esc(state.batchProcessResult.mode||"")}</strong><br>Processed ${state.batchProcessResult.processed||0} · PF Pass ${state.batchProcessResult.passed?.length||0} · PF Fail ${state.batchProcessResult.failed?.length||0} · Submitted ${state.batchProcessResult.submitted?.length||0} · Skipped ${state.batchProcessResult.skipped?.length||0} · Review Ready ${state.batchProcessResult.counts?.reviewReady||0}/${state.batchProcessResult.counts?.linked||0} · Remaining ${state.batchProcessResult.remainingEligible||0}</div>`:""}
-      </div></section>
-      ${state.batchSource?`<div class="kpis" style="margin-top:12px;grid-template-columns:repeat(6,1fr)"><div class="kpi"><div class="kpi-label">TOTAL</div><div class="kpi-value">${stats.total}</div></div><div class="kpi"><div class="kpi-label">LOCAL PASS</div><div class="kpi-value" style="color:#16835d">${stats.passed}</div></div><div class="kpi"><div class="kpi-label">FAILED</div><div class="kpi-value" style="color:#bc2f3b">${stats.failed}</div></div><div class="kpi"><div class="kpi-label">DRAFTS</div><div class="kpi-value">${linkedDrafts}</div></div><div class="kpi"><div class="kpi-label">REVIEW READY</div><div class="kpi-value" style="color:#16835d">${reviewReady}</div></div><div class="kpi"><div class="kpi-label">MAPPING</div><div class="kpi-value">${mapping.length}</div><div class="kpi-foot">fields</div></div></div>`:""}
-      ${mapping.length?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Detected Mapping</h3><span class="subtle">自动表头映射，可保存为 Mapping Profile（D1 schema 已预留）</span></div>${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}</section>`:""}
-      ${state.apiOnline&&state.identity?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Import Job History</h3><span class="subtle">D1 · 可跨刷新恢复</span><span class="spacer"></span><button class="btn small" data-action="refresh-batch-jobs" ${state.batchJobLoading?"disabled":""}>${state.batchJobLoading?"Loading…":"Refresh"}</button></div>${state.batchJobs.length?table(["Source","Status","Rows","Passed","Failed","Updated",""],state.batchJobs.slice(0,20).map(j=>[
-        esc(j.sourceName||"—"),
-        `<span class="badge ${j.status==="SUBMITTED_FOR_REVIEW"?"green":j.status==="PREFLIGHTED"||j.status==="DRAFTS_CREATED"?"blue":j.status==="PARTIAL_SUBMIT"?"amber":j.status==="REVIEWED"?"blue":"amber"}">${esc(j.status||"—")}</span>`,
-        Number(j.totalRows||0),
-        Number(j.passedRows||0),
-        Number(j.failedRows||0),
-        esc(j.updatedAt||j.createdAt||"—"),
-        `<button class="btn small" data-open-import-job="${esc(j.id)}">Resume</button>`
-      ]),true):'<div class="card-body"><div class="notice">暂无已同步 Import Job。</div></div>'}</section>`:""}
-      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Import Review</h3><span class="subtle">Local + Server Preflight · 最多显示前 100 行</span></div>${review.length?table(["Row","SKU","Local","Draft","Server PF","Artwork","Issue"],review.map(r=>[
-        r.row,
-        r.sku,
-        `<span class="badge ${r.status==="PASS"?"green":"red"}">${r.status}</span>`,
-        r.draftArtworkId?`<span class="badge green mono">${esc(r.draftArtworkNo||r.draftArtworkId.slice(0,8))}</span>`:"—",
-        r.serverPreflightStatus?`<span class="badge ${r.serverPreflightStatus==="PASS"?"green":"red"}">${esc(r.serverPreflightStatus)}</span>`:"—",
-        r.artworkStatus?`<span class="badge ${["IN_REVIEW","APPROVED"].includes(String(r.artworkStatus).toUpperCase())?"green":String(r.artworkStatus).toUpperCase()==="DRAFT"?"blue":"amber"}">${esc(r.artworkStatus)}</span>`:"—",
-        r.batchProcessError?`${esc(r.batchProcessError)}`:`${r.issue}`
-      ]),true):`<div class="card-body"><div class="notice">尚未载入文件。导入后系统会先做 Excel 解析，再将每一行转换为 Canonical Artwork Data 并运行阻断检查。</div></div>`}</section>`;
+        <div class="batch-hero-progress">
+          <div><span>Workflow progress</span><strong>${completion}%</strong></div>
+          <div class="batch-hero-progressbar"><i style="width:${completion}%"></i></div>
+          <small>${state.batchSource?esc(state.batchSource):"No source file selected"}</small>
+        </div>
+      </section>
+
+      <div class="stepper batch-stepper">${steps.map((x,i)=>`<div class="step ${i<activeStep?"done":i===activeStep?"active":""}"><span>${i+1}</span><strong>${x}</strong></div>`).join("")}</div>
+
+      <section class="card batch-stage-card">
+        <div class="card-head card-head-roomy">
+          <div><div class="page-eyebrow">Source intake</div><h3>Packing List Import</h3></div>
+          <span class="spacer"></span>
+          <span class="badge blue">US Packing List Default</span>
+          <span class="badge green">Shipping Mark 1.1 · TOP_FACE</span>
+        </div>
+        <div class="card-body">
+          ${!cloudBatchWritable()?'<div class="notice warn batch-local-note"><strong>本地批量模式</strong><span>文件解析、Dry Run、错误下载和 Proof ZIP 可直接使用；保存 Mapping / Import Job 到 D1 需要登录权限。</span></div>':""}
+
+          <div class="batch-intake-grid">
+            <label class="dropzone batch-dropzone" id="batch-dropzone">
+              <input id="batch-file" type="file" accept=".xlsx,.csv" hidden/>
+              <span class="batch-drop-icon">⇧</span>
+              <strong>拖入 Packing List 或点击选择</strong>
+              <div class="subtle">.xlsx / .csv · Header Detection · Alias · Fill Down · TOTAL Stop</div>
+              <div class="batch-drop-meta">Cell-level errors · Controlled Shipping Mark per row</div>
+              ${state.batchSource?`<div class="batch-source-pill"><i></i><span>${esc(state.batchSource)}</span></div>`:""}
+            </label>
+
+            <div class="batch-actions-panel">
+              <div class="batch-action-group">
+                <div class="batch-action-head"><span>01</span><div><strong>Local preparation</strong><small>Parse, validate and produce proofs</small></div></div>
+                <div class="batch-action-buttons">
+                  <button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button>
+                  <button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Error Rows</button>
+                  <button class="btn" data-action="save-mapping" ${mapping.length&&cloudBatchWritable()?"":"disabled"}>Save Mapping</button>
+                  <button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Proofs"}</button>
+                </div>
+              </div>
+
+              <div class="batch-action-group">
+                <div class="batch-action-head"><span>02</span><div><strong>Server promotion</strong><small>D1 canonical snapshot remains authoritative</small></div></div>
+                <div class="batch-action-buttons">
+                  <button class="btn primary" data-action="batch-create-drafts" ${pendingDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchDraftBusy?"":"disabled"}>${state.batchDraftBusy?"Creating…":`Create Remaining Drafts (${pendingDrafts})`}</button>
+                  <button class="btn" data-action="batch-server-preflight" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>${state.batchProcessBusy?"Processing…":"Server Preflight"}</button>
+                  <button class="btn success" data-action="batch-preflight-submit" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Preflight + Submit</button>
+                  <button class="btn" data-action="batch-retry-failed" ${failedServerPf&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Retry Failed (${failedServerPf})</button>
+                </div>
+                <div class="batch-action-foot">每次最多处理 100 个 Draft；服务端重新读取 D1 Canonical Snapshot，不信任浏览器 PASS。</div>
+              </div>
+            </div>
+          </div>
+
+          ${state.batchDraftResult?`<div class="notice ${state.batchDraftResult.failed?.length?"warn":"success"} batch-result-note"><strong>Batch Draft Promotion</strong><span>Created ${state.batchDraftResult.created?.length||0} · Skipped ${state.batchDraftResult.skipped?.length||0} · Failed ${state.batchDraftResult.failed?.length||0} · Linked ${state.batchDraftResult.counts?.linked||0}/${state.batchDraftResult.counts?.passed||0}</span></div>`:""}
+          ${state.batchProcessResult?`<div class="notice ${state.batchProcessResult.failed?.length||state.batchProcessResult.skipped?.length?"warn":"success"} batch-result-note"><strong>Server Batch Processing · ${esc(state.batchProcessResult.mode||"")}</strong><span>Processed ${state.batchProcessResult.processed||0} · PF Pass ${state.batchProcessResult.passed?.length||0} · PF Fail ${state.batchProcessResult.failed?.length||0} · Submitted ${state.batchProcessResult.submitted?.length||0} · Skipped ${state.batchProcessResult.skipped?.length||0} · Review Ready ${state.batchProcessResult.counts?.reviewReady||0}/${state.batchProcessResult.counts?.linked||0} · Remaining ${state.batchProcessResult.remainingEligible||0}</span></div>`:""}
+        </div>
+      </section>
+
+      ${statCards.length?`<div class="batch-stats">${statCards.map(([label,value,tone])=>`<div class="batch-stat is-${tone}"><span>${label}</span><strong>${value}</strong>${label==="Mapping"?'<small>fields</small>':""}</div>`).join("")}</div>`:""}
+
+      <div class="batch-data-grid">
+        <div class="batch-data-main">
+          ${mapping.length?`<section class="card">
+            <div class="card-head"><div><div class="page-eyebrow">Detected schema</div><h3>Detected Mapping</h3></div><span class="spacer"></span><span class="subtle">可保存为 Mapping Profile</span></div>
+            ${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}
+          </section>`:""}
+
+          <section class="card batch-review-card">
+            <div class="card-head"><div><div class="page-eyebrow">Row-level evidence</div><h3>Import Review</h3></div><span class="spacer"></span><span class="subtle">Local + Server Preflight · 最多前 100 行</span></div>
+            ${review.length?table(["Row","SKU","Local","Draft","Server PF","Artwork","Issue"],review.map(r=>[
+              r.row,
+              r.sku,
+              `<span class="badge ${r.status==="PASS"?"green":"red"}">${r.status}</span>`,
+              r.draftArtworkId?`<span class="badge green mono">${esc(r.draftArtworkNo||r.draftArtworkId.slice(0,8))}</span>`:"—",
+              r.serverPreflightStatus?`<span class="badge ${r.serverPreflightStatus==="PASS"?"green":"red"}">${esc(r.serverPreflightStatus)}</span>`:"—",
+              r.artworkStatus?`<span class="badge ${["IN_REVIEW","APPROVED"].includes(String(r.artworkStatus).toUpperCase())?"green":String(r.artworkStatus).toUpperCase()==="DRAFT"?"blue":"amber"}">${esc(r.artworkStatus)}</span>`:"—",
+              r.batchProcessError?`${esc(r.batchProcessError)}`:`${r.issue}`
+            ]),true):`<div class="card-body"><div class="empty-state"><strong>No rows loaded</strong><span>载入文件后系统会解析 Canonical Artwork Data 并运行阻断检查。</span></div></div>`}
+          </section>
+        </div>
+
+        ${state.apiOnline&&state.identity?`<aside class="batch-history-column">
+          <section class="card batch-history-card">
+            <div class="card-head"><div><div class="page-eyebrow">Persistent jobs</div><h3>Import Job History</h3></div><span class="spacer"></span><button class="btn small" data-action="refresh-batch-jobs" ${state.batchJobLoading?"disabled":""}>${state.batchJobLoading?"Loading…":"Refresh"}</button></div>
+            ${state.batchJobs.length?table(["Source","Status","Rows","Updated",""],state.batchJobs.slice(0,20).map(j=>[
+              esc(j.sourceName||"—"),
+              `<span class="badge ${j.status==="SUBMITTED_FOR_REVIEW"?"green":j.status==="PREFLIGHTED"||j.status==="DRAFTS_CREATED"?"blue":j.status==="PARTIAL_SUBMIT"?"amber":j.status==="REVIEWED"?"blue":"amber"}">${esc(j.status||"—")}</span>`,
+              `${Number(j.passedRows||0)}/${Number(j.totalRows||0)}`,
+              esc(j.updatedAt||j.createdAt||"—"),
+              `<button class="btn small" data-open-import-job="${esc(j.id)}">Resume</button>`
+            ]),true):'<div class="card-body"><div class="empty-state batch-empty-history"><strong>No synced jobs</strong><span>暂无已同步 Import Job。</span></div></div>'}
+          </section>
+        </aside>`:""}
+      </div>
+    `;
   }
 
   function reviewerSelected(){
