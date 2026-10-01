@@ -549,10 +549,7 @@
     if(!def) return {ok:false,reason:"BLOCK_VERSION_UNSUPPORTED",version};
 
     const safe=Math.max(0,Number(artwork?.safeMarginMm??22));
-    const inset=Math.max(
-      Number(def.insetFloorMm||4),
-      Math.min(safe,Number(panel?.w||0)*.18,Number(panel?.h||0)*.18)
-    );
+    const inset=Math.max(Number(def.insetFloorMm||4),safe);
     const availableW=Math.max(0,Number(panel?.w||0)-inset*2);
     const availableH=Math.max(0,Number(panel?.h||0)-inset*2);
     if(availableW<Number(def.minWidthMm||80)){
