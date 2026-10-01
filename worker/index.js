@@ -384,7 +384,7 @@ export default {
         const where=[],binds=[];
         if(type){where.push("e.evidence_type=?");binds.push(type);}
         const {results}=await env.DB.prepare(`
-          SELECT e.id,e.evidence_type AS evidenceType,e.profile,e.artifact_sha256 AS artifactSha256,
+          SELECT e.id,e.evidence_type AS evidenceType,e.profile,e.policy_version AS policyVersion,e.artifact_sha256 AS artifactSha256,
                  e.validator_name AS validatorName,e.validator_version AS validatorVersion,
                  e.ruleset_id AS rulesetId,e.ruleset_version AS rulesetVersion,e.ruleset_sha256 AS rulesetSha256,
                  e.print_service_provider AS printServiceProvider,e.rip_product AS ripProduct,e.rip_version AS ripVersion,
@@ -435,16 +435,16 @@ export default {
           await env.ARTWORK_FILES.put(objectKey,bytes,{httpMetadata:{contentType:mediaType}});
           await env.DB.prepare(`
             INSERT INTO pdfx_promotion_evidence(
-              id,evidence_type,profile,artifact_sha256,validator_name,validator_version,
+              id,evidence_type,profile,policy_version,artifact_sha256,validator_name,validator_version,
               ruleset_id,ruleset_version,ruleset_sha256,
               print_service_provider,rip_product,rip_version,output_device,
               suite,suite_version,conformance_level,tested_at,
               actual_production_workflow,no_pdf_repair,
               object_key,evidence_sha256,filename,media_type,metadata_json,
               status,uploaded_by,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'DRAFT',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'DRAFT',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
           `).bind(
-            id,type,d.profile,d.artifactSha256||null,d.validator||null,d.version||null,
+            id,type,d.profile,d.policyVersion,d.artifactSha256||null,d.validator||null,d.version||null,
             d.rulesetId||null,d.rulesetVersion||null,d.rulesetSha256||null,
             d.printServiceProvider||null,d.ripProduct||null,d.ripVersion||null,d.outputDevice||null,
             d.suite||null,d.suiteVersion||null,d.conformanceLevel||null,d.testedAt||null,
@@ -504,6 +504,11 @@ export default {
         }
         const object=await env.ARTWORK_FILES.head(evidence.object_key);
         if(!object)return err(409,"EVIDENCE_OBJECT_MISSING","Promotion evidence object is missing from R2.");
+        if(String(evidence.policy_version||"")!==PDFX_PRODUCTION_PROMOTION_POLICY.version){
+          return err(409,"EVIDENCE_POLICY_STALE","Promotion evidence was created under an older policy and must be requalified.",{
+            evidencePolicyVersion:evidence.policy_version,currentPolicyVersion:PDFX_PRODUCTION_PROMOTION_POLICY.version
+          });
+        }
         const policyInput=evidenceRowToPolicyInput(evidence);
         const validation=validatePromotionEvidence(evidence.evidence_type,policyInput,evidence.evidence_sha256);
         if(!validation.ok)return err(409,"EVIDENCE_VALIDATION_FAILED","Promotion evidence no longer satisfies the v2 policy.",validation.errors);
@@ -536,6 +541,11 @@ export default {
         const decision=String(b.decision||"").toUpperCase();
         if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
         if(decision==="APPROVE"){
+          if(String(evidence.policy_version||"")!==PDFX_PRODUCTION_PROMOTION_POLICY.version){
+            return err(409,"EVIDENCE_POLICY_STALE","Promotion evidence was created under an older policy and must be requalified.",{
+              evidencePolicyVersion:evidence.policy_version,currentPolicyVersion:PDFX_PRODUCTION_PROMOTION_POLICY.version
+            });
+          }
           const object=await env.ARTWORK_FILES.get(evidence.object_key);
           if(!object)return err(409,"EVIDENCE_OBJECT_MISSING","Promotion evidence object is missing from R2.");
           const bytes=new Uint8Array(await object.arrayBuffer());
