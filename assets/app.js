@@ -69,7 +69,8 @@
     pdfxValidationRuns: [],
     pdfxPromotionReadiness: null,
     pdfxPromotionEvidence: [],
-    promotionEvidenceBusy: false
+    promotionEvidenceBusy: false,
+    selectedElementId: null
   };
 
   const navItems = [
@@ -122,7 +123,29 @@
   function cloudArtworkWritable(){return state.apiOnline&&permitted("artworkWrite");}
   function cloudBatchWritable(){return state.apiOnline&&permitted("batchWrite");}
   function persistLocalDraft(){
-    try{localStorage.setItem("cas:draft",JSON.stringify(state.artwork));}catch{}
+    try{localStorage.setItem("cas:draft",JSON.stringify(state.artwork));return true;}
+    catch{return false;}
+  }
+  function artworkElements(){
+    if(!Array.isArray(state.artwork.elements)) state.artwork.elements=[];
+    return state.artwork.elements;
+  }
+  function selectedArtworkElement(){
+    return artworkElements().find((e)=>e.id===state.selectedElementId)||null;
+  }
+  function newElementId(){
+    return "el-"+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36));
+  }
+  function elementTransform(e){
+    return `translate(${Number(e.x||0).toFixed(3)} ${Number(e.y||0).toFixed(3)}) rotate(${Number(e.rotation||0).toFixed(2)} ${(Number(e.w||0)/2).toFixed(3)} ${(Number(e.h||0)/2).toFixed(3)})`;
+  }
+  function defaultElementPlacement(w=50,h=50){
+    const g=geometry();
+    const panel=g.panels.find((p)=>p.id==="TOP_FACE")||g.panels[0];
+    return {
+      x:Math.max(0,panel.x+(panel.w-w)/2),
+      y:Math.max(0,panel.y+(panel.h-h)/2)
+    };
   }
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
   function productionPolicy(code){return state.productionPolicies.find(x=>x.code===code)||null;}
@@ -259,12 +282,63 @@
         ${field("Country of Origin","derived",`<input class="input" readonly value="${esc(f?.country||"")}" />`)}
       `)}
       ${formSection("Codes 代码", `
-        ${field("Barcode","Code 128-B PoC",input("barcode",a.barcode))}
-        ${field("QR payload","Encoder gate pending",input("qr",a.qr))}
+        ${field("Barcode","Current template Code 128-B",input("barcode",a.barcode))}
+        ${field("QR payload","Locked template CodeBlock",input("qr",a.qr))}
         ${field("CodeBlock Profile","locked component",`<select class="select" data-art="codeBlockProfile" ${isArtworkLocked()?"disabled":""}><option value="250x80" ${a.codeBlockProfile==="250x80"?"selected":""}>250 × 80 mm</option><option value="200x64" ${a.codeBlockProfile==="200x64"?"selected":""}>200 × 64 mm</option></select>`)}
-        <div class="notice">🔒 Barcode + QR 为锁定组合组件。Business Mode 禁止拆分和单独移动。</div>
+        <div class="notice">模板自带 Barcode + QR 仍作为锁定 CodeBlock。下面“元素”区可额外上传 Logo/图片、上传二维码，或生成独立矢量 QR。</div>
       `)}
+      ${renderElementEditor()}
     `;
+  }
+
+  function renderElementEditor(){
+    const elements=artworkElements();
+    const selected=selectedArtworkElement();
+    const locked=isArtworkLocked();
+    const rows=elements.map((e)=>`
+      <button type="button" class="element-row ${state.selectedElementId===e.id?"active":""}" data-select-element="${esc(e.id)}">
+        <span class="element-type">${e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":"IMG"}</span>
+        <span class="element-name">${esc(e.name||e.type)}</span>
+        <span class="mono subtle">${Number(e.w||0).toFixed(0)}×${Number(e.h||0).toFixed(0)} mm</span>
+        ${e.locked?'<span class="badge amber">LOCK</span>':""}
+      </button>`).join("");
+    const props=selected?`
+      <div class="element-properties">
+        <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
+        <div class="row2">
+          <div class="field"><label>X mm</label><input class="input mono" type="number" step="1" data-element-prop="x" value="${esc(selected.x)}"/></div>
+          <div class="field"><label>Y mm</label><input class="input mono" type="number" step="1" data-element-prop="y" value="${esc(selected.y)}"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>W mm</label><input class="input mono" type="number" min="5" step="1" data-element-prop="w" value="${esc(selected.w)}"/></div>
+          <div class="field"><label>H mm</label><input class="input mono" type="number" min="5" step="1" data-element-prop="h" value="${esc(selected.h)}"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Rotation</label><input class="input mono" type="number" step="1" data-element-prop="rotation" value="${esc(selected.rotation||0)}"/></div>
+          <div class="field"><label>Lock</label><label class="toggle-line"><input type="checkbox" data-element-lock ${selected.locked?"checked":""}/> Lock position</label></div>
+        </div>
+        ${selected.type==="qr-generated"?`
+          <div class="field"><label>QR payload</label><textarea class="input" rows="3" data-element-prop="payload">${esc(selected.payload||"")}</textarea></div>
+          <div class="field"><label>Error correction</label><select class="select" data-element-prop="ecc">${["L","M","Q","H"].map(x=>`<option ${selected.ecc===x?"selected":""}>${x}</option>`).join("")}</select></div>
+        `:""}
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn danger small" data-action="delete-element" ${locked?"disabled":""}>Delete Element</button></div>
+      </div>`:'<div class="notice">选择画布上的元素或列表项后，可精确设置毫米位置、尺寸和旋转。</div>' ;
+    return formSection("Elements 元素",`
+      <div class="notice" style="margin-bottom:10px"><strong>真实唛头元素</strong>：Logo / 产品图 / 包装图标 / QR 可作为独立对象放到纸箱版面。生产前需通过边界、分辨率和扫码检查。</div>
+      <div class="toolbar element-tools">
+        <input id="art-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
+        <input id="art-qr-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
+        <button class="btn small" data-action="upload-image-trigger" ${locked?"disabled":""}>＋ 图片 / Logo</button>
+        <button class="btn small" data-action="upload-qr-trigger" ${locked?"disabled":""}>＋ 上传二维码</button>
+      </div>
+      <div class="field" style="margin-top:8px"><label>生成二维码内容</label><textarea id="custom-qr-payload" class="input" rows="2" placeholder="URL / SKU / GS1 Digital Link / 自定义内容">${esc(a.qr||"")}</textarea></div>
+      <div class="row2">
+        <div class="field"><label>ECC</label><select id="custom-qr-ecc" class="select"><option>L</option><option selected>M</option><option>Q</option><option>H</option></select></div>
+        <div class="field"><label>&nbsp;</label><button class="btn primary" style="width:100%" data-action="add-generated-qr" ${locked?"disabled":""}>生成矢量 QR</button></div>
+      </div>
+      <div class="element-list">${rows||'<div class="subtle">还没有自定义元素。</div>'}</div>
+      ${props}
+    `);
   }
 
   function formSection(t,b){return `<section class="section"><div class="section-title">${t}</div><div class="section-body">${b}</div></section>`;}
@@ -307,6 +381,29 @@
     return `<div class="comments">${composer}${list}</div>`;
   }
 
+  function renderCustomElements(artwork=state.artwork,mode="editor"){
+    const elements=Array.isArray(artwork.elements)?artwork.elements:[];
+    return elements.map((e)=>{
+      const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
+      const selected=mode==="editor"&&state.selectedElementId===e.id;
+      const border=selected?`<rect x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
+      let body="";
+      if((e.type==="image"||e.type==="qr-image")&&e.dataUrl){
+        body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
+      }else if(e.type==="qr-generated"){
+        try{
+          const model=C.qrMatrix(e.payload||"",e.ecc||"M");
+          const quiet=4,n=model.matrix.length,size=Math.min(w,h),cell=size/(n+quiet*2),ox=(w-size)/2,oy=(h-size)/2;
+          const modules=model.matrix.flatMap((row,rr)=>row.map((v,cc)=>v?`<rect x="${(ox+(cc+quiet)*cell).toFixed(3)}" y="${(oy+(rr+quiet)*cell).toFixed(3)}" width="${cell.toFixed(3)}" height="${cell.toFixed(3)}" fill="#000"/>`:"")).join("");
+          body=`<rect x="${ox}" y="${oy}" width="${size}" height="${size}" fill="#fff"/>${modules}`;
+        }catch{
+          body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff" stroke="#bc2f3b"/><text x="5" y="18" font-size="10" fill="#bc2f3b">Invalid QR</text>`;
+        }
+      }
+      return `<g data-art-element="${esc(e.id)}" data-element-locked="${e.locked?"1":"0"}" transform="${elementTransform(e)}" style="cursor:${e.locked?"default":"move"}">${body}${border}</g>`;
+    }).join("");
+  }
+
   function dielineSvg(mode="editor", artwork=state.artwork, options={}) {
     const a=artwork;
     const g=D.sideSealGeometry(a);
@@ -326,7 +423,7 @@
     const qrEcc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
     const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118,a.codeBlockProfile,a,{qrEcc});
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
-    const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
+    const custom=renderCustomElements(a,mode);\n    const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
       <rect x="-50" y="-50" width="${g.totalWidth+100}" height="${g.totalHeight+100}" fill="#fff"/>
       ${cut}${crease}${safeBox}${labels}
