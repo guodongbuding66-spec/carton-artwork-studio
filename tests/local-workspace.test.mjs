@@ -233,3 +233,12 @@ assert.match(app,/String\(element\.blockVersion\|\|""\)!=="1\.1\.0"/);
 assert.match(app,/controlledShippingMark:\{enabled:true,panelId:"TOP_FACE",version:"1\.1\.0"\}/);
 assert.match(app,/customElements:proofPdfElements\(art\)/);
 assert.match(app,/controlledPreset:\{type:"SHIPPING_MARK_STANDARD",version:"1\.1\.0",panelId:"TOP_FACE"\}/);
+
+
+assert.match(app,/batchDraftBusy:\s*false/);
+assert.match(app,/batchDraftResult:\s*null/);
+assert.match(app,/data-action="batch-create-drafts"/);
+assert.match(app,/state\.remoteImportJobId&&cloudBatchWritable\(\)&&cloudArtworkWritable\(\)/);
+assert.match(app,/async function createBatchDrafts\(\)/);
+assert.match(app,/api\.createImportDrafts\(state\.remoteImportJobId\)/);
+assert.match(app,/draftArtworkId/);
