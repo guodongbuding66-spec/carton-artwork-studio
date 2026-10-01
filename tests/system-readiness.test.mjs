@@ -89,3 +89,11 @@ assert.match(workerSource,/BATCH_SUBMIT_REVIEW/);
 assert.match(workerSource,/batch_preflight_status/);
 assert.match(workerSource,/batch_submit_status/);
 assert.match(workerSource,/WHERE id=\? AND status='DRAFT' AND current_revision=\?/);
+
+
+assert.match(workerSource,/STALE_AFTER_ARTWORK_EDIT/);
+assert.match(workerSource,/INVALIDATE_BATCH_PREFLIGHT/);
+assert.match(workerSource,/batch_preflight_status=NULL,batch_preflight_run_id=NULL,batch_preflight_at=NULL/);
+assert.match(workerSource,/batch_submit_status=NULL,batch_submitted_at=NULL/);
+assert.match(workerSource,/UPDATE import_jobs SET status='PROCESSING_REQUIRED'/);
+assert.match(workerSource,/batchPreflightInvalidated:Boolean\(linkedImportRow\)/);
