@@ -44,4 +44,26 @@ test("QR UTF-8 payload can be encoded", () => {
   assert.ok(q.matrix.length >= 21);
 });
 
+test("GS1 check digit matches known GTIN example", () => {
+  assert.equal(C.gs1CheckDigit("1001234500001"),"7");
+});
+
+test("ITF-14 accepts 13 digits and appends a valid check digit", () => {
+  const normalized=C.normalizeItf14("1001234500001");
+  assert.equal(normalized,"10012345000017");
+  const model=C.itf14Bars("1001234500001");
+  assert.equal(model.payload,"10012345000017");
+  assert.ok(model.bars.length>20);
+  assert.ok(model.widthMm>0);
+  assert.equal(model.checkDigit,"7");
+});
+
+test("ITF-14 rejects invalid GTIN check digit", () => {
+  assert.throws(()=>C.normalizeItf14("10012345000018"),/check digit/i);
+});
+
+test("ITF-14 rejects non-numeric data", () => {
+  assert.throws(()=>C.itf14Bars("ABC123"),/numeric/i);
+});
+
 console.log("Code tests passed.");
