@@ -56,6 +56,10 @@
 
 ## v2.0.0 关键工程进展
 
+### Cloudflare Native CI
+
+Staging deployment now prefers Cloudflare Workers Builds connected directly to GitHub. The `staging` branch runs `npm run deploy:staging`, which performs code checks, remote D1 migrations, Worker deployment and smoke verification without requiring a Cloudflare API token in GitHub Secrets.
+
 ### Workers KV Staging Artifact Store
 
 为避免工程 staging 因 R2 账单激活而阻塞，文件层已抽象为 Artifact Store：
