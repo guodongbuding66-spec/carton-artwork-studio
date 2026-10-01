@@ -155,10 +155,6 @@
           decodedValue:String(e.decodedValue||""),
           decodeStatus:String(e.decodeStatus||""),
           verifiedAt:String(e.verifiedAt||""),
-        groupId:String(e.groupId||""),
-        safeAreaExempt:Boolean(e.safeAreaExempt),
-        autoFitText:Boolean(e.autoFitText),
-        minFontSizePt:Number(e.minFontSizePt||7),
           groupId:String(e.groupId||""),
           safeAreaExempt:Boolean(e.safeAreaExempt),
           autoFitText:Boolean(e.autoFitText),
@@ -865,7 +861,11 @@
         expectedPayload:String(e.expectedPayload||""),
         decodedValue:String(e.decodedValue||""),
         decodeStatus:String(e.decodeStatus||""),
-        verifiedAt:String(e.verifiedAt||"")
+        verifiedAt:String(e.verifiedAt||""),
+        groupId:String(e.groupId||""),
+        safeAreaExempt:Boolean(e.safeAreaExempt),
+        autoFitText:Boolean(e.autoFitText),
+        minFontSizePt:Number(e.minFontSizePt||7)
       })) : []
     };
   }
