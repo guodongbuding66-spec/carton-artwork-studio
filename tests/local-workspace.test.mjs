@@ -22,7 +22,7 @@ assert.match(app,/function addTextElement\(\)/);
 assert.match(app,/function reorderSelectedElement\(mode\)/);
 assert.match(app,/function alignSelectedElement\(mode\)/);
 assert.match(app,/data-action="layer-front"/);
-assert.match(app,/data-action="align-hcenter"/);
+assert.match(app,/"align-hcenter","水平中"/);\nassert.match(app,/if\(action==="align-hcenter"\) return alignSelectedElement\("hcenter"\);/);
 assert.match(app,/data-element-prop="panelId"/);
 assert.match(app,/data-element-constrain/);
 assert.match(app,/\$\{code\}\$\{custom\}\$\{watermark\}/);
