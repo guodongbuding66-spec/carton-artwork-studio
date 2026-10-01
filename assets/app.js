@@ -297,9 +297,19 @@
     return {x:0,y:0,w:g.totalWidth,h:g.totalHeight};
   }
   function clampElementToBounds(e){
-    const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
-    e.x=Math.max(b.x,Math.min(b.x+b.w-w,Number(e.x||b.x)));
-    e.y=Math.max(b.y,Math.min(b.y+b.h-h,Number(e.y||b.y)));
+    const b=elementBounds(e);
+    for(let pass=0;pass<2;pass+=1){
+      const v=D.elementVisualBounds(e);
+      let dx=0,dy=0;
+      if(v.width>b.w) dx=(b.x+b.w/2)-v.centerX;
+      else if(v.left<b.x) dx=b.x-v.left;
+      else if(v.right>b.x+b.w) dx=(b.x+b.w)-v.right;
+      if(v.height>b.h) dy=(b.y+b.h/2)-v.centerY;
+      else if(v.top<b.y) dy=b.y-v.top;
+      else if(v.bottom>b.y+b.h) dy=(b.y+b.h)-v.bottom;
+      e.x=Number(e.x||0)+dx;
+      e.y=Number(e.y||0)+dy;
+    }
     return e;
   }
   function placeElementInPanel(e,panelId){
@@ -323,11 +333,13 @@
     SIDE_RIGHT_TOP:"SIDE_LEFT_TOP"
   });
   function panelRelativePosition(element,panel){
-    const w=Math.max(1,Number(element.w||1)),h=Math.max(1,Number(element.h||1));
-    const freeX=Math.max(0,panel.w-w),freeY=Math.max(0,panel.h-h);
+    const v=D.elementVisualBounds(element);
+    const freeX=Math.max(0,panel.w-v.width),freeY=Math.max(0,panel.h-v.height);
     return {
-      rx:freeX>0?Math.max(0,Math.min(1,(Number(element.x||0)-panel.x)/freeX)):.5,
-      ry:freeY>0?Math.max(0,Math.min(1,(Number(element.y||0)-panel.y)/freeY)):.5
+      rx:freeX>0?Math.max(0,Math.min(1,(v.left-panel.x)/freeX)):.5,
+      ry:freeY>0?Math.max(0,Math.min(1,(v.top-panel.y)/freeY)):.5,
+      visualWidth:v.width,
+      visualHeight:v.height
     };
   }
   function cloneElementsToPanel(items,targetPanelId,options={}){
@@ -335,7 +347,7 @@
     if(!sameSelectionPanel(items)){toast("复制到面板前，请先选择同一面板内的元素。","error");return [];}
     const source=panelById(items[0].panelId),target=panelById(targetPanelId);
     if(!source||!target){toast("目标面板无效。","error");return [];}
-    const oversized=items.find(e=>Number(e.w||0)>target.w||Number(e.h||0)>target.h);
+    const oversized=items.find(e=>{const v=D.elementVisualBounds(e);return v.width>target.w||v.height>target.h;});
     if(oversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return [];}
     const groupMap=new Map();
     const clones=[];
@@ -350,8 +362,12 @@
         if(!groupMap.has(copy.groupId)) groupMap.set(copy.groupId,newGroupId());
         copy.groupId=groupMap.get(copy.groupId);
       }
-      copy.x=target.x+rel.rx*Math.max(0,target.w-Number(copy.w||0));
-      copy.y=target.y+rel.ry*Math.max(0,target.h-Number(copy.h||0));
+      copy.x=target.x;copy.y=target.y;
+      const copyVisual=D.elementVisualBounds(copy);
+      const desiredLeft=target.x+rel.rx*Math.max(0,target.w-copyVisual.width);
+      const desiredTop=target.y+rel.ry*Math.max(0,target.h-copyVisual.height);
+      copy.x+=desiredLeft-copyVisual.left;
+      copy.y+=desiredTop-copyVisual.top;
       clampElementToBounds(copy);
       clones.push(copy);
     }
@@ -388,11 +404,11 @@
     cloneSelectionToPanel(targetId);
   }
   function smartSnapElementPosition(e,x,y,excludeIds=[]){
-    const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1)),snap=4;
-    let nx=Math.max(b.x,Math.min(b.x+b.w-w,x));
-    let ny=Math.max(b.y,Math.min(b.y+b.h-h,y));
-    const excluded=new Set(excludeIds);
-    excluded.add(e.id);
+    const b=elementBounds(e),snap=4;
+    const temp={...e,x,y};
+    clampElementToBounds(temp);
+    let nx=Number(temp.x||0),ny=Number(temp.y||0);
+    const excluded=new Set(excludeIds);excluded.add(e.id);
     const xTargets=[
       {value:b.x,kind:"panel-edge"},{value:b.x+b.w/2,kind:"panel-center"},{value:b.x+b.w,kind:"panel-edge"}
     ];
@@ -401,28 +417,30 @@
     ];
     for(const other of artworkElements()){
       if(other.visible===false||excluded.has(other.id)||String(other.panelId||"")!==String(e.panelId||"")) continue;
-      const ox=Number(other.x||0),oy=Number(other.y||0),ow=Math.max(1,Number(other.w||1)),oh=Math.max(1,Number(other.h||1));
-      xTargets.push({value:ox,kind:"object"},{value:ox+ow/2,kind:"object"},{value:ox+ow,kind:"object"});
-      yTargets.push({value:oy,kind:"object"},{value:oy+oh/2,kind:"object"},{value:oy+oh,kind:"object"});
+      const ov=D.elementVisualBounds(other);
+      xTargets.push({value:ov.left,kind:"object"},{value:ov.centerX,kind:"object"},{value:ov.right,kind:"object"});
+      yTargets.push({value:ov.top,kind:"object"},{value:ov.centerY,kind:"object"},{value:ov.bottom,kind:"object"});
     }
-    const xAnchors=()=>[nx,nx+w/2,nx+w];
-    const yAnchors=()=>[ny,ny+h/2,ny+h];
-    let bestX=null,bestY=null;
-    for(const target of xTargets) for(const anchor of xAnchors()){
+    const candidate=()=>D.elementVisualBounds({...e,x:nx,y:ny});
+    let cv=candidate(),bestX=null,bestY=null;
+    for(const target of xTargets) for(const anchor of [cv.left,cv.centerX,cv.right]){
       const delta=target.value-anchor,abs=Math.abs(delta);
       if(abs<=snap&&(!bestX||abs<bestX.abs)) bestX={abs,delta,target};
     }
-    if(bestX) nx=Math.max(b.x,Math.min(b.x+b.w-w,nx+bestX.delta));
-    for(const target of yTargets) for(const anchor of yAnchors()){
+    if(bestX){nx+=bestX.delta;cv=candidate();}
+    for(const target of yTargets) for(const anchor of [cv.top,cv.centerY,cv.bottom]){
       const delta=target.value-anchor,abs=Math.abs(delta);
       if(abs<=snap&&(!bestY||abs<bestY.abs)) bestY={abs,delta,target};
     }
-    if(bestY) ny=Math.max(b.y,Math.min(b.y+b.h-h,ny+bestY.delta));
+    if(bestY) ny+=bestY.delta;
+    const finalTemp={...e,x:nx,y:ny};clampElementToBounds(finalTemp);
+    nx=finalTemp.x;ny=finalTemp.y;
     const guides=[];
     if(bestX) guides.push({axis:"x",pos:bestX.target.value,kind:bestX.target.kind});
     if(bestY) guides.push({axis:"y",pos:bestY.target.value,kind:bestY.target.kind});
     return {x:nx,y:ny,guides};
   }
+
   function updateSnapGuides(svg,guides=[]){
     state.snapGuides=guides;
     const gx=svg?.querySelector("[data-snap-guide-x]");
@@ -1941,10 +1959,11 @@
 
   function selectionBounds(elements=selectedArtworkElements()){
     if(!elements.length) return null;
-    const left=Math.min(...elements.map(e=>Number(e.x||0)));
-    const top=Math.min(...elements.map(e=>Number(e.y||0)));
-    const right=Math.max(...elements.map(e=>Number(e.x||0)+Math.max(1,Number(e.w||1))));
-    const bottom=Math.max(...elements.map(e=>Number(e.y||0)+Math.max(1,Number(e.h||1))));
+    const visuals=elements.map(e=>D.elementVisualBounds(e));
+    const left=Math.min(...visuals.map(v=>v.left));
+    const top=Math.min(...visuals.map(v=>v.top));
+    const right=Math.max(...visuals.map(v=>v.right));
+    const bottom=Math.max(...visuals.map(v=>v.bottom));
     return {left,top,right,bottom,width:right-left,height:bottom-top};
   }
 
@@ -2014,12 +2033,11 @@
   function selectionMoveLimits(items){
     let minDx=-Infinity,maxDx=Infinity,minDy=-Infinity,maxDy=Infinity;
     for(const item of items){
-      const b=elementBounds(item),w=Math.max(1,Number(item.w||1)),h=Math.max(1,Number(item.h||1));
-      const x=Number(item.x||0),y=Number(item.y||0);
-      minDx=Math.max(minDx,b.x-x);
-      maxDx=Math.min(maxDx,b.x+b.w-w-x);
-      minDy=Math.max(minDy,b.y-y);
-      maxDy=Math.min(maxDy,b.y+b.h-h-y);
+      const b=elementBounds(item),v=D.elementVisualBounds(item);
+      minDx=Math.max(minDx,b.x-v.left);
+      maxDx=Math.min(maxDx,b.x+b.w-v.right);
+      minDy=Math.max(minDy,b.y-v.top);
+      maxDy=Math.min(maxDy,b.y+b.h-v.bottom);
     }
     return {minDx,maxDx,minDy,maxDy};
   }
