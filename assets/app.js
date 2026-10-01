@@ -723,6 +723,7 @@
     const selectedBlockLocked=selectedBlockItems.length>0&&selectedBlockItems.every(e=>e.locked);
     const props=selected?`
       <div class="element-properties">
+        ${selected.locked?'<div class="notice warn"><strong>LOCKED</strong>：该对象不能修改属性、移动、Resize、对齐或删除；先解除 Lock。</div>':""}
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
         <div class="field"><label>Panel 面板</label><select class="select" data-element-prop="panelId">${panelOptions}</select></div>
         <div class="row2">
@@ -2065,7 +2066,7 @@
   }
   function fitSelectedTextElement(){
     const element=selectedArtworkElement();
-    if(!element||element.type!=="text"||!localArtworkEditable()) return;
+    if(!element||element.type!=="text"||!localArtworkEditable()||element.locked) return;
     pushArtworkHistory();
     const result=fitTextElementInPlace(element);
     persistLocalDraft();render();
@@ -2123,7 +2124,7 @@
 
   function reorderSelectedElement(mode){
     const list=artworkElements(),index=list.findIndex(e=>e.id===state.selectedElementId);
-    if(index<0||!localArtworkEditable()) return;
+    if(index<0||!localArtworkEditable()||list[index]?.locked) return;
     pushArtworkHistory();
     const [item]=list.splice(index,1);
     let next=index;
@@ -2314,7 +2315,7 @@
 
   function alignSelectedElement(mode){
     const e=selectedArtworkElement();
-    if(!e||!localArtworkEditable()) return;
+    if(!e||!localArtworkEditable()||e.locked) return;
     pushArtworkHistory();
     const b=elementBounds(e),v=D.elementVisualBounds(e);
     if(mode==="left")e.x=Number(e.x||0)+(b.x-v.left);
@@ -2400,7 +2401,7 @@
       el.onfocus=()=>{if(localArtworkEditable())pushArtworkHistory();};
       const apply=()=>{
         const e=selectedArtworkElement();
-        if(!e||!localArtworkEditable()) return;
+        if(!e||!localArtworkEditable()||e.locked) return;
         const key=el.dataset.elementProp;
         if(key==="panelId"){
           placeElementInPanel(e,el.value);
@@ -2423,42 +2424,46 @@
     const lock=document.querySelector("[data-element-lock]");
     if(lock) lock.onchange=()=>{
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      if(e.blockType&&e.groupId){
+        setSelectedControlledBlockLock(Boolean(lock.checked));
+        return;
+      }
       pushArtworkHistory();
       e.locked=Boolean(lock.checked);persistLocalDraft();render();
     };
     const visible=document.querySelector("[data-element-visible]");
     if(visible) visible.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.visible=Boolean(visible.checked);persistLocalDraft();render();
     };
     const hri=document.querySelector("[data-element-hri]");
     if(hri) hri.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.humanReadable=Boolean(hri.checked);syncBarcodeElementSize(e);persistLocalDraft();render();
     };
     const bearer=document.querySelector("[data-element-bearer]");
     if(bearer) bearer.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.bearerBars=Boolean(bearer.checked);syncBarcodeElementSize(e);persistLocalDraft();render();
     };
     const constrain=document.querySelector("[data-element-constrain]");
     if(constrain) constrain.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.constrainToPanel=Boolean(constrain.checked);clampElementToBounds(e);persistLocalDraft();render();
     };
     const safeExempt=document.querySelector("[data-element-safe-exempt]");
     if(safeExempt) safeExempt.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.safeAreaExempt=Boolean(safeExempt.checked);persistLocalDraft();render();
     };
     const wrapText=document.querySelector("[data-element-wrap]");
     if(wrapText) wrapText.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.wrapText=Boolean(wrapText.checked);
       if(e.autoFitText) fitTextElementInPlace(e);
@@ -2466,7 +2471,7 @@
     };
     const autoFit=document.querySelector("[data-element-autofit]");
     if(autoFit) autoFit.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.autoFitText=Boolean(autoFit.checked);
       if(e.autoFitText) fitTextElementInPlace(e);
