@@ -72,6 +72,7 @@
     promotionEvidenceBusy: false,
     selectedElementId: null,
     selectedElementIds: [],
+    snapGuides: [],
     historyPast: [],
     historyFuture: []
   };
@@ -295,15 +296,110 @@
     e.x=p.x+(p.w-w)/2;
     e.y=p.y+(p.h-h)/2;
   }
-  function snapElementPosition(e,x,y){
+  const OPPOSITE_PANEL_MAP=Object.freeze({
+    TOP_FACE:"BOTTOM_FACE",
+    BOTTOM_FACE:"TOP_FACE",
+    TOP_BAND:"MIDDLE_BAND",
+    MIDDLE_BAND:"TOP_BAND",
+    SIDE_LEFT_BOTTOM:"SIDE_RIGHT_BOTTOM",
+    SIDE_RIGHT_BOTTOM:"SIDE_LEFT_BOTTOM",
+    SIDE_LEFT_TOP:"SIDE_RIGHT_TOP",
+    SIDE_RIGHT_TOP:"SIDE_LEFT_TOP"
+  });
+  function panelRelativePosition(element,panel){
+    const w=Math.max(1,Number(element.w||1)),h=Math.max(1,Number(element.h||1));
+    const freeX=Math.max(0,panel.w-w),freeY=Math.max(0,panel.h-h);
+    return {
+      rx:freeX>0?Math.max(0,Math.min(1,(Number(element.x||0)-panel.x)/freeX)):.5,
+      ry:freeY>0?Math.max(0,Math.min(1,(Number(element.y||0)-panel.y)/freeY)):.5
+    };
+  }
+  function cloneSelectionToPanel(targetPanelId){
+    const items=selectedArtworkElements();
+    if(!items.length||!localArtworkEditable()) return;
+    if(!sameSelectionPanel(items)){toast("复制到面板前，请先选择同一面板内的元素。","error");return;}
+    const source=panelById(items[0].panelId),target=panelById(targetPanelId);
+    if(!source||!target){toast("目标面板无效。","error");return;}
+    const oversized=items.find(e=>Number(e.w||0)>target.w||Number(e.h||0)>target.h);
+    if(oversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return;}
+    pushArtworkHistory();
+    const clones=[];
+    for(const item of items){
+      const copy=JSON.parse(JSON.stringify(item));
+      const rel=panelRelativePosition(item,source);
+      copy.id=newElementId();
+      copy.name=(item.name||item.type)+" · "+target.id;
+      copy.panelId=target.id;
+      copy.locked=false;
+      copy.x=target.x+rel.rx*Math.max(0,target.w-Number(copy.w||0));
+      copy.y=target.y+rel.ry*Math.max(0,target.h-Number(copy.h||0));
+      clampElementToBounds(copy);
+      clones.push(copy);
+    }
+    artworkElements().push(...clones);
+    state.selectedElementIds=clones.map(e=>e.id);
+    state.selectedElementId=clones.at(-1)?.id||null;
+    persistLocalDraft();render();
+    toast(`已复制 ${clones.length} 个元素到 ${target.id}`,"success");
+  }
+  function cloneSelectionToOppositePanel(){
+    const items=selectedArtworkElements();
+    if(!items.length||!sameSelectionPanel(items)){toast("对称面复制要求选择同一面板内的元素。","error");return;}
+    const sourceId=String(items[0].panelId||"");
+    const targetId=OPPOSITE_PANEL_MAP[sourceId];
+    if(!targetId){toast(`${sourceId||"当前面板"} 没有定义对称面。`,"error");return;}
+    cloneSelectionToPanel(targetId);
+  }
+  function smartSnapElementPosition(e,x,y,excludeIds=[]){
     const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1)),snap=4;
     let nx=Math.max(b.x,Math.min(b.x+b.w-w,x));
     let ny=Math.max(b.y,Math.min(b.y+b.h-h,y));
-    const xs=[b.x,b.x+b.w-w,b.x+(b.w-w)/2];
-    const ys=[b.y,b.y+b.h-h,b.y+(b.h-h)/2];
-    for(const v of xs) if(Math.abs(nx-v)<=snap){nx=v;break;}
-    for(const v of ys) if(Math.abs(ny-v)<=snap){ny=v;break;}
-    return {x:nx,y:ny};
+    const excluded=new Set(excludeIds);
+    excluded.add(e.id);
+    const xTargets=[
+      {value:b.x,kind:"panel-edge"},{value:b.x+b.w/2,kind:"panel-center"},{value:b.x+b.w,kind:"panel-edge"}
+    ];
+    const yTargets=[
+      {value:b.y,kind:"panel-edge"},{value:b.y+b.h/2,kind:"panel-center"},{value:b.y+b.h,kind:"panel-edge"}
+    ];
+    for(const other of artworkElements()){
+      if(other.visible===false||excluded.has(other.id)||String(other.panelId||"")!==String(e.panelId||"")) continue;
+      const ox=Number(other.x||0),oy=Number(other.y||0),ow=Math.max(1,Number(other.w||1)),oh=Math.max(1,Number(other.h||1));
+      xTargets.push({value:ox,kind:"object"},{value:ox+ow/2,kind:"object"},{value:ox+ow,kind:"object"});
+      yTargets.push({value:oy,kind:"object"},{value:oy+oh/2,kind:"object"},{value:oy+oh,kind:"object"});
+    }
+    const xAnchors=()=>[nx,nx+w/2,nx+w];
+    const yAnchors=()=>[ny,ny+h/2,ny+h];
+    let bestX=null,bestY=null;
+    for(const target of xTargets) for(const anchor of xAnchors()){
+      const delta=target.value-anchor,abs=Math.abs(delta);
+      if(abs<=snap&&(!bestX||abs<bestX.abs)) bestX={abs,delta,target};
+    }
+    if(bestX) nx=Math.max(b.x,Math.min(b.x+b.w-w,nx+bestX.delta));
+    for(const target of yTargets) for(const anchor of yAnchors()){
+      const delta=target.value-anchor,abs=Math.abs(delta);
+      if(abs<=snap&&(!bestY||abs<bestY.abs)) bestY={abs,delta,target};
+    }
+    if(bestY) ny=Math.max(b.y,Math.min(b.y+b.h-h,ny+bestY.delta));
+    const guides=[];
+    if(bestX) guides.push({axis:"x",pos:bestX.target.value,kind:bestX.target.kind});
+    if(bestY) guides.push({axis:"y",pos:bestY.target.value,kind:bestY.target.kind});
+    return {x:nx,y:ny,guides};
+  }
+  function updateSnapGuides(svg,guides=[]){
+    state.snapGuides=guides;
+    const gx=svg?.querySelector("[data-snap-guide-x]");
+    const gy=svg?.querySelector("[data-snap-guide-y]");
+    const xGuide=guides.find(g=>g.axis==="x");
+    const yGuide=guides.find(g=>g.axis==="y");
+    if(gx){
+      gx.setAttribute("x1",String(xGuide?.pos||0));gx.setAttribute("x2",String(xGuide?.pos||0));
+      gx.setAttribute("opacity",xGuide?"1":"0");
+    }
+    if(gy){
+      gy.setAttribute("y1",String(yGuide?.pos||0));gy.setAttribute("y2",String(yGuide?.pos||0));
+      gy.setAttribute("opacity",yGuide?"1":"0");
+    }
   }
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
   function productionPolicy(code){return state.productionPolicies.find(x=>x.code===code)||null;}
@@ -517,6 +613,24 @@
       </button>`;
     }).join("");
     const panelOptions=geometry().panels.map(p=>`<option value="${p.id}" ${selected?.panelId===p.id?"selected":""}>${p.id}</option>`).join("");
+    const selectionSourcePanel=selectedMany.length&&sameSelectionPanel(selectedMany)?String(selectedMany[0].panelId||""):"";
+    const copyPanelOptions=geometry().panels
+      .filter(p=>p.id!==selectionSourcePanel)
+      .map(p=>`<option value="${p.id}">${p.id}</option>`).join("");
+    const panelCopyTools=selectedMany.length?`
+      <div class="panel-copy-tools">
+        <div class="section-mini-title">Panel Repeat 面板复用</div>
+        ${selectionSourcePanel?`
+          <div class="row2">
+            <select class="select" id="copy-panel-target">${copyPanelOptions}</select>
+            <button class="btn small" data-action="copy-selection-panel">复制到指定面板</button>
+          </div>
+          <button class="btn small" style="width:100%;margin-top:6px" data-action="copy-opposite-panel" ${OPPOSITE_PANEL_MAP[selectionSourcePanel]?"":"disabled"}>
+            复制到对称面 ${OPPOSITE_PANEL_MAP[selectionSourcePanel]?"→ "+OPPOSITE_PANEL_MAP[selectionSourcePanel]:""}
+          </button>
+          <div class="notice" style="margin-top:6px">保持对象真实尺寸和相对面板位置；条码不会缩放。</div>
+        `:'<div class="notice warn">跨面板多选不能复制为一个布局组，请先选择同一面板。</div>'}
+      </div>`:"";
     const multiTools=selectedMany.length>1?`
       <div class="multi-selection-tools">
         <div class="notice"><strong>${selectedMany.length} 个元素已多选</strong><br>Shift+点击继续增减选择；对齐/分布会以当前选择整体为参考。</div>
@@ -659,7 +773,7 @@
         <div class="field"><label>&nbsp;</label><button class="btn primary" style="width:100%" data-action="add-generated-qr" ${locked?"disabled":""}>生成矢量 QR</button></div>
       </div>
       <div class="element-list">${rows||'<div class="subtle">还没有自定义元素。</div>'}</div>
-      ${multiTools}${props}
+      ${multiTools}${panelCopyTools}${props}
     `);
   }
 
@@ -836,6 +950,10 @@
     const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118,a.codeBlockProfile,a,{qrEcc});
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
     const custom=renderCustomElements(a,mode,factoryList);
+    const guideLayer=mode==="editor"?`<g data-snap-guides pointer-events="none">
+      <line data-snap-guide-x x1="0" y1="0" x2="0" y2="${g.totalHeight}" stroke="#e13b6b" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity="0"/>
+      <line data-snap-guide-y x1="0" y1="0" x2="${g.totalWidth}" y2="0" stroke="#e13b6b" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity="0"/>
+    </g>`:"";
     const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
       <rect x="-50" y="-50" width="${g.totalWidth+100}" height="${g.totalHeight+100}" fill="#fff"/>
@@ -849,7 +967,7 @@
         ${note}
         <g transform="translate(${g.H*.55} ${g.H+g.W*.56}) rotate(90)"><text font-size="14">CRN ${esc(c.crn)}</text></g>
       </g>
-      ${code}${custom}${watermark}
+      ${code}${custom}${guideLayer}${watermark}
     </svg>`;
   }
 
@@ -1686,17 +1804,23 @@
   }
 
   function duplicateSelectedElement(){
-    const current=selectedArtworkElement();
-    if(!current||!localArtworkEditable()) return;
+    const items=selectedArtworkElements();
+    if(!items.length||!localArtworkEditable()) return;
     pushArtworkHistory();
-    const copy=JSON.parse(JSON.stringify(current));
-    copy.id=newElementId();copy.name=(current.name||current.type)+" copy";
-    copy.locked=false;
-    copy.x=Number(current.x||0)+8;copy.y=Number(current.y||0)+8;
-    clampElementToBounds(copy);
-    artworkElements().push(copy);
-    selectOnlyElement(copy.id);
+    const copies=[];
+    for(const current of items){
+      const copy=JSON.parse(JSON.stringify(current));
+      copy.id=newElementId();copy.name=(current.name||current.type)+" copy";
+      copy.locked=false;
+      copy.x=Number(current.x||0)+8;copy.y=Number(current.y||0)+8;
+      clampElementToBounds(copy);
+      copies.push(copy);
+    }
+    artworkElements().push(...copies);
+    state.selectedElementIds=copies.map(e=>e.id);
+    state.selectedElementId=copies.at(-1)?.id||null;
     persistLocalDraft();render();
+    toast(copies.length>1?`已复制 ${copies.length} 个元素`:"元素已复制","success");
   }
 
   function reorderSelectedElement(mode){
@@ -1987,6 +2111,12 @@
     if(action==="add-handling-symbol") return addHandlingSymbol();
     if(action==="add-generated-qr") return addGeneratedQrElement();
     if(action==="duplicate-element") return duplicateSelectedElement();
+    if(action==="copy-selection-panel"){
+      const target=document.getElementById("copy-panel-target")?.value||"";
+      if(target) return cloneSelectionToPanel(target);
+      return;
+    }
+    if(action==="copy-opposite-panel") return cloneSelectionToOppositePanel();
     if(action==="layer-front") return reorderSelectedElement("front");
     if(action==="layer-back") return reorderSelectedElement("back");
     if(action==="layer-up") return reorderSelectedElement("up");
