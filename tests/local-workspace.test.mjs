@@ -58,7 +58,7 @@ assert.match(app,/data-element-prop="bindingKey"/);
 assert.match(app,/D\.resolvedElementText\(selected,state\.artwork,state\.factories\)/);
 assert.match(app,/D\.resolvedElementPayload\(selected,state\.artwork,state\.factories\)/);
 assert.match(app,/text:D\.resolvedElementText\(e,artwork,state\.factories\)/);
-assert.match(app,/\$\{code\}\$\{custom\}\$\{watermark\}/);
+assert.match(app,/\$\{code\}\$\{custom\}\$\{mode==="editor"\?\'<g id="smart-guide-layer"/);\nassert.match(app,/\$\{watermark\}/);
 assert.match(app,/selectedElementIds:\s*\[\]/);
 assert.match(app,/function selectedArtworkElements\(\)/);
 assert.match(app,/function toggleElementSelection\(id\)/);
