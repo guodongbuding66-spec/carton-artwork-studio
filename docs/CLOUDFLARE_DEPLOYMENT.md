@@ -58,6 +58,8 @@ Staging now has two independent deployment paths:
 
 This removes Cloudflare Workers Builds as a single point of deployment failure.
 
+If the GitHub `staging` Environment is missing the required fallback credentials/variables, the workflow does **not** pretend that a deploy occurred. It records `FALLBACK_NOT_CONFIGURED` plus the missing configuration names in the uploaded staging artifact. The Cloudflare-native path remains independent. Once the missing GitHub Environment values are added, the same workflow automatically performs remote D1 migration + Wrangler deploy on the next `staging` push.
+
 1. runs `npm run check`;
 2. generates a staging Wrangler config;
 3. applies D1 migrations remotely;
