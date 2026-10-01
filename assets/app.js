@@ -300,6 +300,20 @@
     const policy=productionPolicy("BARCODE_POLICY");
     return String(policy?.config?.symbology||"Code128-B");
   }
+  function barcodePhysicalDefaults(symbology){
+    const sym=String(symbology||"CODE128B").toUpperCase();
+    if(sym==="ITF14") return {moduleMm:1.016,barHeightMm:32,quietModules:10,wideRatio:2.5,bearerBars:true,bearerBarThicknessMm:Math.max(2.032,1.016*2)};
+    if(sym==="GS1_128") return {moduleMm:.495,barHeightMm:31.75,quietModules:10,wideRatio:0,bearerBars:false,bearerBarThicknessMm:0};
+    return {moduleMm:.42,barHeightMm:28,quietModules:10,wideRatio:0,bearerBars:false,bearerBarThicknessMm:0};
+  }
+  function ensureBarcodePhysicalSettings(element,force=false){
+    if(!element||element.type!=="barcode") return element;
+    const d=barcodePhysicalDefaults(element.symbology);
+    for(const [key,value] of Object.entries(d)){
+      if(force||element[key]===undefined||element[key]===null||element[key]===0||element[key]==="") element[key]=value;
+    }
+    return element;
+  }
   function identityLabel(){
     if(state.identity) return `${state.identity.email} · ${state.identity.roles.join(", ")||"NO ROLE"}`;
     if(state.apiChecked&&state.authError) return "Access required";
@@ -509,6 +523,22 @@
           `:selected.symbology==="ITF14"
             ?'<div class="notice">ITF-14 仅接受 GTIN 数字；13 位会自动计算校验位，14 位会验证校验位。</div>'
             :'<div class="notice">Code 128-B 用于普通 ASCII 数据；需要 GS1 物流语义时请选择 GS1-128。</div>'}
+          <div class="section-mini-title">Print Geometry 印刷几何</div>
+          <div class="row3">
+            <div class="field"><label>X mm</label><input class="input mono" type="number" step="0.001" min="0.1" data-element-prop="moduleMm" value="${esc(Number(selected.moduleMm||barcodePhysicalDefaults(selected.symbology).moduleMm))}"/></div>
+            <div class="field"><label>Bar H mm</label><input class="input mono" type="number" step="0.25" min="5" data-element-prop="barHeightMm" value="${esc(Number(selected.barHeightMm||barcodePhysicalDefaults(selected.symbology).barHeightMm))}"/></div>
+            <div class="field"><label>Quiet X</label><input class="input mono" type="number" step="1" min="0" data-element-prop="quietModules" value="${esc(Number(selected.quietModules||10))}"/></div>
+          </div>
+          ${selected.symbology==="ITF14"?`
+            <div class="row3">
+              <div class="field"><label>Wide:Narrow</label><input class="input mono" type="number" step="0.05" min="2.25" max="3" data-element-prop="wideRatio" value="${esc(Number(selected.wideRatio||2.5))}"/></div>
+              <div class="field"><label>Bearer mm</label><input class="input mono" type="number" step="0.1" min="0" data-element-prop="bearerBarThicknessMm" value="${esc(Number(selected.bearerBarThicknessMm||Math.max(2.032,Number(selected.moduleMm||1.016)*2)))}"/></div>
+              <label class="toggle-line"><input type="checkbox" data-element-bearer ${selected.bearerBars!==false?"checked":""}/> Bearer bars</label>
+            </div>
+            <div class="notice">ITF-14 Review Profile：Quiet Zone ≥ 10X、条高 ≥ 32 mm、wide:narrow 2.25–3.0；top/bottom bearer bars 默认启用。</div>
+          `:selected.symbology==="GS1_128"?`
+            <div class="notice">GS1-128 Logistics Review Profile：X 0.495–0.940 mm、条高 ≥ 31.75 mm、Quiet Zone ≥ 10X。</div>
+          `:""}
         `:""}
         ${selected.type==="symbol"?`
           <div class="field"><label>Handling symbol</label><select class="select" data-element-prop="symbolKey">
@@ -677,20 +707,33 @@
     try{
       const payload=D.resolvedElementPayload(element,artwork,factoryList);
       const sym=String(element.symbology||"").toUpperCase();
+      ensureBarcodePhysicalSettings(element);
       const model=sym==="ITF14"
-        ? C.itf14Bars(payload,{moduleMm:.8,heightMm:30})
+        ? C.itf14Bars(payload,{
+            moduleMm:Number(element.moduleMm),
+            heightMm:Number(element.barHeightMm),
+            quietModules:Number(element.quietModules),
+            wideRatio:Number(element.wideRatio),
+            bearerBars:element.bearerBars!==false,
+            bearerBarThicknessMm:Number(element.bearerBarThicknessMm)
+          })
         : sym==="GS1_128"
-          ? C.gs1_128Bars(payload,{moduleMm:.42,heightMm:28})
-          : C.code128Bars(payload,{moduleMm:.42,heightMm:28});
+          ? C.gs1_128Bars(payload,{moduleMm:Number(element.moduleMm),heightMm:Number(element.barHeightMm),quietModules:Number(element.quietModules)})
+          : C.code128Bars(payload,{moduleMm:Number(element.moduleMm),heightMm:Number(element.barHeightMm),quietModules:Number(element.quietModules)});
       const hri=element.humanReadable!==false;
       const hriH=hri?Math.min(8,h*.22):0;
+      const bearerTop=model.bearerBars?Number(model.bearerBarThicknessMm||0):0;
+      const physicalH=Number(model.heightMm||1)+bearerTop*2;
       const maxW=Math.max(1,w-4),maxH=Math.max(1,h-hriH-3);
-      const sx=maxW/Math.max(1,model.widthMm),sy=maxH/Math.max(1,model.heightMm);
+      const sx=maxW/Math.max(1,model.widthMm),sy=maxH/Math.max(1,physicalH);
       const x0=2,y0=1;
-      const bars=model.bars.map(b=>`<rect x="${(x0+b.x*sx).toFixed(3)}" y="${y0}" width="${Math.max(.15,b.w*sx).toFixed(3)}" height="${Math.max(.5,b.h*sy).toFixed(3)}" fill="#000"/>`).join("");
+      const bearers=model.bearerBars
+        ? `<rect x="${x0}" y="${y0}" width="${maxW}" height="${Math.max(.3,bearerTop*sy).toFixed(3)}" fill="#000"/><rect x="${x0}" y="${(y0+(bearerTop+Number(model.heightMm))*sy).toFixed(3)}" width="${maxW}" height="${Math.max(.3,bearerTop*sy).toFixed(3)}" fill="#000"/>`
+        : "";
+      const bars=model.bars.map(b=>`<rect x="${(x0+b.x*sx).toFixed(3)}" y="${(y0+bearerTop*sy).toFixed(3)}" width="${Math.max(.15,b.w*sx).toFixed(3)}" height="${Math.max(.5,b.h*sy).toFixed(3)}" fill="#000"/>`).join("");
       const label=sym==="ITF14"?(model.payload||payload):sym==="GS1_128"?(model.hri||payload):payload;
       const text=hri?`<text x="${w/2}" y="${h-1.5}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${Math.max(3,Math.min(5.5,hriH*.65))}" fill="#000">${esc(label)}</text>`:"";
-      return `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/>${bars}${text}`;
+      return `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/>${bearers}${bars}${text}`;
     }catch(err){
       return `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff" stroke="#bc2f3b"/><text x="5" y="15" font-size="9" fill="#bc2f3b">Invalid barcode</text>`;
     }
@@ -1528,7 +1571,9 @@
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
       panelId:p.panelId,constrainToPanel:true,
       text:"",fontSizePt:12,fontWeight:"normal",textAlign:"center",
-      symbology:"CODE128B",humanReadable:true,symbolKey:"",
+      symbology:"CODE128B",humanReadable:true,
+      ...barcodePhysicalDefaults("CODE128B"),
+      symbolKey:"",
       payload:String(state.artwork.barcode||"ABC123"),ecc:"M",
       sourceType:"generated-vector",mimeType:"",dataUrl:"",pixelWidth:0,pixelHeight:0
     };
@@ -1762,7 +1807,8 @@
         if(key==="panelId"){
           placeElementInPanel(e,el.value);
         }else{
-          e[key]=["x","y","w","h","rotation","fontSizePt"].includes(key)?Number(el.value):el.value;
+          e[key]=["x","y","w","h","rotation","fontSizePt","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
+          if(key==="symbology") ensureBarcodePhysicalSettings(e,true);
           if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
           if(key==="fontSizePt") e[key]=Math.max(5,Number(e[key]||5));
           clampElementToBounds(e);
@@ -1789,6 +1835,12 @@
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
       pushArtworkHistory();
       e.humanReadable=Boolean(hri.checked);persistLocalDraft();render();
+    };
+    const bearer=document.querySelector("[data-element-bearer]");
+    if(bearer) bearer.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      pushArtworkHistory();
+      e.bearerBars=Boolean(bearer.checked);persistLocalDraft();render();
     };
     const constrain=document.querySelector("[data-element-constrain]");
     if(constrain) constrain.onchange=()=>{
@@ -2861,11 +2913,15 @@
         const payload=D.resolvedElementPayload(e,artwork,state.factories);
         try{
           const sym=String(e.symbology||"").toUpperCase();
+          ensureBarcodePhysicalSettings(e);
           const model=sym==="ITF14"
-            ? C.itf14Bars(payload,{moduleMm:.8,heightMm:30})
+            ? C.itf14Bars(payload,{
+                moduleMm:Number(e.moduleMm),heightMm:Number(e.barHeightMm),quietModules:Number(e.quietModules),
+                wideRatio:Number(e.wideRatio),bearerBars:e.bearerBars!==false,bearerBarThicknessMm:Number(e.bearerBarThicknessMm)
+              })
             : sym==="GS1_128"
-              ? C.gs1_128Bars(payload,{moduleMm:.42,heightMm:28})
-              : C.code128Bars(payload,{moduleMm:.42,heightMm:28});
+              ? C.gs1_128Bars(payload,{moduleMm:Number(e.moduleMm),heightMm:Number(e.barHeightMm),quietModules:Number(e.quietModules)})
+              : C.code128Bars(payload,{moduleMm:Number(e.moduleMm),heightMm:Number(e.barHeightMm),quietModules:Number(e.quietModules)});
           return {...e,payload,barcodeModel:model};
         }catch{return {...e,payload,barcodeModel:null};}
       }
