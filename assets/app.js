@@ -191,6 +191,7 @@
   function cloudArtworkWritable(){return state.apiOnline&&permitted("artworkWrite");}
   function cloudBatchWritable(){return state.apiOnline&&permitted("batchWrite");}
   function persistLocalDraft(){
+    state.productionQualification=null;
     try{localStorage.setItem("cas:draft",JSON.stringify(state.artwork));return true;}
     catch{return false;}
   }
