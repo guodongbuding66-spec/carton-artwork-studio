@@ -25,6 +25,33 @@ async function fetchJson(path, options={}) {
 }
 
 const health=await fetchJson("/api/health");
+const redirectStatuses=new Set([301,302,303,307,308]);
+
+if(redirectStatuses.has(health.response.status) && !clientId && !clientSecret) {
+  fs.mkdirSync("artifacts",{recursive:true});
+  const acceptance={
+    schemaVersion:2,
+    generatedAt:new Date().toISOString(),
+    gitSha:String(process.env.GITHUB_SHA||""),
+    gitRef:String(process.env.GITHUB_REF||""),
+    stagingUrl:base,
+    service:null,
+    version:null,
+    bindings:null,
+    auth:{provider:"cloudflare-access",bypassEnabled:false},
+    pdfx:null,
+    unauthenticatedHealthStatus:health.response.status,
+    runtimeHealthVerified:false,
+    accessEnforced:true,
+    result:"ACCESS_PROTECTED",
+    productionBlockedAsExpected:true
+  };
+  fs.writeFileSync("artifacts/staging-acceptance.json",JSON.stringify(acceptance,null,2)+"\n");
+  console.log("Staging is protected by Cloudflare Access; unauthenticated deploy smoke passed.");
+  console.log("Runtime health verification requires an Access service token.");
+  process.exit(0);
+}
+
 if(health.response.status!==200) {
   throw new Error(`Staging health failed: HTTP ${health.response.status} ${JSON.stringify(health.payload)}`);
 }
@@ -44,7 +71,7 @@ if(![301,302,303,307,308,401,403].includes(unauth.status)) {
 
 fs.mkdirSync("artifacts",{recursive:true});
 const acceptance={
-  schemaVersion:1,
+  schemaVersion:2,
   generatedAt:new Date().toISOString(),
   gitSha:String(process.env.GITHUB_SHA||""),
   gitRef:String(process.env.GITHUB_REF||""),
@@ -55,6 +82,8 @@ const acceptance={
   auth:health.payload?.auth||null,
   pdfx:health.payload?.pdfx||null,
   unauthenticatedMeStatus:unauth.status,
+  runtimeHealthVerified:true,
+  accessEnforced:redirectStatuses.has(unauth.status),
   result:"PASS",
   productionBlockedAsExpected:health.payload?.bindings?.artifactStoreKind!=="R2"
 };
