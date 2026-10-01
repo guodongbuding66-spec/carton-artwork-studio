@@ -16,7 +16,9 @@ function loadBrowserModules(paths) {
     URL,
     URLSearchParams,
     setTimeout,
-    clearTimeout
+    clearTimeout,
+    atob: (s) => Buffer.from(String(s), "base64").toString("binary"),
+    btoa: (s) => Buffer.from(String(s), "binary").toString("base64")
   };
   vm.createContext(context);
   for (const path of paths) {
