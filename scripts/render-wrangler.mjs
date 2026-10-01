@@ -4,13 +4,13 @@ const target = process.argv[2] || "staging";
 if (target !== "staging") throw new Error("Only staging config generation is supported by this script.");
 
 const databaseId = process.env.CLOUDFLARE_D1_DATABASE_ID;
-const bucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME;
+const kvNamespaceId = process.env.CLOUDFLARE_KV_NAMESPACE_ID;
 const bootstrapAdmin = process.env.CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL || "";
 const pdfxValidatorUrl = process.env.CLOUDFLARE_PDFX_VALIDATOR_URL || "";
 
 if (!databaseId) throw new Error("CLOUDFLARE_D1_DATABASE_ID is required.");
-if (!bucketName) throw new Error("CLOUDFLARE_R2_BUCKET_NAME is required.");
-if (!pdfxValidatorUrl) throw new Error("CLOUDFLARE_PDFX_VALIDATOR_URL is required for v2 staging acceptance.");
+if (!kvNamespaceId) throw new Error("CLOUDFLARE_KV_NAMESPACE_ID is required.");
+
 
 const config = {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -33,9 +33,9 @@ const config = {
     database_id: databaseId,
     migrations_dir: "migrations"
   }],
-  r2_buckets: [{
-    binding: "ARTWORK_FILES",
-    bucket_name: bucketName
+  kv_namespaces: [{
+    binding: "ARTWORK_KV",
+    id: kvNamespaceId
   }]
 };
 
