@@ -1991,6 +1991,7 @@
         const keepGroup=isElementSelected(id)&&priorSelection.length>1;
         if(!keepGroup) selectOnlyElement(id);
         const activeSelection=keepGroup?priorSelection:selectedArtworkElements();
+        if(element.locked){render();return;}
         if(keepGroup&&!sameSelectionPanel(activeSelection)){
           toast("跨面板多选不能整体拖动，请先把元素放在同一面板。","error");
           render();return;
@@ -2025,7 +2026,7 @@
           for(const item of dragItems){
             const origin=starts.get(item.id);
             item.x=origin.x+dx;item.y=origin.y+dy;
-            const node=svg.querySelector(`[data-art-element="${CSS.escape(item.id)}"]`);
+            const node=[...svg.querySelectorAll("[data-art-element]")].find(n=>n.dataset.artElement===item.id);
             if(node) node.setAttribute("transform",elementTransform(item));
           }
           updateSmartGuideLayer(svg,snapped.guides);
