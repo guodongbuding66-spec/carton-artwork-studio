@@ -89,7 +89,7 @@ assert.match(app,/data-element-prop="wideRatio"/);
 assert.match(app,/data-element-bearer/);
 assert.match(app,/ITF-14 Review Profile/);
 assert.match(app,/GS1-128 Logistics Review Profile/);
-assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*refreshAutoFitTextElements\(\);\s*persistLocalDraft\(\);/);
+assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*refreshControlledShippingBlocks\(\);\s*refreshAutoFitTextElements\(\);\s*persistLocalDraft\(\);/);
 
 assert.ok(app.includes("function barcodeModelForElement(element"));
 assert.ok(app.includes("function barcodePhysicalSize(element"));
@@ -185,7 +185,7 @@ assert.match(app,/data-element-prop="lineHeight"/);
 assert.match(app,/D\.textLayout\(e,D\.resolvedElementText/);
 assert.match(app,/function addShippingMarkBlock\(\)/);
 assert.match(app,/blockType:"SHIPPING_MARK_STANDARD"/);
-assert.match(app,/blockVersion:"1\.0\.0"/);
+assert.match(app,/blockVersion:"1\.1\.0"/);
 assert.match(app,/data-action="add-shipping-mark-block"/);
 assert.match(app,/D\.effectiveImageDpi\(selected\)/);
 assert.match(app,/D\.productionElementQualification\(selected\)/);
@@ -212,3 +212,15 @@ assert.match(app,/if\(!e\|\|!localArtworkEditable\(\)\|\|e\.locked\) return;\s*c
 assert.match(app,/if\(e\.blockType&&e\.groupId\)\{\s*setSelectedControlledBlockLock\(Boolean\(lock\.checked\)\)/);
 assert.match(app,/list\[index\]\?\.locked/);
 assert.match(app,/!localArtworkEditable\(\)\|\|e\.locked\) return;\s*pushArtworkHistory\(\);\s*const b=elementBounds\(e\)/);
+
+
+assert.match(app,/function reflowShippingMarkGroup\(groupId,options=\{\}\)/);
+assert.match(app,/D\.shippingMarkBlockLayout\(state\.artwork,panel,state\.factories/);
+assert.match(app,/function refreshControlledShippingBlocks\(\)/);
+assert.match(app,/refreshControlledShippingBlocks\(\);\s*refreshAutoFitTextElements\(\);/);
+assert.match(app,/blockSlot:slot\.id/);
+assert.match(app,/locked:true,visible:true/);
+assert.match(app,/data-action="reflow-controlled-block"/);
+assert.match(app,/if\(action==="reflow-controlled-block"\) return reflowSelectedControlledBlock\(\)/);
+assert.match(app,/allowControlledOversized/);
+assert.match(app,/String\(element\.blockVersion\|\|""\)!=="1\.1\.0"/);

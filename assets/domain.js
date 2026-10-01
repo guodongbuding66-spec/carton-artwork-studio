@@ -167,7 +167,8 @@
           autoFitText:Boolean(e.autoFitText),
           minFontSizePt:Number(e.minFontSizePt||7),
           blockType:String(e.blockType||""),
-          blockVersion:String(e.blockVersion||"")
+          blockVersion:String(e.blockVersion||""),
+          blockSlot:String(e.blockSlot||"")
         })) : []
       }
     };
@@ -499,6 +500,189 @@
       else hi=mid;
     }
     return {...best,fontSizePt:round(best.fontSizePt,2)};
+  }
+
+  const controlledBlockDefinitions=Object.freeze({
+    SHIPPING_MARK_STANDARD:Object.freeze({
+      type:"SHIPPING_MARK_STANDARD",
+      currentVersion:"1.1.0",
+      supportedVersions:Object.freeze(["1.0.0","1.1.0"]),
+      legacyRequiredBindings:Object.freeze([
+        "shipping.skuLine","shipping.contractLine","shipping.weightLine",
+        "shipping.packageLine","shipping.crnLine","shipping.originLine"
+      ]),
+      versions:Object.freeze({
+        "1.1.0":Object.freeze({
+          gapMm:1.5,
+          minWidthMm:80,
+          maxWidthMm:280,
+          insetFloorMm:4,
+          paddingYmm:1.2,
+          rowMinHeightMm:8.5,
+          lineHeight:1.15,
+          minFontSizePt:7,
+          slots:Object.freeze([
+            Object.freeze({id:"ITEM",bindingKey:"shipping.skuLine",name:"Shipping · ITEM NO.",fontSizePt:13}),
+            Object.freeze({id:"CONTRACT",bindingKey:"shipping.contractLine",name:"Shipping · CONTRACT NO.",fontSizePt:10.5}),
+            Object.freeze({id:"WEIGHT",bindingKey:"shipping.weightLine",name:"Shipping · N.W. / G.W.",fontSizePt:10.5}),
+            Object.freeze({id:"MEAS",bindingKey:"shipping.packageLine",name:"Shipping · PACKAGE MEAS",fontSizePt:10.5}),
+            Object.freeze({id:"CRN",bindingKey:"shipping.crnLine",name:"Shipping · CRN",fontSizePt:10.5}),
+            Object.freeze({id:"ORIGIN",bindingKey:"shipping.originLine",name:"Shipping · ORIGIN",fontSizePt:10.5})
+          ])
+        })
+      })
+    })
+  });
+
+  function controlledBlockDefinition(type,version=""){
+    const root=controlledBlockDefinitions[String(type||"")]||null;
+    if(!root) return null;
+    const resolvedVersion=String(version||root.currentVersion);
+    const config=root.versions?.[resolvedVersion]||null;
+    return config?{...config,type:root.type,version:resolvedVersion,currentVersion:root.currentVersion,supportedVersions:[...root.supportedVersions]}:null;
+  }
+
+  function shippingMarkBlockLayout(artwork,panel,factoryList=factories,options={}){
+    const root=controlledBlockDefinitions.SHIPPING_MARK_STANDARD;
+    const version=String(options.version||root.currentVersion);
+    const def=controlledBlockDefinition(root.type,version);
+    if(!def) return {ok:false,reason:"BLOCK_VERSION_UNSUPPORTED",version};
+
+    const safe=Math.max(0,Number(artwork?.safeMarginMm??22));
+    const inset=Math.max(Number(def.insetFloorMm||4),safe);
+    const availableW=Math.max(0,Number(panel?.w||0)-inset*2);
+    const availableH=Math.max(0,Number(panel?.h||0)-inset*2);
+    if(availableW<Number(def.minWidthMm||80)){
+      return {ok:false,reason:"BLOCK_PANEL_TOO_NARROW",version,inset,availableW,availableH};
+    }
+
+    const blockW=Math.min(Number(def.maxWidthMm||280),availableW);
+    const minPt=Number(def.minFontSizePt||7);
+    const measure=(scale)=>{
+      const slots=[];
+      let total=0;
+      for(const slot of def.slots){
+        const fontSizePt=Math.max(minPt,Number(slot.fontSizePt||10)*scale);
+        const text=resolveArtworkBinding(slot.bindingKey,artwork,factoryList);
+        const layout=textLayout({
+          w:blockW,
+          h:100000,
+          fontSizePt,
+          fontWeight:"normal",
+          wrapText:true,
+          lineHeight:def.lineHeight
+        },text);
+        const rowHeightMm=Math.max(
+          Number(def.rowMinHeightMm||8.5),
+          layout.heightMm+Number(def.paddingYmm||1.2)*2
+        );
+        slots.push({
+          ...slot,
+          text,
+          fontSizePt,
+          lineHeight:Number(def.lineHeight||1.15),
+          rowHeightMm,
+          lineCount:layout.lineCount,
+          textWidthMm:layout.widthMm,
+          textHeightMm:layout.heightMm
+        });
+        total+=rowHeightMm;
+      }
+      total+=Math.max(0,def.slots.length-1)*Number(def.gapMm||0);
+      return {slots,totalH:total};
+    };
+
+    let chosen=measure(1);
+    let scale=1;
+    if(chosen.totalH>availableH+.01){
+      const minScale=Math.min(1,Math.min(...def.slots.map(slot=>minPt/Math.max(minPt,Number(slot.fontSizePt||minPt)))));
+      const atMin=measure(minScale);
+      if(atMin.totalH>availableH+.01){
+        return {
+          ok:false,reason:"BLOCK_TOO_TALL_AT_MIN_FONT",version,inset,availableW,availableH,
+          minimumHeightMm:atMin.totalH,minimumScale:minScale
+        };
+      }
+      let lo=minScale,hi=1,best=atMin;
+      for(let i=0;i<28;i+=1){
+        const mid=(lo+hi)/2;
+        const current=measure(mid);
+        if(current.totalH<=availableH+.01){lo=mid;best=current;scale=mid;}
+        else hi=mid;
+      }
+      chosen=best;
+    }
+
+    const x=Number(panel.x||0)+inset+(availableW-blockW)/2;
+    const y=Number(panel.y||0)+inset;
+    let cursorY=y;
+    const slots=chosen.slots.map(slot=>{
+      const placed={
+        ...slot,
+        x,
+        y:cursorY,
+        w:blockW,
+        h:slot.rowHeightMm
+      };
+      cursorY+=slot.rowHeightMm+Number(def.gapMm||0);
+      return placed;
+    });
+    return {
+      ok:true,
+      type:root.type,
+      version,
+      panelId:String(panel?.id||""),
+      inset,
+      availableW,
+      availableH,
+      blockW,
+      totalH:chosen.totalH,
+      x,
+      y,
+      scale,
+      slots
+    };
+  }
+
+  function validateShippingMarkBlock(items){
+    const list=Array.isArray(items)?items.filter(Boolean):[];
+    const root=controlledBlockDefinitions.SHIPPING_MARK_STANDARD;
+    if(!list.length) return {ok:false,reason:"BLOCK_EMPTY",version:"",missing:[...root.legacyRequiredBindings]};
+    const versions=new Set(list.map(x=>String(x.blockVersion||"")));
+    const version=versions.size===1?[...versions][0]:"";
+    const versionSupported=versions.size===1&&root.supportedVersions.includes(version);
+    const bindings=list.map(x=>String(x.bindingKey||""));
+    const bindingSet=new Set(bindings);
+    const missing=root.legacyRequiredBindings.filter(k=>!bindingSet.has(k));
+    const duplicates=[...bindingSet].filter(k=>k&&bindings.filter(x=>x===k).length>1);
+    const groupIds=new Set(list.map(x=>String(x.groupId||"")));
+    const panels=new Set(list.map(x=>String(x.panelId||"")));
+    const typeOk=list.every(x=>String(x.type||"")==="text");
+    const visibleOk=list.every(x=>x.visible!==false);
+
+    let slotsOk=true,wrongSlots=[];
+    if(version==="1.1.0"){
+      const def=controlledBlockDefinition(root.type,version);
+      const expected=new Map(def.slots.map(s=>[s.id,s.bindingKey]));
+      const seen=new Set();
+      wrongSlots=list.flatMap(item=>{
+        const slot=String(item.blockSlot||"");
+        const binding=String(item.bindingKey||"");
+        if(!expected.has(slot)||expected.get(slot)!==binding||seen.has(slot)){
+          return [{slot,binding,id:String(item.id||"")}];
+        }
+        seen.add(slot);return [];
+      });
+      for(const slot of expected.keys()) if(!seen.has(slot)) wrongSlots.push({slot,binding:expected.get(slot),id:""});
+      slotsOk=wrongSlots.length===0;
+    }
+
+    const ok=versionSupported&&!missing.length&&!duplicates.length&&groupIds.size===1&&panels.size===1&&typeOk&&visibleOk&&slotsOk;
+    return {
+      ok,version,versionSupported,missing,duplicates,wrongSlots,
+      groupOk:groupIds.size===1,panelOk:panels.size===1,typeOk,visibleOk,
+      groupId:[...groupIds][0]||"",panelId:[...panels][0]||""
+    };
   }
 
   function effectiveImageDpi(element) {
@@ -963,10 +1147,6 @@
       }
     }
 
-    const shippingRequired=[
-      "shipping.skuLine","shipping.contractLine","shipping.weightLine",
-      "shipping.packageLine","shipping.crnLine","shipping.originLine"
-    ];
     const shippingGroups=new Map();
     for(const element of customElements){
       if(element?.visible===false||String(element?.blockType||"")!=="SHIPPING_MARK_STANDARD") continue;
@@ -975,20 +1155,67 @@
       shippingGroups.get(key).push(element);
     }
     for(const [groupId,items] of shippingGroups){
-      const keys=new Set(items.map(x=>String(x.bindingKey||"")));
-      const missing=shippingRequired.filter(k=>!keys.has(k));
-      const versions=new Set(items.map(x=>String(x.blockVersion||"")));
-      const versionOk=versions.size===1&&versions.has("1.0.0");
+      const validation=validateShippingMarkBlock(items);
       assetChecks.push(check(
         `shipping-block-${groupId}`,
         "Standard Shipping Mark Block",
-        !missing.length&&versionOk?"pass":"error",
-        !missing.length&&versionOk
-          ? `SHIPPING_MARK_STANDARD 1.0.0 · ${items.length} bound text elements.`
-          : `Controlled block is incomplete or version-mismatched. Missing: ${missing.join(", ")||"none"}; versions: ${[...versions].join(", ")||"none"}.`,
+        validation.ok?"pass":"error",
+        validation.ok
+          ? `SHIPPING_MARK_STANDARD ${validation.version} · ${items.length} controlled text slots.`
+          : `Controlled block invalid. Version: ${validation.version||"mixed/empty"}; missing: ${validation.missing.join(", ")||"none"}; duplicates: ${validation.duplicates.join(", ")||"none"}; slot errors: ${validation.wrongSlots.length}; groupOk=${validation.groupOk}; panelOk=${validation.panelOk}.`,
         "Assets",
-        Boolean(missing.length||!versionOk)
+        !validation.ok
       ));
+
+      if(validation.version==="1.1.0"&&validation.panelOk){
+        const panel=g.panels.find(p=>p.id===validation.panelId);
+        const expected=panel?shippingMarkBlockLayout(a,panel,factoryList,{version:"1.1.0"}):{ok:false,reason:"BLOCK_PANEL_INVALID"};
+        if(!expected.ok){
+          assetChecks.push(check(
+            `shipping-block-layout-${groupId}`,
+            "Shipping Mark Block layout",
+            "error",
+            `Block cannot be laid out in ${validation.panelId||"assigned panel"}: ${expected.reason||"UNKNOWN"}.`,
+            "Assets",
+            true
+          ));
+        }else{
+          const bySlot=new Map(items.map(x=>[String(x.blockSlot||""),x]));
+          const drift=[];
+          for(const slot of expected.slots){
+            const item=bySlot.get(slot.id);
+            if(!item) continue;
+            const fields=[
+              ["x",slot.x,.25],["y",slot.y,.25],["w",slot.w,.25],["h",slot.h,.25],
+              ["fontSizePt",slot.fontSizePt,.15],["lineHeight",slot.lineHeight,.02]
+            ];
+            for(const [field,value,tolerance] of fields){
+              if(Math.abs(Number(item[field]||0)-Number(value||0))>tolerance) drift.push(`${slot.id}.${field}`);
+            }
+            if(!item.wrapText||item.autoFitText||Number(item.rotation||0)!==0) drift.push(`${slot.id}.mode`);
+          }
+          assetChecks.push(check(
+            `shipping-block-layout-${groupId}`,
+            "Shipping Mark Block layout",
+            drift.length?"error":"pass",
+            drift.length
+              ? `Controlled 1.1.0 layout drift detected: ${drift.join(", ")}. Reflow the whole block from canonical data.`
+              : `Canonical 1.1.0 reflow matches ${validation.panelId}; block height ${round(expected.totalH,1)} mm at scale ${round(expected.scale*100,1)}%.`,
+            "Assets",
+            Boolean(drift.length)
+          ));
+        }
+
+        const allLocked=items.every(x=>Boolean(x.locked));
+        assetChecks.push(check(
+          `shipping-block-lock-${groupId}`,
+          "Shipping Mark Block locked",
+          allLocked?"pass":"error",
+          allLocked?"All controlled slots are locked as one unit.":"Version 1.1.0 must be locked as a whole before review/production.",
+          "Assets",
+          !allLocked
+        ));
+      }
     }
 
     const print = [
@@ -1108,7 +1335,8 @@
         autoFitText:Boolean(e.autoFitText),
         minFontSizePt:Number(e.minFontSizePt||7),
         blockType:String(e.blockType||""),
-        blockVersion:String(e.blockVersion||"")
+        blockVersion:String(e.blockVersion||""),
+        blockSlot:String(e.blockSlot||"")
       })) : []
     };
   }
@@ -1157,6 +1385,10 @@
     estimateTextBox,
     textFitMetrics,
     fitTextToBox,
+    controlledBlockDefinitions,
+    controlledBlockDefinition,
+    shippingMarkBlockLayout,
+    validateShippingMarkBlock,
     effectiveImageDpi,
     productionElementQualification,
     runPreflight,

@@ -350,7 +350,12 @@
     if(!sameSelectionPanel(items)){toast("复制到面板前，请先选择同一面板内的元素。","error");return [];}
     const source=panelById(items[0].panelId),target=panelById(targetPanelId);
     if(!source||!target){toast("目标面板无效。","error");return [];}
-    const oversized=items.find(e=>{const v=D.elementVisualBounds(e);return v.width>target.w||v.height>target.h;});
+    const oversized=items.find(e=>{
+      const v=D.elementVisualBounds(e);
+      const over=v.width>target.w||v.height>target.h;
+      const controlled=String(e.blockType||"")==="SHIPPING_MARK_STANDARD"&&String(e.blockVersion||"")==="1.1.0";
+      return over&&!(options.allowControlledOversized&&controlled);
+    });
     if(oversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return [];}
     const groupMap=new Map();
     const clones=[];
@@ -383,8 +388,16 @@
     const items=selectedArtworkElements();
     if(!items.length||!localArtworkEditable()) return;
     pushArtworkHistory();
-    const clones=cloneElementsToPanel(items,targetPanelId);
+    const controlled=items.some(e=>String(e.blockType||"")==="SHIPPING_MARK_STANDARD"&&String(e.blockVersion||"")==="1.1.0");
+    const clones=cloneElementsToPanel(items,targetPanelId,{allowControlledOversized:controlled,unlockCopies:controlled?false:true});
     if(!clones.length){state.historyPast.pop();return;}
+    const reflow=reflowControlledBlockGroups(clones);
+    if(!reflow.ok){
+      state.artwork.elements=artworkElements().filter(e=>!clones.some(c=>c.id===e.id));
+      state.historyPast.pop();
+      toast(`目标面板无法容纳受控 Block：${reflow.reason||"LAYOUT_FAILED"}`,"error");
+      render();return;
+    }
     persistLocalDraft();render();
     toast(`已复制 ${clones.length} 个元素到 ${targetPanelId}`,"success");
   }
@@ -392,8 +405,15 @@
     const items=artworkElements().filter(e=>String(e.panelId||"")===String(sourcePanelId||""));
     if(!items.length){toast(`${sourcePanelId} 没有可复制的自定义元素。`,"error");return;}
     pushArtworkHistory();
-    const clones=cloneElementsToPanel(items,targetPanelId,{nameSuffix:" · "+targetPanelId,unlockCopies:false});
+    const clones=cloneElementsToPanel(items,targetPanelId,{nameSuffix:" · "+targetPanelId,unlockCopies:false,allowControlledOversized:true});
     if(!clones.length){state.historyPast.pop();return;}
+    const reflow=reflowControlledBlockGroups(clones);
+    if(!reflow.ok){
+      state.artwork.elements=artworkElements().filter(e=>!clones.some(c=>c.id===e.id));
+      state.historyPast.pop();
+      toast(`目标面板无法容纳受控 Block：${reflow.reason||"LAYOUT_FAILED"}`,"error");
+      render();return;
+    }
     persistLocalDraft();render();
     toast(`已复制 ${sourcePanelId} 的整套布局（${clones.length} 个元素）到 ${targetPanelId}`,"success");
   }
@@ -726,7 +746,7 @@
       <div class="element-properties">
         ${selected.locked?'<div class="notice warn"><strong>LOCKED</strong>：该对象不能修改属性、移动、Resize、对齐或删除；先解除 Lock。</div>':""}
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
-        <div class="field"><label>Panel 面板</label><select class="select" data-element-prop="panelId">${panelOptions}</select></div>
+        <div class="field"><label>Panel 面板</label><select class="select" data-element-prop="panelId" ${selected.blockType?"disabled":""}>${panelOptions}</select></div>
         <div class="row2">
           <label class="toggle-line"><input type="checkbox" data-element-visible ${selected.visible!==false?"checked":""}/> Visible</label>
           <label class="toggle-line"><input type="checkbox" data-element-lock ${selected.locked?"checked":""}/> Lock</label>
@@ -743,9 +763,10 @@
             <button class="btn small" data-action="lock-controlled-block" ${selectedBlockLocked?"disabled":""}>Lock Whole Block</button>
             <button class="btn small" data-action="unlock-controlled-block" ${!selectedBlockLocked?"disabled":""}>Unlock Whole Block</button>
           </div>
+          <button class="btn small" style="width:100%;margin-top:6px" data-action="reflow-controlled-block" ${selected.blockVersion==="1.1.0"?"":"disabled"}>Reflow Whole Block from Data</button>
         `:""}
         ${selected.type==="text"?`
-          <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
+          <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey" ${selected.blockType?"disabled":""}>${bindingOptions}</select></div>
           ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementText(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
           <div class="field"><label>Text 文本</label><textarea class="input" rows="3" data-element-prop="text" ${selected.bindingKey?"disabled":""}>${esc(selected.text||"")}</textarea></div>
           <div class="row3">
@@ -1656,6 +1677,7 @@
       const apply=()=>{
         const k=el.dataset.art;
         state.artwork[k]=el.type==="number"?Number(el.value):el.value;
+        refreshControlledShippingBlocks();
         refreshAutoFitTextElements();
         persistLocalDraft();
       };
@@ -1989,49 +2011,109 @@
     persistLocalDraft();render();toast("包装图标已添加（Review Library）","success");
   }
 
+  function shippingMarkItemsByGroup(groupId){
+    return artworkElements().filter(e=>
+      String(e.blockType||"")==="SHIPPING_MARK_STANDARD"&&
+      String(e.groupId||"")===String(groupId||"")
+    );
+  }
+
+  function reflowShippingMarkGroup(groupId,options={}){
+    const items=shippingMarkItemsByGroup(groupId);
+    if(!items.length) return {ok:false,reason:"BLOCK_NOT_FOUND"};
+    const version=String(items[0].blockVersion||"");
+    if(version!=="1.1.0") return {ok:true,skipped:true,version};
+    const panelId=String(options.panelId||items[0].panelId||"");
+    const panel=panelById(panelId);
+    if(!panel) return {ok:false,reason:"BLOCK_PANEL_INVALID"};
+    const layout=D.shippingMarkBlockLayout(state.artwork,panel,state.factories,{version:"1.1.0"});
+    if(!layout.ok) return layout;
+    const bySlot=new Map(items.map(e=>[String(e.blockSlot||""),e]));
+    if(layout.slots.some(slot=>!bySlot.has(slot.id))) return {ok:false,reason:"BLOCK_SLOT_MISSING"};
+
+    for(const slot of layout.slots){
+      const item=bySlot.get(slot.id);
+      item.name=slot.name;
+      item.bindingKey=slot.bindingKey;
+      item.panelId=panel.id;
+      item.x=slot.x;item.y=slot.y;item.w=slot.w;item.h=slot.h;
+      item.rotation=0;
+      item.fontSizePt=slot.fontSizePt;
+      item.fontWeight="normal";
+      item.textAlign="left";
+      item.wrapText=true;
+      item.lineHeight=slot.lineHeight;
+      item.autoFitText=false;
+      item.minFontSizePt=7;
+      item.constrainToPanel=true;
+      item.safeAreaExempt=false;
+      item.blockType="SHIPPING_MARK_STANDARD";
+      item.blockVersion="1.1.0";
+      item.blockSlot=slot.id;
+      if(options.lock!==undefined) item.locked=Boolean(options.lock);
+    }
+    return {...layout,ok:true,items};
+  }
+
+  function reflowControlledBlockGroups(elements=artworkElements()){
+    const groups=[...new Set((Array.isArray(elements)?elements:[])
+      .filter(e=>String(e.blockType||"")==="SHIPPING_MARK_STANDARD"&&String(e.blockVersion||"")==="1.1.0")
+      .map(e=>String(e.groupId||""))
+      .filter(Boolean))];
+    for(const groupId of groups){
+      const result=reflowShippingMarkGroup(groupId);
+      if(!result.ok) return result;
+    }
+    return {ok:true,groups};
+  }
+
+  function refreshControlledShippingBlocks(){
+    return reflowControlledBlockGroups(artworkElements());
+  }
+
+  function reflowSelectedControlledBlock(){
+    const selected=selectedArtworkElement();
+    if(!selected?.groupId||String(selected.blockType||"")!=="SHIPPING_MARK_STANDARD") return;
+    if(String(selected.blockVersion||"")!=="1.1.0"){
+      toast("Legacy Shipping Mark 1.0.0 保持兼容但不支持自动 Reflow；请插入新版 1.1.0。","error");
+      return;
+    }
+    pushArtworkHistory();
+    const result=reflowShippingMarkGroup(selected.groupId);
+    if(!result.ok){state.historyPast.pop();toast(`Reflow 失败：${result.reason||"LAYOUT_FAILED"}`,"error");return;}
+    persistLocalDraft();render();
+    toast(`Shipping Mark 1.1.0 已按当前数据重排 · ${D.round(result.totalH,1)} mm`,"success");
+  }
+
   function addShippingMarkBlock(){
     if(!localArtworkEditable()) return;
     const selected=selectedArtworkElement();
     const panel=panelById(selected?.panelId)||panelById("TOP_FACE")||geometry().panels[0];
     if(!panel){toast("没有可用纸箱面板。","error");return;}
-    const configuredSafe=Math.max(0,Number(state.artwork.safeMarginMm??22));
-    const inset=Math.max(4,Math.min(configuredSafe,panel.w*.18,panel.h*.18));
-    const availableW=panel.w-inset*2,availableH=panel.h-inset*2;
-    const rows=[
-      ["shipping.skuLine","Shipping · ITEM NO.",13],
-      ["shipping.contractLine","Shipping · CONTRACT NO.",10.5],
-      ["shipping.weightLine","Shipping · N.W. / G.W.",10.5],
-      ["shipping.packageLine","Shipping · PACKAGE MEAS",10.5],
-      ["shipping.crnLine","Shipping · CRN",10.5],
-      ["shipping.originLine","Shipping · ORIGIN",10.5]
-    ];
-    const rowH=8.5,gap=1.5,totalH=rows.length*rowH+(rows.length-1)*gap;
-    if(availableW<80||availableH<totalH){
-      toast(`${panel.id} 可用安全区太小，无法放入标准 Shipping Mark Block。`,"error");
+    const def=D.controlledBlockDefinition("SHIPPING_MARK_STANDARD");
+    const layout=D.shippingMarkBlockLayout(state.artwork,panel,state.factories,{version:def?.version||"1.1.0"});
+    if(!layout.ok){
+      toast(`${panel.id} 无法放入 Shipping Mark 1.1.0：${layout.reason}`,"error");
       return;
     }
-    const blockW=Math.min(280,availableW);
-    const x=panel.x+inset+(availableW-blockW)/2;
-    const y=panel.y+inset;
     const groupId=newGroupId();
-    const elements=rows.map(([bindingKey,name,fontSizePt],index)=>({
-      id:newElementId(),type:"text",name,
-      x,y:y+index*(rowH+gap),w:blockW,h:rowH,rotation:0,locked:false,visible:true,
+    const elements=layout.slots.map(slot=>({
+      id:newElementId(),type:"text",name:slot.name,
+      x:slot.x,y:slot.y,w:slot.w,h:slot.h,rotation:0,locked:true,visible:true,
       panelId:panel.id,constrainToPanel:true,safeAreaExempt:false,groupId,
-      text:"",bindingKey,fontSizePt,fontWeight:"normal",textAlign:"left",
-      wrapText:false,lineHeight:1.15,autoFitText:true,minFontSizePt:7,
+      text:"",bindingKey:slot.bindingKey,fontSizePt:slot.fontSizePt,fontWeight:"normal",textAlign:"left",
+      wrapText:true,lineHeight:slot.lineHeight,autoFitText:false,minFontSizePt:7,
       symbology:"",humanReadable:false,symbolKey:"",
       payload:"",ecc:"M",sourceType:"controlled-shipping-block",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0,
-      blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.0.0"
+      blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.1.0",blockSlot:slot.id
     }));
     pushArtworkHistory();
     artworkElements().push(...elements);
     state.selectedElementIds=elements.map(e=>e.id);
     state.selectedElementId=elements.at(-1)?.id||null;
-    refreshAutoFitTextElements();
     persistLocalDraft();render();
-    toast(`标准 Shipping Mark Block 1.0.0 已添加到 ${panel.id}`,"success");
+    toast(`标准 Shipping Mark Block 1.1.0 已添加到 ${panel.id} · ${D.round(layout.totalH,1)} mm`,"success");
   }
 
   function addBoundTextElement(){
@@ -2076,7 +2158,7 @@
   }
   function refreshAutoFitTextElements(){
     for(const element of artworkElements()){
-      if(element.type==="text"&&element.autoFitText) fitTextElementInPlace(element);
+      if(element.type==="text"&&element.autoFitText&&String(element.blockVersion||"")!=="1.1.0") fitTextElementInPlace(element);
     }
   }
 
@@ -2674,6 +2756,7 @@
     if(action==="ungroup-selection") return ungroupSelectedElements();
     if(action==="lock-controlled-block") return setSelectedControlledBlockLock(true);
     if(action==="unlock-controlled-block") return setSelectedControlledBlockLock(false);
+    if(action==="reflow-controlled-block") return reflowSelectedControlledBlock();
     if(action==="fit-text-element") return fitSelectedTextElement();
     if(action==="layer-front") return reorderSelectedElement("front");
     if(action==="layer-back") return reorderSelectedElement("back");
