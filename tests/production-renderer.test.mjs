@@ -90,7 +90,33 @@ function makeSyntheticCmykIcc(){
   return icc;
 }
 
+const customSnapshot={
+  ...snapshot,
+  artwork:{
+    ...snapshot.artwork,
+    elements:[{
+      id:"custom-visible",type:"text",name:"Bound SKU",visible:true,
+      panelId:"TOP_FACE",bindingKey:"product.sku",text:""
+    }]
+  }
+};
+assert.throws(
+  ()=>renderEmbeddedArtworkPdf({snapshot:customSnapshot,fontBytes:makeSyntheticTrueType(),qrEcc:"M",mode:"production"}),
+  (e)=>e?.code==="PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED"
+);
+
+const hiddenCustomSnapshot={
+  ...snapshot,
+  artwork:{
+    ...snapshot.artwork,
+    elements:[{id:"custom-hidden",type:"text",visible:false,text:"NOT PRINTED"}]
+  }
+};
+
 const font=makeSyntheticTrueType();
+const hiddenRendered=renderEmbeddedArtworkPdf({snapshot:hiddenCustomSnapshot,fontBytes:font,qrEcc:"M",mode:"production"});
+assert.ok(hiddenRendered.bytes.length>0,"Hidden custom elements may remain in canonical history without entering production output");
+
 const rendered=renderEmbeddedArtworkPdf({snapshot,fontBytes:font,qrEcc:"M",mode:"production"});
 const latin1=Buffer.from(rendered.bytes).toString("latin1");
 

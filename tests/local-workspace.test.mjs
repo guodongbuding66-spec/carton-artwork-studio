@@ -32,8 +32,14 @@ assert.match(app,/data-action="add-barcode-element"/);
 assert.match(app,/data-action="add-handling-symbol"/);
 assert.match(app,/data-element-prop="symbology"/);
 assert.match(app,/data-element-prop="symbolKey"/);
-assert.match(app,/function barcodeSvgBody\(element,w,h\)/);
+assert.match(app,/function barcodeSvgBody\(element,w,h,artwork=state\.artwork,factoryList=state\.factories\)/);
 assert.match(app,/function handlingSymbolSvgBody\(key,w,h\)/);
+assert.match(app,/function addBoundTextElement\(\)/);
+assert.match(app,/data-action="add-bound-text-element"/);
+assert.match(app,/data-element-prop="bindingKey"/);
+assert.match(app,/D\.resolvedElementText\(selected,state\.artwork,state\.factories\)/);
+assert.match(app,/D\.resolvedElementPayload\(selected,state\.artwork,state\.factories\)/);
+assert.match(app,/text:D\.resolvedElementText\(e,artwork,state\.factories\)/);
 assert.match(app,/\$\{code\}\$\{custom\}\$\{watermark\}/);
 assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*persistLocalDraft\(\);/);
 
