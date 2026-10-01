@@ -19,6 +19,90 @@
     "114131","311141","411131","211412","211214","211232","2331112"
   ];
 
+  const ITF_DIGIT_PATTERNS = {
+    "0":"nnwwn","1":"wnnnw","2":"nwnnw","3":"wwnnn","4":"nnwnw",
+    "5":"wnwnn","6":"nwwnn","7":"nnnww","8":"wnnwn","9":"nwnwn"
+  };
+
+  function gs1CheckDigit(body) {
+    const digits=String(body||"");
+    if(!/^\d+$/.test(digits)) throw new Error("GS1 check digit input must contain digits only.");
+    let sum=0,weight=3;
+    for(let i=digits.length-1;i>=0;i-=1){
+      sum+=Number(digits[i])*weight;
+      weight=weight===3?1:3;
+    }
+    return String((10-(sum%10))%10);
+  }
+
+  function normalizeItf14(text) {
+    const digits=String(text||"").replace(/[\s-]+/g,"");
+    if(!/^\d+$/.test(digits)) throw new Error("ITF-14 accepts numeric GTIN data only.");
+    if(digits.length===13) return digits+gs1CheckDigit(digits);
+    if(digits.length!==14) throw new Error("ITF-14 requires 13 GTIN digits plus calculated check digit, or a complete 14-digit GTIN.");
+    const expected=gs1CheckDigit(digits.slice(0,13));
+    if(digits[13]!==expected) throw new Error(`ITF-14 check digit invalid; expected ${expected}.`);
+    return digits;
+  }
+
+  function itf14Bars(text, options = {}) {
+    const payload=normalizeItf14(text);
+    const moduleMm=Number(options.moduleMm??0.8);
+    const wideRatio=Number(options.wideRatio??2.5);
+    const heightMm=Number(options.heightMm??32);
+    const quietModules=Number(options.quietModules??10);
+    if(!(moduleMm>0)&&Number.isFinite(moduleMm)) throw new Error("ITF-14 module width must be positive.");
+    const widthFor=(kind)=>kind==="w"?moduleMm*wideRatio:moduleMm;
+    let x=quietModules*moduleMm;
+    const bars=[];
+    const addSequence=(sequence)=>{
+      let black=true;
+      for(const kind of sequence){
+        const w=widthFor(kind);
+        if(black) bars.push({x,y:0,w,h:heightMm});
+        x+=w;
+        black=!black;
+      }
+    };
+    addSequence("nnnn");
+    for(let i=0;i<payload.length;i+=2){
+      const barsPattern=ITF_DIGIT_PATTERNS[payload[i]];
+      const spacesPattern=ITF_DIGIT_PATTERNS[payload[i+1]];
+      let sequence="";
+      for(let j=0;j<5;j+=1) sequence+=barsPattern[j]+spacesPattern[j];
+      addSequence(sequence);
+    }
+    addSequence("wnn");
+    const widthMm=x+quietModules*moduleMm;
+    return {
+      symbology:"ITF-14",
+      payload,
+      bars,
+      widthMm,
+      heightMm,
+      quietModules,
+      moduleMm,
+      wideRatio,
+      checkDigit:payload.at(-1)
+    };
+  }
+
+  function itf14Svg(text, options = {}) {
+    const model=itf14Bars(text,options);
+    const hri=options.hri!==false;
+    const fontSizeMm=Number(options.fontSizeMm??4);
+    const totalH=model.heightMm+(hri?fontSizeMm*1.8:0);
+    const bars=model.bars.map((b)=>`<rect x="${b.x.toFixed(3)}" y="0" width="${b.w.toFixed(3)}" height="${b.h.toFixed(3)}" fill="#000"/>`).join("");
+    const hriText=hri
+      ? `<text x="${(model.widthMm/2).toFixed(3)}" y="${(model.heightMm+fontSizeMm*1.25).toFixed(3)}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${fontSizeMm}mm" fill="#000">${model.payload}</text>`
+      : "";
+    return {
+      ...model,
+      totalHeightMm:totalH,
+      svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${model.widthMm} ${totalH}" width="${model.widthMm}mm" height="${totalH}mm">${bars}${hriText}</svg>`
+    };
+  }
+
   function assertAscii(text) {
     for (const ch of text) {
       const c = ch.charCodeAt(0);
@@ -146,6 +230,10 @@
     code128Modules,
     code128Bars,
     code128Svg,
+    gs1CheckDigit,
+    normalizeItf14,
+    itf14Bars,
+    itf14Svg,
     qrMatrix,
     qrPreviewMatrix,
     qrPreviewSvg
