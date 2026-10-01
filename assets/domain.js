@@ -598,7 +598,7 @@
     let chosen=measure(1);
     let scale=1;
     if(chosen.totalH>availableH+.01){
-      const minScale=Math.min(1,Math.max(...def.slots.map(slot=>minPt/Math.max(minPt,Number(slot.fontSizePt||minPt)))));
+      const minScale=Math.min(1,Math.min(...def.slots.map(slot=>minPt/Math.max(minPt,Number(slot.fontSizePt||minPt)))));
       const atMin=measure(minScale);
       if(atMin.totalH>availableH+.01){
         return {
