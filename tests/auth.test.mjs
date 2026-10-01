@@ -33,6 +33,7 @@ assert.equal(can(identity,"AUDIT_READ"),false);
 
 assert.equal(permissionForRequest("POST","/api/artworks"),"ARTWORK_WRITE");
 assert.equal(permissionForRequest("POST","/api/artworks/a1/approval"),"REVIEW");
+assert.equal(permissionForRequest("GET","/api/import-jobs/job-1/reviewer-queue"),"REVIEW");
 assert.equal(permissionForRequest("POST","/api/artworks/a1/exports"),"EXPORT_PRODUCTION");
 assert.equal(permissionForRequest("PUT","/api/admin/users/u1/roles"),"ADMIN");
 assert.equal(permissionForRequest("GET","/api/artworks"),"READ");
