@@ -2231,7 +2231,11 @@ export default {
           SELECT r.id,r.row_no AS rowNo,r.sku,r.status,r.canonical_data_json AS canonicalDataJson,
                  r.issues_json AS issuesJson,r.artwork_id AS artworkId,
                  r.draft_created_by AS draftCreatedBy,r.draft_created_at AS draftCreatedAt,
-                 r.created_at AS createdAt,a.artwork_no AS artworkNo
+                 r.batch_preflight_status AS batchPreflightStatus,r.batch_preflight_run_id AS batchPreflightRunId,
+                 r.batch_preflight_at AS batchPreflightAt,r.batch_submit_status AS batchSubmitStatus,
+                 r.batch_submitted_at AS batchSubmittedAt,r.batch_process_error AS batchProcessError,
+                 r.created_at AS createdAt,a.artwork_no AS artworkNo,a.status AS artworkStatus,
+                 a.current_revision AS artworkRevision
           FROM import_rows r
           LEFT JOIN artworks a ON a.id=r.artwork_id
           WHERE r.job_id=?
@@ -2395,6 +2399,218 @@ export default {
           },
           status:allPassedLinked?"DRAFTS_CREATED":"PARTIAL"
         }},{status:failed.length?207:201});
+      }
+
+
+      const importProcessMatch=/^\/api\/import-jobs\/([^/]+)\/process-drafts$/.exec(url.pathname);
+      if(request.method==="POST"&&importProcessMatch){
+        if(!can(identity,"BATCH_WRITE")){
+          return err(403,"BATCH_WRITE_REQUIRED","Batch Write permission is also required to process Import Job Drafts.");
+        }
+        const jobId=importProcessMatch[1],b=await bodyJson(request);
+        const submitPassed=Boolean(b.submitPassed);
+        const retryFailed=Boolean(b.retryFailed);
+        const limit=Math.max(1,Math.min(100,Number(b.limit||100)));
+        const job=await env.DB.prepare(
+          "SELECT id,status,source_name AS sourceName FROM import_jobs WHERE id=?"
+        ).bind(jobId).first();
+        if(!job)return err(404,"NOT_FOUND","Import job not found.");
+
+        const where=submitPassed
+          ? "a.status='DRAFT' AND (r.batch_submit_status IS NULL OR r.batch_submit_status<>'SUBMITTED')"
+          : retryFailed
+            ? "a.status='DRAFT' AND (r.batch_preflight_at IS NULL OR r.batch_preflight_status='ERROR')"
+            : "a.status='DRAFT' AND r.batch_preflight_at IS NULL";
+
+        const {results:rows}=await env.DB.prepare(`
+          SELECT r.id,r.row_no AS rowNo,r.sku,r.artwork_id AS artworkId,
+                 r.batch_preflight_status AS priorPreflightStatus,
+                 r.batch_submit_status AS priorSubmitStatus,
+                 a.artwork_no AS artworkNo,a.sku AS artworkSku,a.contract_no AS contractNo,
+                 a.factory_id AS factoryId,a.status AS artworkStatus,
+                 a.current_revision AS currentRevision,a.canonical_data_json AS canonicalDataJson
+          FROM import_rows r
+          JOIN artworks a ON a.id=r.artwork_id
+          WHERE r.job_id=? AND r.status='PASS' AND r.artwork_id IS NOT NULL AND ${where}
+          ORDER BY r.row_no
+          LIMIT ?
+        `).bind(jobId,limit).all();
+
+        const passed=[],failed=[],submitted=[],skipped=[];
+        for(const row of rows||[]){
+          let snapshot;
+          try{snapshot=JSON.parse(row.canonicalDataJson||"{}");}
+          catch{
+            const message="INVALID_CANONICAL_DATA_JSON";
+            await env.DB.prepare(`
+              UPDATE import_rows
+              SET batch_preflight_status='ERROR',batch_preflight_run_id=NULL,batch_preflight_at=CURRENT_TIMESTAMP,
+                  batch_process_error=?
+              WHERE id=?
+            `).bind(message,row.id).run();
+            failed.push({rowNo:row.rowNo,artworkId:row.artworkId,artworkNo:row.artworkNo,error:message});
+            continue;
+          }
+
+          let qualification;
+          try{
+            qualification=qualifyProductionArtwork({
+              snapshot,
+              metadata:{
+                sku:row.artworkSku,
+                contractNo:row.contractNo,
+                factoryId:row.factoryId,
+                revision:row.currentRevision,
+                status:row.artworkStatus
+              }
+            });
+          }catch(e){
+            qualification={
+              ok:false,
+              report:{
+                ok:false,
+                revision:String(row.currentRevision||""),
+                preflight:{summary:{pass:0,warning:0,error:1,blocking:1},blockingChecks:[{
+                  id:"server-qualification-exception",title:"Server qualification exception",
+                  status:"error",blocking:true,detail:e?.message||String(e),category:"Server"
+                }],warningChecks:[]},
+                customElements:{visible:0,qualified:0,unqualified:0,items:[]}
+              }
+            };
+          }
+
+          const preflightRunId=crypto.randomUUID();
+          const pfStatus=qualification.ok?"PASS":"ERROR";
+          const blocking=qualification.report?.preflight?.blockingChecks||[];
+          const processError=qualification.ok
+            ? null
+            : (blocking[0]?.detail||blocking[0]?.title||"SERVER_PREFLIGHT_BLOCKED");
+
+          await env.DB.batch([
+            env.DB.prepare(`
+              INSERT INTO preflight_runs(id,artwork_id,revision,profile_code,profile_version,status,report_json,created_at)
+              VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+            `).bind(
+              preflightRunId,row.artworkId,row.currentRevision,
+              "US_SIDE_SEAL_K_ONLY_V1","server-qualification-1",pfStatus,
+              JSON.stringify({source:"batch-server",jobId,rowNo:row.rowNo,qualification:qualification.report})
+            ),
+            env.DB.prepare(`
+              UPDATE import_rows
+              SET batch_preflight_status=?,batch_preflight_run_id=?,batch_preflight_at=CURRENT_TIMESTAMP,
+                  batch_process_error=?
+              WHERE id=?
+            `).bind(pfStatus,preflightRunId,processError,row.id)
+          ]);
+          await audit(env,identity,"PREFLIGHT",preflightRunId,"BATCH_SERVER_RUN",{
+            newValue:{artworkId:row.artworkId,revision:row.currentRevision,status:pfStatus,jobId,rowNo:row.rowNo},
+            reason:"Authoritative server preflight from Import Job"
+          });
+
+          if(!qualification.ok){
+            failed.push({
+              rowNo:row.rowNo,artworkId:row.artworkId,artworkNo:row.artworkNo,
+              preflightRunId,error:processError,report:qualification.report
+            });
+            continue;
+          }
+
+          passed.push({
+            rowNo:row.rowNo,artworkId:row.artworkId,artworkNo:row.artworkNo,
+            revision:row.currentRevision,preflightRunId
+          });
+
+          if(!submitPassed) continue;
+
+          const revisionRow=await env.DB.prepare(
+            "SELECT id,status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
+          ).bind(row.artworkId,row.currentRevision).first();
+          if(!revisionRow||String(revisionRow.status||"").toUpperCase()!=="DRAFT"){
+            const errorCode=!revisionRow?"REVISION_NOT_FOUND":"REVISION_NOT_DRAFT";
+            await env.DB.prepare(`
+              UPDATE import_rows
+              SET batch_submit_status='SKIPPED',batch_process_error=?
+              WHERE id=?
+            `).bind(errorCode,row.id).run();
+            skipped.push({rowNo:row.rowNo,artworkId:row.artworkId,artworkNo:row.artworkNo,reason:errorCode});
+            continue;
+          }
+
+          await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE artwork_revisions
+              SET status='SUBMITTED',data_snapshot_json=?,preflight_profile_version=?,created_by=?
+              WHERE id=? AND status='DRAFT'
+            `).bind(
+              JSON.stringify(snapshot),"US_SIDE_SEAL_K_ONLY_V1@server-qualification-1",
+              identity.email,revisionRow.id
+            ),
+            env.DB.prepare(`
+              UPDATE artworks
+              SET status='IN_REVIEW',canonical_data_json=?,updated_at=CURRENT_TIMESTAMP
+              WHERE id=? AND status='DRAFT'
+            `).bind(JSON.stringify(snapshot),row.artworkId),
+            env.DB.prepare(`
+              UPDATE import_rows
+              SET batch_submit_status='SUBMITTED',batch_submitted_at=CURRENT_TIMESTAMP,
+                  batch_process_error=NULL
+              WHERE id=?
+            `).bind(row.id)
+          ]);
+          await audit(env,identity,"ARTWORK",row.artworkId,"BATCH_SUBMIT_REVIEW",{
+            newValue:{revision:row.currentRevision,status:"IN_REVIEW",jobId,rowNo:row.rowNo,preflightRunId},
+            reason:b.reason||"Batch server preflight passed; submitted for review"
+          });
+          submitted.push({
+            rowNo:row.rowNo,artworkId:row.artworkId,artworkNo:row.artworkNo,
+            revision:row.currentRevision,preflightRunId,status:"IN_REVIEW"
+          });
+        }
+
+        const summary=await env.DB.prepare(`
+          SELECT
+            SUM(CASE WHEN r.status='PASS' AND r.artwork_id IS NOT NULL THEN 1 ELSE 0 END) AS linked,
+            SUM(CASE WHEN r.status='PASS' AND r.artwork_id IS NOT NULL AND r.batch_preflight_status='PASS' THEN 1 ELSE 0 END) AS preflightPass,
+            SUM(CASE WHEN r.status='PASS' AND r.artwork_id IS NOT NULL AND r.batch_preflight_status='ERROR' THEN 1 ELSE 0 END) AS preflightError,
+            SUM(CASE WHEN r.status='PASS' AND r.artwork_id IS NOT NULL AND a.status IN ('IN_REVIEW','APPROVED') THEN 1 ELSE 0 END) AS reviewReady
+          FROM import_rows r
+          LEFT JOIN artworks a ON a.id=r.artwork_id
+          WHERE r.job_id=?
+        `).bind(jobId).first();
+        const linked=Number(summary?.linked||0);
+        const preflightPass=Number(summary?.preflightPass||0);
+        const preflightError=Number(summary?.preflightError||0);
+        const reviewReady=Number(summary?.reviewReady||0);
+        const nextStatus=submitPassed
+          ? (linked>0&&reviewReady===linked?"SUBMITTED_FOR_REVIEW":reviewReady>0?"PARTIAL_SUBMIT":"PREFLIGHTED")
+          : (linked>0&&preflightPass+preflightError===linked?"PREFLIGHTED":"PREFLIGHT_PARTIAL");
+        await env.DB.prepare(
+          "UPDATE import_jobs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?"
+        ).bind(nextStatus,jobId).run();
+
+        const remaining=await env.DB.prepare(`
+          SELECT COUNT(*) AS count
+          FROM import_rows r
+          JOIN artworks a ON a.id=r.artwork_id
+          WHERE r.job_id=? AND r.status='PASS' AND r.artwork_id IS NOT NULL AND ${where}
+        `).bind(jobId).first();
+
+        await audit(env,identity,"IMPORT_JOB",jobId,submitPassed?"BATCH_PREFLIGHT_AND_SUBMIT":"BATCH_PREFLIGHT",{
+          newValue:{
+            processed:(rows||[]).length,passed:passed.length,failed:failed.length,
+            submitted:submitted.length,skipped:skipped.length,
+            linked,preflightPass,preflightError,reviewReady,status:nextStatus
+          },
+          reason:b.reason||"Processed linked Artwork Drafts from Import Job"
+        });
+
+        return json({data:{
+          jobId,mode:submitPassed?"PREFLIGHT_AND_SUBMIT":"PREFLIGHT",
+          processed:(rows||[]).length,passed,failed,submitted,skipped,
+          counts:{linked,preflightPass,preflightError,reviewReady},
+          remainingEligible:Number(remaining?.count||0),
+          status:nextStatus
+        }},{status:failed.length||skipped.length?207:201});
       }
 
       const exportMatch=/^\/api\/artworks\/([^/]+)\/exports$/.exec(url.pathname);
