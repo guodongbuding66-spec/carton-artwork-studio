@@ -121,7 +121,9 @@ export function renderEmbeddedArtworkPdf({
   }:null;
   const factories=factory?[factory]:[];
 
-  const preflight=D.runPreflight(artwork,factories);
+  const customElements=prepareProductionCustomElements(artwork,factories);
+  const productionArtwork={...artwork,elements:customElements};
+  const preflight=D.runPreflight(productionArtwork,factories);
   const preflightSummary=D.preflightSummary(preflight);
   if(preflightSummary.blocking>0){
     const error=new Error("PRODUCTION_PREFLIGHT_BLOCKED");
@@ -130,13 +132,12 @@ export function renderEmbeddedArtworkPdf({
     throw error;
   }
 
-  const customElements=prepareProductionCustomElements(artwork,factories);
-  const geometry=D.sideSealGeometry(artwork);
-  const computed=D.computed(artwork,factories);
+  const geometry=D.sideSealGeometry(productionArtwork);
+  const computed=D.computed(productionArtwork,factories);
   const codeModel=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
   const qrModel=C.qrMatrix(artwork.qr,qrEcc);
   const bytes=P.createPdfBytes({
-    artwork,
+    artwork:productionArtwork,
     geometry,
     computed,
     codeModel,
@@ -151,7 +152,7 @@ export function renderEmbeddedArtworkPdf({
   });
   return {
     bytes,
-    artwork,
+    artwork:productionArtwork,
     geometry,
     computed,
     customElements:{
