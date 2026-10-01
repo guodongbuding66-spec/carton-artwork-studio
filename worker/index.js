@@ -2283,6 +2283,133 @@ export default {
         return json({data:{job,rows}});
       }
 
+
+      const importReviewerQueueMatch=/^\/api\/import-jobs\/([^/]+)\/reviewer-queue$/.exec(url.pathname);
+      if(request.method==="GET"&&importReviewerQueueMatch){
+        const jobId=importReviewerQueueMatch[1];
+        const job=await env.DB.prepare(`
+          SELECT id,source_name AS sourceName,source_type AS sourceType,status,
+                 total_rows AS totalRows,passed_rows AS passedRows,failed_rows AS failedRows,
+                 created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt
+          FROM import_jobs WHERE id=?
+        `).bind(jobId).first();
+        if(!job)return err(404,"NOT_FOUND","Import job not found.");
+
+        const {results:rows}=await env.DB.prepare(`
+          SELECT
+            r.id AS importRowId,r.row_no AS rowNo,r.sku AS importSku,
+            r.batch_preflight_status AS batchPreflightStatus,
+            r.batch_submit_status AS batchSubmitStatus,r.batch_submitted_at AS batchSubmittedAt,
+            a.id AS artworkId,a.artwork_no AS artworkNo,a.sku,a.contract_no AS contractNo,
+            a.status,a.current_revision AS revision,a.updated_at AS updatedAt,
+            ar.data_snapshot_json AS snapshotJson,ar.created_by AS submittedBy,ar.created_at AS submittedAt,
+            (
+              SELECT p.id FROM preflight_runs p
+              WHERE p.artwork_id=a.id AND p.revision=a.current_revision
+              ORDER BY p.created_at DESC LIMIT 1
+            ) AS preflightRunId,
+            (
+              SELECT p.status FROM preflight_runs p
+              WHERE p.artwork_id=a.id AND p.revision=a.current_revision
+              ORDER BY p.created_at DESC LIMIT 1
+            ) AS preflightStatus,
+            (
+              SELECT p.report_json FROM preflight_runs p
+              WHERE p.artwork_id=a.id AND p.revision=a.current_revision
+              ORDER BY p.created_at DESC LIMIT 1
+            ) AS preflightReportJson,
+            (
+              SELECT p.created_at FROM preflight_runs p
+              WHERE p.artwork_id=a.id AND p.revision=a.current_revision
+              ORDER BY p.created_at DESC LIMIT 1
+            ) AS preflightAt,
+            (
+              SELECT COUNT(*) FROM comments c
+              WHERE c.artwork_id=a.id AND c.revision=a.current_revision
+            ) AS commentCount,
+            (
+              SELECT COUNT(*) FROM comments c
+              WHERE c.artwork_id=a.id AND c.revision=a.current_revision AND c.blocking=1 AND c.resolved=0
+            ) AS unresolvedBlockingComments,
+            (
+              SELECT ar2.revision FROM artwork_revisions ar2
+              WHERE ar2.artwork_id=a.id AND ar2.revision<>a.current_revision
+              ORDER BY ar2.created_at DESC LIMIT 1
+            ) AS previousRevision
+          FROM import_rows r
+          JOIN artworks a ON a.id=r.artwork_id
+          JOIN artwork_revisions ar ON ar.artwork_id=a.id AND ar.revision=a.current_revision
+          WHERE r.job_id=? AND r.status='PASS' AND a.status='IN_REVIEW'
+          ORDER BY r.row_no
+          LIMIT 200
+        `).bind(jobId).all();
+
+        const queue=(rows||[]).map((row)=>{
+          let snapshot={},report={};
+          try{snapshot=JSON.parse(row.snapshotJson||"{}");}catch{}
+          try{report=JSON.parse(row.preflightReportJson||"{}");}catch{}
+          const qualification=report.qualification||report;
+          const preflight=qualification?.preflight||report.preflight||{};
+          const summary=preflight.summary||report.summary||{};
+          const submittedBy=String(row.submittedBy||"");
+          const fourEyesBlocked=Boolean(submittedBy)&&submittedBy.toLowerCase()===identity.email.toLowerCase();
+          const unresolvedBlockingComments=Number(row.unresolvedBlockingComments||0);
+          const preflightStatus=String(row.preflightStatus||row.batchPreflightStatus||"").toUpperCase();
+          const preflightReady=Boolean(preflightStatus)&&preflightStatus!=="ERROR";
+          return {
+            importRowId:row.importRowId,
+            rowNo:Number(row.rowNo||0),
+            artworkId:row.artworkId,
+            artworkNo:row.artworkNo,
+            sku:row.sku||row.importSku||"",
+            contractNo:row.contractNo||"",
+            status:row.status,
+            revision:row.revision,
+            previousRevision:row.previousRevision||null,
+            submittedBy,
+            submittedAt:row.submittedAt||row.batchSubmittedAt||null,
+            updatedAt:row.updatedAt||null,
+            snapshot,
+            preflight:{
+              runId:row.preflightRunId||null,
+              status:preflightStatus||"MISSING",
+              createdAt:row.preflightAt||null,
+              summary:{
+                pass:Number(summary.pass||0),
+                warning:Number(summary.warning||0),
+                error:Number(summary.error||0),
+                blocking:Number(summary.blocking||0)
+              },
+              blockingChecks:Array.isArray(preflight.blockingChecks)?preflight.blockingChecks:[],
+              warningChecks:Array.isArray(preflight.warningChecks)?preflight.warningChecks:[]
+            },
+            comments:{
+              total:Number(row.commentCount||0),
+              unresolvedBlocking:unresolvedBlockingComments
+            },
+            fourEyesBlocked,
+            canApprove:preflightReady&&unresolvedBlockingComments===0&&!fourEyesBlocked,
+            approvalGate:{
+              preflightReady,
+              blockingCommentsResolved:unresolvedBlockingComments===0,
+              fourEyesSatisfied:!fourEyesBlocked
+            }
+          };
+        });
+
+        return json({data:{
+          job,
+          queue,
+          summary:{
+            inReview:queue.length,
+            approvable:queue.filter((x)=>x.canApprove).length,
+            fourEyesBlocked:queue.filter((x)=>x.fourEyesBlocked).length,
+            blockingComments:queue.filter((x)=>x.comments.unresolvedBlocking>0).length,
+            preflightBlocked:queue.filter((x)=>!x.approvalGate.preflightReady).length
+          }
+        }});
+      }
+
       const importRowsMatch=/^\/api\/import-jobs\/([^/]+)\/rows$/.exec(url.pathname);
       if(request.method==="POST"&&importRowsMatch){
         const jobId=importRowsMatch[1],b=await bodyJson(request),rows=Array.isArray(b.rows)?b.rows:[];

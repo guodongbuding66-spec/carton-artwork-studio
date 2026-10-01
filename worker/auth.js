@@ -77,6 +77,8 @@ export function permissionForRequest(method, pathname) {
   if (/^\/api\/artworks\/[^/]+\/pdfx4-external-validation$/.test(p)) return "PRODUCTION_ASSET_APPROVE";
   if (/^\/api\/artworks\/[^/]+\/render-production-pdf$/.test(p)) return "EXPORT_PRODUCTION";
 
+  if (/^\/api\/import-jobs\/[^/]+\/reviewer-queue$/.test(p) && m === "GET") return "REVIEW";
+
   if (/^\/api\/template-versions\/[^/]+\/approval$/.test(p)) return "TEMPLATE_APPROVE";
   if (/^\/api\/template-versions\/[^/]+\/submit$/.test(p)) return "TEMPLATE_WRITE";
   if (/^\/api\/template-versions\/[^/]+$/.test(p) && m === "PATCH") return "TEMPLATE_WRITE";
