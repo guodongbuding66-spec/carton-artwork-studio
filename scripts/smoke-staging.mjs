@@ -46,6 +46,8 @@ fs.mkdirSync("artifacts",{recursive:true});
 const acceptance={
   schemaVersion:1,
   generatedAt:new Date().toISOString(),
+  gitSha:String(process.env.GITHUB_SHA||""),
+  gitRef:String(process.env.GITHUB_REF||""),
   stagingUrl:base,
   service:health.payload?.service||null,
   version:health.payload?.version||null,
