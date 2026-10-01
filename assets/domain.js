@@ -131,6 +131,7 @@
           fontSizePt:Number(e.fontSizePt||12),
           fontWeight:String(e.fontWeight||"normal"),
           textAlign:String(e.textAlign||"left"),
+          bindingKey:String(e.bindingKey||""),
           symbology:String(e.symbology||""),
           humanReadable:e.humanReadable!==false,
           symbolKey:String(e.symbolKey||""),
@@ -157,6 +158,56 @@
         : "",
       crn: f?.crn || ""
     };
+  }
+
+  const artworkBindings = Object.freeze([
+    { key:"", label:"Manual text" },
+    { key:"product.sku", label:"SKU / Item No." },
+    { key:"order.contractNo", label:"Contract / PO" },
+    { key:"order.market", label:"Market" },
+    { key:"package.total", label:"Package Count" },
+    { key:"package.index", label:"Current Package" },
+    { key:"package.indexOfTotal", label:"Package X of Y" },
+    { key:"package.netWeight", label:"N.W. + unit" },
+    { key:"package.grossWeight", label:"G.W. + unit" },
+    { key:"package.meas", label:"Package Meas" },
+    { key:"package.note", label:"Multi-package note" },
+    { key:"factory.crn", label:"Factory CRN" },
+    { key:"factory.name", label:"Factory Name" },
+    { key:"origin.country", label:"Country of Origin" },
+    { key:"origin.text", label:"Made in …" }
+  ]);
+
+  function isKnownArtworkBinding(key) {
+    return artworkBindings.some((x)=>x.key===String(key||""));
+  }
+
+  function resolveArtworkBinding(key, artwork, factoryList = factories) {
+    const k=String(key||"");
+    const a=artwork||{};
+    const f=findFactory(a.factoryId,factoryList);
+    const c=computed(a,factoryList);
+    if(!k) return "";
+    if(k==="product.sku") return String(a.sku??"");
+    if(k==="order.contractNo") return String(a.contractNo??"");
+    if(k==="order.market") return String(a.market??"");
+    if(k==="package.total") return formatNumber(a.packageCount);
+    if(k==="package.index") return formatNumber(a.currentPackage);
+    if(k==="package.indexOfTotal") return `${formatNumber(a.currentPackage)} / ${formatNumber(a.packageCount)}`;
+    if(k==="package.netWeight") return `${formatNumber(a.netWeight)} LBS`;
+    if(k==="package.grossWeight") return `${formatNumber(a.grossWeight)} LBS`;
+    if(k==="package.meas") return c.packageMeas;
+    if(k==="package.note") return c.packageNote;
+    if(k==="factory.crn") return String(f?.crn||"");
+    if(k==="factory.name") return String(f?.name||"");
+    if(k==="origin.country") return String(f?.country||"");
+    if(k==="origin.text") return c.originText;
+    return "";
+  }
+
+  function resolvedElementText(element, artwork, factoryList = factories) {
+    const binding=String(element?.bindingKey||"");
+    return binding ? resolveArtworkBinding(binding,artwork,factoryList) : String(element?.text||"");
   }
 
   function sideSealGeometry(artwork) {
@@ -383,8 +434,20 @@
         ));
       }
       if(element.type==="text"){
-        const text=String(element.text||"");
+        const binding=String(element.bindingKey||"");
+        const known=!binding||isKnownArtworkBinding(binding);
+        const text=resolvedElementText(element,a,factoryList);
         const size=Number(element.fontSizePt||0);
+        if(binding){
+          assetChecks.push(check(
+            `text-binding-${element.id||name}`,
+            `${name} data binding`,
+            known?"pass":"error",
+            known?`Bound to ${binding}.`:`Unknown binding key: ${binding}`,
+            "Assets",
+            !known
+          ));
+        }
         assetChecks.push(check(
           `text-content-${element.id||name}`,
           `${name} text content`,
@@ -557,6 +620,7 @@
         fontSizePt:Number(e.fontSizePt||12),
         fontWeight:["normal","bold"].includes(String(e.fontWeight||"normal"))?String(e.fontWeight||"normal"):"normal",
         textAlign:["left","center","right"].includes(String(e.textAlign||"left"))?String(e.textAlign||"left"):"left",
+        bindingKey:String(e.bindingKey||""),
         symbology:String(e.symbology||""),
         humanReadable:e.humanReadable!==false,
         symbolKey:String(e.symbolKey||""),
@@ -597,6 +661,10 @@
     formatNumber,
     canonicalData,
     computed,
+    artworkBindings,
+    isKnownArtworkBinding,
+    resolveArtworkBinding,
+    resolvedElementText,
     artworkFromCanonical,
     sideSealGeometry,
     calibrationMetrics,
