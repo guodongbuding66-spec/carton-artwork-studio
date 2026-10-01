@@ -205,3 +205,10 @@ assert.match(app,/data-action="lock-controlled-block"/);
 assert.match(app,/data-action="unlock-controlled-block"/);
 assert.match(app,/受控 Block 不能解除组合/);
 assert.match(app,/受控 Block 不能用普通 Group 重组/);
+
+
+assert.match(app,/function persistLocalDraft\(\)\{\s*state\.productionQualification=null;/);
+assert.match(app,/if\(!e\|\|!localArtworkEditable\(\)\|\|e\.locked\) return;\s*const key=el\.dataset\.elementProp/);
+assert.match(app,/if\(e\.blockType&&e\.groupId\)\{\s*setSelectedControlledBlockLock\(Boolean\(lock\.checked\)\)/);
+assert.match(app,/list\[index\]\?\.locked/);
+assert.match(app,/!localArtworkEditable\(\)\|\|e\.locked\) return;\s*pushArtworkHistory\(\);\s*const b=elementBounds\(e\)/);
