@@ -66,3 +66,11 @@ assert.equal(productionReady.productionReady,true);
 assert.equal(productionReady.productionStatus,"PRODUCTION_READY");
 
 console.log("System readiness tests passed.");
+
+
+const workerSource=fs.readFileSync("worker/index.js","utf8");
+assert.match(workerSource,/importDraftsMatch=.*create-drafts/);
+assert.match(workerSource,/CREATE_FROM_BATCH/);
+assert.match(workerSource,/status='DRAFT'/);
+assert.match(workerSource,/DRAFTS_CREATED/);
+assert.match(workerSource,/artwork_id IS NULL/);
