@@ -200,4 +200,16 @@ test("computed and preflight can use remote factory master", () => {
   assert.equal(D.runPreflight(a, remoteFactories).Data.find(x => x.id === "factory").status, "pass");
 });
 
+test("GS1-128 barcode metadata passes domain symbology gate", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[{
+    id:"gs1",type:"barcode",name:"SSCC",x:p.x+20,y:p.y+20,w:180,h:50,
+    rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    symbology:"GS1_128",humanReadable:true,payload:"(00)123456789012345675"
+  }]};
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="barcode-type-gs1"&&x.status==="pass"));
+});
+
 console.log("Domain tests passed.");
