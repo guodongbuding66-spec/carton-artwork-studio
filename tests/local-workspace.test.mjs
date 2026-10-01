@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const app=fs.readFileSync("assets/app.js","utf8");
+const domainSource=fs.readFileSync("assets/domain.js","utf8");
 
 assert.match(app,/function localArtworkEditable\(\)\{return !\["in_review","approved"\]\.includes\(state\.artwork\.status\);\}/);
 assert.match(app,/function isArtworkLocked\(\)\{return !localArtworkEditable\(\);\}/);
@@ -218,9 +219,9 @@ assert.match(app,/function reflowShippingMarkGroup\(groupId,options=\{\}\)/);
 assert.match(app,/D\.shippingMarkBlockLayout\(state\.artwork,panel,state\.factories/);
 assert.match(app,/function refreshControlledShippingBlocks\(\)/);
 assert.match(app,/refreshControlledShippingBlocks\(\);\s*refreshAutoFitTextElements\(\);/);
-assert.match(domain,/blockType:root\.type/);
-assert.match(domain,/blockVersion:version/);
-assert.match(domain,/blockSlot:slot\.id/);
+assert.match(domainSource,/blockType:root\.type/);
+assert.match(domainSource,/blockVersion:version/);
+assert.match(domainSource,/blockSlot:slot\.id/);
 assert.match(app,/locked:true,visible:true/);
 assert.match(app,/data-action="reflow-controlled-block"/);
 assert.match(app,/if\(action==="reflow-controlled-block"\) return reflowSelectedControlledBlock\(\)/);
