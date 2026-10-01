@@ -3552,7 +3552,9 @@
   function proofPdfElements(artwork=state.artwork){
     return (Array.isArray(artwork.elements)?artwork.elements:[]).map((e)=>{
       if(e.type==="text"){
-        return {...e,text:D.resolvedElementText(e,artwork,state.factories)};
+        const text=D.resolvedElementText(e,artwork,state.factories);
+        const layout=D.textLayout(e,text);
+        return {...e,text,renderLines:layout.lines,renderLineWidthsMm:layout.widthsMm};
       }
       if(e.type==="qr-generated"){
         const payload=D.resolvedElementPayload(e,artwork,state.factories);
