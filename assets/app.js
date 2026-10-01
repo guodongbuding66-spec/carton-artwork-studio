@@ -1136,7 +1136,9 @@
         id:newElementId(),
         type,
         name:type==="qr-image"?`QR image · ${file.name}`:file.name,
-        x:p.x,y:p.y,w,h,rotation:0,locked:false,
+        x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
+        panelId:p.panelId,constrainToPanel:true,
+        text:"",fontSizePt:12,fontWeight:"normal",textAlign:"left",
         payload:"",
         ecc:"M",
         sourceType:"uploaded-raster",
@@ -1162,7 +1164,9 @@
     const size=45,p=defaultElementPlacement(size,size);
     const el={
       id:newElementId(),type:"qr-generated",name:"Generated QR",
-      x:p.x,y:p.y,w:size,h:size,rotation:0,locked:false,
+      x:p.x,y:p.y,w:size,h:size,rotation:0,locked:false,visible:true,
+      panelId:p.panelId,constrainToPanel:true,
+      text:"",fontSizePt:12,fontWeight:"normal",textAlign:"left",
       payload,ecc,sourceType:"generated-vector",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
@@ -1171,6 +1175,61 @@
     persistLocalDraft();
     render();
     toast("矢量二维码已添加","success");
+  }
+
+  function addTextElement(){
+    if(!localArtworkEditable()) return;
+    const w=120,h=28,p=defaultElementPlacement(w,h);
+    const el={
+      id:newElementId(),type:"text",name:"Text",
+      x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
+      panelId:p.panelId,constrainToPanel:true,
+      text:"NEW MARK TEXT",fontSizePt:12,fontWeight:"bold",textAlign:"left",
+      payload:"",ecc:"M",sourceType:"generated-text",mimeType:"",
+      dataUrl:"",pixelWidth:0,pixelHeight:0
+    };
+    artworkElements().push(el);
+    state.selectedElementId=el.id;
+    persistLocalDraft();render();toast("文字元素已添加","success");
+  }
+
+  function duplicateSelectedElement(){
+    const current=selectedArtworkElement();
+    if(!current||!localArtworkEditable()) return;
+    const copy=JSON.parse(JSON.stringify(current));
+    copy.id=newElementId();copy.name=(current.name||current.type)+" copy";
+    copy.locked=false;
+    copy.x=Number(current.x||0)+8;copy.y=Number(current.y||0)+8;
+    clampElementToBounds(copy);
+    artworkElements().push(copy);
+    state.selectedElementId=copy.id;
+    persistLocalDraft();render();
+  }
+
+  function reorderSelectedElement(mode){
+    const list=artworkElements(),index=list.findIndex(e=>e.id===state.selectedElementId);
+    if(index<0||!localArtworkEditable()) return;
+    const [item]=list.splice(index,1);
+    let next=index;
+    if(mode==="front") next=list.length;
+    if(mode==="back") next=0;
+    if(mode==="up") next=Math.min(list.length,index+1);
+    if(mode==="down") next=Math.max(0,index-1);
+    list.splice(next,0,item);
+    persistLocalDraft();render();
+  }
+
+  function alignSelectedElement(mode){
+    const e=selectedArtworkElement();
+    if(!e||!localArtworkEditable()) return;
+    const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
+    if(mode==="left")e.x=b.x;
+    if(mode==="hcenter")e.x=b.x+(b.w-w)/2;
+    if(mode==="right")e.x=b.x+b.w-w;
+    if(mode==="top")e.y=b.y;
+    if(mode==="vcenter")e.y=b.y+(b.h-h)/2;
+    if(mode==="bottom")e.y=b.y+b.h-h;
+    clampElementToBounds(e);persistLocalDraft();render();
   }
 
   function deleteSelectedElement(){
@@ -1193,8 +1252,14 @@
         const e=selectedArtworkElement();
         if(!e||!localArtworkEditable()) return;
         const key=el.dataset.elementProp;
-        e[key]=["x","y","w","h","rotation"].includes(key)?Number(el.value):el.value;
-        if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
+        if(key==="panelId"){
+          placeElementInPanel(e,el.value);
+        }else{
+          e[key]=["x","y","w","h","rotation","fontSizePt"].includes(key)?Number(el.value):el.value;
+          if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
+          if(key==="fontSizePt") e[key]=Math.max(5,Number(e[key]||5));
+          clampElementToBounds(e);
+        }
         persistLocalDraft();
       };
       el.oninput=apply;
@@ -1202,9 +1267,18 @@
     });
     const lock=document.querySelector("[data-element-lock]");
     if(lock) lock.onchange=()=>{
-      const e=selectedArtworkElement();
-      if(!e||!localArtworkEditable()) return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
       e.locked=Boolean(lock.checked);persistLocalDraft();render();
+    };
+    const visible=document.querySelector("[data-element-visible]");
+    if(visible) visible.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      e.visible=Boolean(visible.checked);persistLocalDraft();render();
+    };
+    const constrain=document.querySelector("[data-element-constrain]");
+    if(constrain) constrain.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      e.constrainToPanel=Boolean(constrain.checked);clampElementToBounds(e);persistLocalDraft();render();
     };
 
     document.querySelectorAll("[data-art-element]").forEach((group)=>{
@@ -1225,9 +1299,9 @@
         try{group.setPointerCapture(ev.pointerId);}catch{}
         group.onpointermove=(move)=>{
           if(move.pointerId!==ev.pointerId) return;
-          const p=point(move),g=geometry();
-          element.x=Math.max(0,Math.min(g.totalWidth-Math.max(1,Number(element.w||1)),startX+(p.x-start.x)));
-          element.y=Math.max(0,Math.min(g.totalHeight-Math.max(1,Number(element.h||1)),startY+(p.y-start.y)));
+          const p=point(move);
+          const snapped=snapElementPosition(element,startX+(p.x-start.x),startY+(p.y-start.y));
+          element.x=snapped.x;element.y=snapped.y;
           group.setAttribute("transform",elementTransform(element));
         };
         const finish=()=>{
@@ -1242,7 +1316,19 @@
   async function handleAction(action){
     if(action==="upload-image-trigger"){document.getElementById("art-image-file")?.click();return;}
     if(action==="upload-qr-trigger"){document.getElementById("art-qr-image-file")?.click();return;}
+    if(action==="add-text-element") return addTextElement();
     if(action==="add-generated-qr") return addGeneratedQrElement();
+    if(action==="duplicate-element") return duplicateSelectedElement();
+    if(action==="layer-front") return reorderSelectedElement("front");
+    if(action==="layer-back") return reorderSelectedElement("back");
+    if(action==="layer-up") return reorderSelectedElement("up");
+    if(action==="layer-down") return reorderSelectedElement("down");
+    if(action==="align-left") return alignSelectedElement("left");
+    if(action==="align-hcenter") return alignSelectedElement("hcenter");
+    if(action==="align-right") return alignSelectedElement("right");
+    if(action==="align-top") return alignSelectedElement("top");
+    if(action==="align-vcenter") return alignSelectedElement("vcenter");
+    if(action==="align-bottom") return alignSelectedElement("bottom");
     if(action==="delete-element") return deleteSelectedElement();
     if(action==="new-local") return resetLocalArtwork();
     if(action==="save") return saveDraft();
