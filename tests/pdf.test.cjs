@@ -37,4 +37,15 @@ const customText=Buffer.from(custom).toString("latin1");
 assert.ok(customText.includes("/Subtype /Image"),"Uploaded artwork image should be embedded as a PDF image XObject");
 assert.ok(customText.includes("/Im1 Do"),"Proof content stream should draw the custom image");
 assert.ok((customText.match(/ re f/g)||[]).length>(text.match(/ re f/g)||[]).length,"Generated custom QR should add vector rectangles");
+
+const textProof=P.createPdfBytes({
+  artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
+  customElements:[
+    {id:"txt",type:"text",x:300,y:900,w:120,h:30,rotation:0,visible:true,text:"CUSTOM MARK",fontSizePt:12,textAlign:"left"},
+    {id:"hidden",type:"text",x:300,y:940,w:120,h:30,rotation:0,visible:false,text:"DO NOT PRINT",fontSizePt:12,textAlign:"left"}
+  ]
+});
+const textProofText=Buffer.from(textProof).toString("latin1");
+assert.ok(textProofText.includes("(CUSTOM MARK) Tj"),"Custom text should be emitted into proof PDF");
+assert.ok(!textProofText.includes("DO NOT PRINT"),"Hidden custom text must not be emitted into proof PDF");
 console.log("PDF tests passed.");
