@@ -9,6 +9,7 @@ import { runExternalPdfxValidation, validateValidatorConfig } from "./pdfx-valid
 import { PDFX_PRODUCTION_PROMOTION_POLICY } from "./pdfx-promotion-policy.js";
 import { collectPdfxPromotionReadiness } from "./pdfx-promotion-readiness.js";
 import { evidenceRowToPolicyInput, normalizePromotionEvidenceType, parseEvidenceMetadata, sanitizeEvidenceFilename, validatePromotionEvidence } from "./pdfx-promotion-evidence.js";
+import { artifactBindingState, prepareArtifactEnv } from "./artifact-store.js";
 
 const json = (data, init = {}) => new Response(JSON.stringify(data, null, 2), {
   ...init,
@@ -141,7 +142,7 @@ async function collectSystemReadiness(env, identity) {
     env.DB.prepare(`
       SELECT status,created_at AS createdAt,report_json AS reportJson
       FROM system_readiness_runs
-      WHERE scope='R2'
+      WHERE scope IN ('ARTIFACT_STORE','R2')
       ORDER BY created_at DESC LIMIT 1
     `).first()
   ]);
@@ -167,7 +168,7 @@ async function collectSystemReadiness(env, identity) {
     bootstrapAdminConfigured:Boolean(String(env.BOOTSTRAP_ADMIN_EMAIL||"").trim()),
     bindings:{
       d1:Boolean(env.DB),
-      r2:Boolean(env.ARTWORK_FILES),
+      ...artifactBindingState(env),
       assets:Boolean(env.ASSETS)
     },
     latestMigration,
@@ -180,7 +181,7 @@ async function collectSystemReadiness(env, identity) {
       approvedIccProfiles:Number(approvedIccCount?.count||0)
     },
     roleUsers,
-    lastR2Probe:lastProbe?{status:lastProbe.status,createdAt:lastProbe.createdAt}:null,
+    lastArtifactProbe:lastProbe?{status:lastProbe.status,createdAt:lastProbe.createdAt}:null,
     productionReadiness,
     pdfxValidatorConfigured:validateValidatorConfig(env).ok,
     pdfxPromotionReadiness
@@ -200,7 +201,7 @@ async function collectSystemReadiness(env, identity) {
         approvedIccProfiles:Number(approvedIccCount?.count||0)
       }:{},
       roleUsers,
-      lastR2Probe:lastProbe?{
+      lastArtifactProbe:lastProbe?{
         status:lastProbe.status,
         createdAt:lastProbe.createdAt,
         report:(()=>{
@@ -208,7 +209,7 @@ async function collectSystemReadiness(env, identity) {
           catch{return null;}
         })()
       }:null,
-      bindings:{d1:Boolean(env.DB),r2:Boolean(env.ARTWORK_FILES),assets:Boolean(env.ASSETS)},
+      bindings:{d1:Boolean(env.DB),...artifactBindingState(env),assets:Boolean(env.ASSETS)},
       auth:{identitySource:identity?.source||null,bypassEnabled:String(env.AUTH_BYPASS||"")==="1",bootstrapAdminConfigured:Boolean(String(env.BOOTSTRAP_ADMIN_EMAIL||"").trim())},
       pdfxValidator:{configured:validateValidatorConfig(env).ok},
       pdfxPromotionReadiness
@@ -216,11 +217,11 @@ async function collectSystemReadiness(env, identity) {
   };
 }
 
-async function runR2DeepProbe(env) {
+async function runArtifactStoreDeepProbe(env) {
   if(!env.ARTWORK_FILES) return {status:"FAIL",ok:false,error:"ARTWORK_FILES binding is missing.",write:false,read:false,delete:false};
   const token=crypto.randomUUID();
   const key=`_system-readiness/${token}.txt`;
-  const payload=`carton-artwork-studio:r2-probe:${token}`;
+  const payload=`carton-artwork-studio:artifact-store-probe:${env.ARTIFACT_STORE_KIND||"UNKNOWN"}:${token}`;
   let wrote=false,read=false,deleted=false;
   try {
     await env.ARTWORK_FILES.put(key,payload,{httpMetadata:{contentType:"text/plain; charset=utf-8"}});
@@ -271,6 +272,7 @@ function publicIdentity(identity) {
 
 export default {
   async fetch(request, env) {
+    env=prepareArtifactEnv(env);
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
 
@@ -286,7 +288,7 @@ export default {
         },
         bindings: {
           d1: Boolean(env.DB),
-          r2: Boolean(env.ARTWORK_FILES),
+          ...artifactBindingState(env),
           assets: Boolean(env.ASSETS)
         },
         pdfx: {
@@ -341,12 +343,12 @@ export default {
       }
 
       if(request.method==="POST"&&url.pathname==="/api/system/readiness/probe"){
-        const probe=await runR2DeepProbe(env);
+        const probe=await runArtifactStoreDeepProbe(env);
         const probeId=crypto.randomUUID();
         await env.DB.prepare(`
           INSERT INTO system_readiness_runs(id,scope,status,report_json,actor,created_at)
           VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
-        `).bind(probeId,"R2",probe.status,JSON.stringify(probe),identity.email).run();
+        `).bind(probeId,"ARTIFACT_STORE",probe.status,JSON.stringify(probe),identity.email).run();
 
         const readiness=await collectSystemReadiness(env,identity);
         const systemRunId=crypto.randomUUID();
@@ -367,9 +369,9 @@ export default {
             productionReady:readiness.productionReady,
             stagingPassed:readiness.summary?.stagingPassed,
             stagingTotal:readiness.summary?.stagingTotal,
-            r2Probe:probe.status
+            artifactStoreProbe:probe.status
           },
-          reason:"Admin-initiated staging readiness deep check"
+          reason:"Admin-initiated Artifact Store staging readiness deep check"
         });
         return json({data:{probe,readiness,systemRunId}},{status:201});
       }
