@@ -1555,6 +1555,7 @@
       const apply=()=>{
         const k=el.dataset.art;
         state.artwork[k]=el.type==="number"?Number(el.value):el.value;
+        refreshAutoFitTextElements();
         persistLocalDraft();
       };
       el.oninput=apply;
@@ -1840,8 +1841,9 @@
     const el={
       id:newElementId(),type:"text",name:meta?.label||bindingKey,
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
-      panelId:p.panelId,constrainToPanel:true,
+      panelId:p.panelId,constrainToPanel:true,safeAreaExempt:false,groupId:"",
       text:"",bindingKey,fontSizePt:12,fontWeight:"bold",textAlign:"left",
+      autoFitText:true,minFontSizePt:7,
       symbology:"",humanReadable:false,symbolKey:"",
       payload:"",ecc:"M",sourceType:"bound-variable",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
@@ -1851,14 +1853,40 @@
     persistLocalDraft();render();toast(`数据字段已绑定：${meta?.label||bindingKey}`,"success");
   }
 
+  function fitTextElementInPlace(element){
+    if(!element||element.type!=="text") return {fits:true};
+    const text=D.resolvedElementText(element,state.artwork,state.factories);
+    const result=D.fitTextToBox(element,text,{
+      minPt:Number(element.minFontSizePt||7),
+      maxPt:Number(element.fontSizePt||12)
+    });
+    if(result.fits) element.fontSizePt=result.fontSizePt;
+    return result;
+  }
+  function fitSelectedTextElement(){
+    const element=selectedArtworkElement();
+    if(!element||element.type!=="text"||!localArtworkEditable()) return;
+    pushArtworkHistory();
+    const result=fitTextElementInPlace(element);
+    persistLocalDraft();render();
+    if(result.fits) toast(`文字已适配到 ${Number(element.fontSizePt).toFixed(2)} pt`,"success");
+    else toast(`在最小字号 ${Number(element.minFontSizePt||7).toFixed(2)} pt 下仍无法放入当前文本框，请增大文本框。`,"error");
+  }
+  function refreshAutoFitTextElements(){
+    for(const element of artworkElements()){
+      if(element.type==="text"&&element.autoFitText) fitTextElementInPlace(element);
+    }
+  }
+
   function addTextElement(){
     if(!localArtworkEditable()) return;
     const w=120,h=28,p=defaultElementPlacement(w,h);
     const el={
       id:newElementId(),type:"text",name:"Text",
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
-      panelId:p.panelId,constrainToPanel:true,
+      panelId:p.panelId,constrainToPanel:true,safeAreaExempt:false,groupId:"",
       text:"NEW MARK TEXT",fontSizePt:12,fontWeight:"bold",textAlign:"left",
+      autoFitText:true,minFontSizePt:7,
       payload:"",ecc:"M",sourceType:"generated-text",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
@@ -2095,12 +2123,15 @@
         if(key==="panelId"){
           placeElementInPanel(e,el.value);
         }else{
-          e[key]=["x","y","w","h","rotation","fontSizePt","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
+          e[key]=["x","y","w","h","rotation","fontSizePt","minFontSizePt","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
           if(key==="symbology") ensureBarcodePhysicalSettings(e,true);
           if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
           if(key==="fontSizePt") e[key]=Math.max(5,Number(e[key]||5));
           if(e.type==="barcode"&&["payload","bindingKey","symbology","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)) syncBarcodeElementSize(e);
-          else clampElementToBounds(e);
+          else {
+            clampElementToBounds(e);
+            if(e.type==="text"&&e.autoFitText&&["text","bindingKey","w","h","fontWeight","minFontSizePt"].includes(key)) fitTextElementInPlace(e);
+          }
         }
         persistLocalDraft();
       };
@@ -2137,6 +2168,20 @@
       pushArtworkHistory();
       e.constrainToPanel=Boolean(constrain.checked);clampElementToBounds(e);persistLocalDraft();render();
     };
+    const safeExempt=document.querySelector("[data-element-safe-exempt]");
+    if(safeExempt) safeExempt.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      pushArtworkHistory();
+      e.safeAreaExempt=Boolean(safeExempt.checked);persistLocalDraft();render();
+    };
+    const autoFit=document.querySelector("[data-element-autofit]");
+    if(autoFit) autoFit.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable())return;
+      pushArtworkHistory();
+      e.autoFitText=Boolean(autoFit.checked);
+      if(e.autoFitText) fitTextElementInPlace(e);
+      persistLocalDraft();render();
+    };
 
     document.querySelectorAll("[data-element-resize]").forEach((handle)=>{
       handle.onpointerdown=(ev)=>{
@@ -2169,6 +2214,7 @@
         const finish=()=>{
           handle.onpointermove=null;handle.onpointerup=null;handle.onpointercancel=null;
           element.w=nextW;element.h=nextH;clampElementToBounds(element);
+          if(element.type==="text"&&element.autoFitText) fitTextElementInPlace(element);
           persistLocalDraft();render();
         };
         handle.onpointerup=finish;handle.onpointercancel=finish;
