@@ -668,7 +668,8 @@
         <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
         <span class="mono subtle">${esc(e.panelId||"—")}</span>
-        ${e.groupId?'<span class="badge blue">GROUP</span>':""}
+        ${e.blockType==="SHIPPING_MARK_STANDARD"?'<span class="badge green">SHIP BLOCK</span>':e.groupId?'<span class="badge blue">GROUP</span>':""}
+        ${e.vectorDataUrl?'<span class="badge blue">SVG</span>':""}
         ${e.visible===false?'<span class="badge gray">HIDE</span>':e.locked?'<span class="badge amber">LOCK</span>':""}
       </button>`;
     }).join("");
@@ -710,6 +711,10 @@
     const selectedTextFit=selected?.type==="text"
       ? D.textFitMetrics(selected,D.resolvedElementText(selected,state.artwork,state.factories))
       : null;
+    const selectedImageQuality=selected&&["image","qr-image","symbol-image"].includes(selected.type)
+      ? D.effectiveImageDpi(selected)
+      : null;
+    const selectedProductionQualification=selected?D.productionElementQualification(selected):null;
     const props=selected?`
       <div class="element-properties">
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
@@ -730,6 +735,10 @@
             <div class="field"><label>Align</label><select class="select" data-element-prop="textAlign"><option value="left" ${selected.textAlign==="left"?"selected":""}>Left</option><option value="center" ${selected.textAlign==="center"?"selected":""}>Center</option><option value="right" ${selected.textAlign==="right"?"selected":""}>Right</option></select></div>
           </div>
           <div class="row2">
+            <label class="toggle-line"><input type="checkbox" data-element-wrap ${selected.wrapText?"checked":""}/> Auto Wrap 自动换行</label>
+            <div class="field"><label>Line Height</label><input class="input mono" type="number" min="0.8" max="3" step="0.05" data-element-prop="lineHeight" value="${esc(Number(selected.lineHeight||1.2))}"/></div>
+          </div>
+          <div class="row2">
             <label class="toggle-line"><input type="checkbox" data-element-autofit ${selected.autoFitText?"checked":""}/> Auto Fit 自动缩小</label>
             <div class="field"><label>Minimum pt</label><input class="input mono" type="number" min="1" step="0.25" data-element-prop="minFontSizePt" value="${esc(Number(selected.minFontSizePt||7))}"/></div>
           </div>
@@ -737,7 +746,7 @@
           <div class="notice ${selectedTextFit?.fits?"success":"warn"}">
             <strong>Text Box Check</strong><br>
             ${selectedTextFit?.fits
-              ? `预计文字 ${D.round(selectedTextFit.widthMm,1)}×${D.round(selectedTextFit.heightMm,1)} mm，可放入 ${D.round(selectedTextFit.boxWidthMm,1)}×${D.round(selectedTextFit.boxHeightMm,1)} mm。`
+              ? `预计 ${selectedTextFit.lineCount} 行 · ${D.round(selectedTextFit.widthMm,1)}×${D.round(selectedTextFit.heightMm,1)} mm，可放入 ${D.round(selectedTextFit.boxWidthMm,1)}×${D.round(selectedTextFit.boxHeightMm,1)} mm。`
               : `文字预计需要 ${D.round(selectedTextFit?.widthMm||0,1)}×${D.round(selectedTextFit?.heightMm||0,1)} mm，当前文本框 ${D.round(selectedTextFit?.boxWidthMm||0,1)}×${D.round(selectedTextFit?.boxHeightMm||0,1)} mm；Preflight 会 BLOCK。`}
           </div>`:""}
         ${selected.type==="qr-generated"?`
@@ -810,6 +819,20 @@
           <div class="field"><label>H mm</label><input class="input mono" type="number" min="5" step="1" data-element-prop="h" value="${esc(selected.h)}" ${selected.type==="barcode"?"readonly":""}/></div>
           <div class="field"><label>°</label><input class="input mono" type="number" step="1" data-element-prop="rotation" value="${esc(selected.rotation||0)}"/></div>
         </div>
+        ${selectedImageQuality?`
+          <div class="notice ${selectedImageQuality.isVector?"warn":selectedImageQuality.minDpi>=300?"success":selectedImageQuality.minDpi>=150?"warn":"error"}">
+            <strong>${selectedImageQuality.isVector?"SVG Vector Source":"Raster Print Quality"}</strong><br>
+            ${selectedImageQuality.isVector
+              ? "清理后的 SVG 源已保留；浏览器预览保持矢量。当前 Proof PDF 使用 JPEG fallback，正式 Production 仍阻止上传型图形。"
+              : `${D.round(selectedImageQuality.minDpi||0)} PPI @ ${D.round(Number(selected.w||0),1)}×${D.round(Number(selected.h||0),1)} mm · 300+ PASS / 150–299 WARN / <150 BLOCK`}
+          </div>
+        `:""}
+        <div class="notice ${selectedProductionQualification?.qualified?"success":"warn"}">
+          <strong>Production Element</strong><br>
+          ${selectedProductionQualification?.qualified
+            ? `Qualified renderer path: ${esc(selectedProductionQualification.mode)}（仍需整体 Preflight / 审批 / PDF/X gates）`
+            : `Blocked: ${esc(selectedProductionQualification?.reason||"NOT_QUALIFIED")}`}
+        </div>
         <div class="element-action-grid">
           <button class="btn small" data-action="duplicate-element">Duplicate</button>
           <button class="btn small" data-action="layer-front">To Front</button>
@@ -829,6 +852,7 @@
         <input id="art-qr-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <input id="art-symbol-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <button class="btn small" data-action="add-text-element" ${locked?"disabled":""}>＋ 文字</button>
+        <button class="btn small" data-action="add-shipping-mark-block" ${locked?"disabled":""}>＋ 标准 Shipping Mark</button>
         <button class="btn small" data-action="add-barcode-element" ${locked?"disabled":""}>＋ 条码</button>
         <button class="btn small" data-action="upload-image-trigger" ${locked?"disabled":""}>＋ 图片 / Logo</button>
         <button class="btn small" data-action="upload-qr-trigger" ${locked?"disabled":""}>＋ 上传二维码</button>
@@ -983,15 +1007,16 @@
       const border=selected?`<rect data-element-selection x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
       const resizeHandle=selected&&selectedArtworkElements().length===1&&!e.locked&&e.type!=="barcode"?`<rect data-element-resize="${esc(e.id)}" x="${Math.max(0,w-4)}" y="${Math.max(0,h-4)}" width="8" height="8" rx="1.5" fill="#fff" stroke="#e13b6b" stroke-width="2" vector-effect="non-scaling-stroke" style="cursor:nwse-resize"/>`:"";
       let body="";
-      if((e.type==="image"||e.type==="qr-image"||e.type==="symbol-image")&&e.dataUrl){
-        body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
+      if((e.type==="image"||e.type==="qr-image"||e.type==="symbol-image")&&(e.vectorDataUrl||e.dataUrl)){
+        const source=e.vectorDataUrl||e.dataUrl;
+        body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(source)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
       }else if(e.type==="text"){
+        const layout=D.textLayout(e,D.resolvedElementText(e,artwork,factoryList));
         const fontMm=Math.max(1,Number(e.fontSizePt||12))*25.4/72;
-        const lines=D.resolvedElementText(e,artwork,factoryList).split(/\r?\n/);
         const anchor=e.textAlign==="center"?"middle":e.textAlign==="right"?"end":"start";
         const tx=e.textAlign==="center"?w/2:e.textAlign==="right"?w:0;
         const weight=e.fontWeight==="bold"?"700":"400";
-        body=`<text x="${tx}" y="${fontMm}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="${fontMm}" font-weight="${weight}" fill="#000">${lines.map((line,i)=>`<tspan x="${tx}" dy="${i===0?0:fontMm*1.2}">${esc(line)}</tspan>`).join("")}</text>`;
+        body=`<text x="${tx}" y="${fontMm}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="${fontMm}" font-weight="${weight}" fill="#000">${layout.lines.map((line,i)=>`<tspan x="${tx}" dy="${i===0?0:layout.lineHeightMm}">${esc(line)}</tspan>`).join("")}</text>`;
       }else if(e.type==="barcode"){
         body=barcodeSvgBody(e,w,h,artwork,factoryList);
       }else if(e.type==="symbol"){
@@ -1651,17 +1676,39 @@
     });
   }
 
-  async function normalizeArtworkImageFile(file){
-    if(!file) throw new Error("请选择图片。");
-    const allowed=["image/png","image/jpeg","image/webp","image/svg+xml"];
-    if(!allowed.includes(file.type)) throw new Error("仅支持 PNG / JPG / WebP / SVG。");
-    if(file.size>8*1024*1024) throw new Error("图片超过 8 MB，请先压缩后再上传。");
-    const raw=await fileToDataUrl(file);
-    const img=await loadImageElement(raw);
-    const maxPx=1200;
-    const scale=Math.min(1,maxPx/Math.max(img.naturalWidth||1,img.naturalHeight||1));
-    const width=Math.max(1,Math.round((img.naturalWidth||1)*scale));
-    const height=Math.max(1,Math.round((img.naturalHeight||1)*scale));
+  function sanitizeSvgText(svgText){
+    if(typeof DOMParser!=="function"||typeof XMLSerializer!=="function") throw new Error("当前浏览器无法安全处理 SVG。");
+    const doc=new DOMParser().parseFromString(String(svgText||""),"image/svg+xml");
+    if(doc.querySelector("parsererror")) throw new Error("SVG XML 格式无效。");
+    if(!doc.documentElement||String(doc.documentElement.localName||"").toLowerCase()!=="svg") throw new Error("文件不是有效 SVG。");
+    const blocked=["script","foreignObject","iframe","object","embed","audio","video","canvas"];
+    if(doc.querySelector(blocked.join(","))) throw new Error("SVG 包含不允许的脚本/嵌入内容。");
+    for(const node of doc.querySelectorAll("*")){
+      for(const attr of [...node.attributes]){
+        const name=String(attr.name||"").toLowerCase();
+        const value=String(attr.value||"").trim();
+        if(name.startsWith("on")) node.removeAttribute(attr.name);
+        if(name==="href"||name==="xlink:href"){
+          const local=value.startsWith("#");
+          const safeEmbedded=/^data:image\/(?:png|jpeg|jpg|webp|gif);base64,/i.test(value);
+          if(value&&!local&&!safeEmbedded) node.removeAttribute(attr.name);
+        }
+        if(name==="style"&&/url\s*\(\s*['"]?(?:https?:|\/\/|data:text\/html)/i.test(value)){
+          node.removeAttribute(attr.name);
+        }
+      }
+    }
+    return new XMLSerializer().serializeToString(doc.documentElement);
+  }
+
+  async function rasterizeArtworkSource(sourceUrl,maxPx=2400,allowUpscale=false){
+    const img=await loadImageElement(sourceUrl);
+    const sourceWidth=Math.max(1,Number(img.naturalWidth||img.width||1));
+    const sourceHeight=Math.max(1,Number(img.naturalHeight||img.height||1));
+    const rawScale=maxPx/Math.max(sourceWidth,sourceHeight);
+    const scale=allowUpscale?Math.min(12,Math.max(1,rawScale)):Math.min(1,rawScale);
+    const width=Math.max(1,Math.round(sourceWidth*scale));
+    const height=Math.max(1,Math.round(sourceHeight*scale));
     const canvas=document.createElement("canvas");
     canvas.width=width;canvas.height=height;
     const ctx=canvas.getContext("2d",{alpha:false});
@@ -1669,12 +1716,41 @@
     ctx.drawImage(img,0,0,width,height);
     let quality=.94;
     let dataUrl=canvas.toDataURL("image/jpeg",quality);
-    while(dataUrl.length>900000&&quality>.72){
-      quality-=.06;
+    while(dataUrl.length>1500000&&quality>.72){
+      quality-=.05;
       dataUrl=canvas.toDataURL("image/jpeg",quality);
     }
-    if(dataUrl.length>1200000) throw new Error("图片归一化后仍然过大，请使用更简单的 Logo/图标或降低图片尺寸。");
-    return {dataUrl,mimeType:"image/jpeg",pixelWidth:width,pixelHeight:height};
+    if(dataUrl.length>1900000) throw new Error("图片归一化后仍然过大，请降低图片尺寸或使用更简单的矢量 Logo。");
+    return {dataUrl,mimeType:"image/jpeg",pixelWidth:width,pixelHeight:height,sourcePixelWidth:sourceWidth,sourcePixelHeight:sourceHeight};
+  }
+
+  async function normalizeArtworkImageFile(file){
+    if(!file) throw new Error("请选择图片。");
+    const allowed=["image/png","image/jpeg","image/webp","image/svg+xml"];
+    if(!allowed.includes(file.type)) throw new Error("仅支持 PNG / JPG / WebP / SVG。");
+    if(file.size>8*1024*1024) throw new Error("图片超过 8 MB，请先压缩后再上传。");
+
+    if(file.type==="image/svg+xml"){
+      if(file.size>2*1024*1024) throw new Error("SVG 超过 2 MB，请精简路径和元数据。");
+      const sanitized=sanitizeSvgText(await file.text());
+      const vectorDataUrl=await fileToDataUrl(new Blob([sanitized],{type:"image/svg+xml"}));
+      const fallback=await rasterizeArtworkSource(vectorDataUrl,2400,true);
+      return {
+        ...fallback,
+        sourceMimeType:"image/svg+xml",
+        vectorDataUrl,
+        isVector:true
+      };
+    }
+
+    const raw=await fileToDataUrl(file);
+    const fallback=await rasterizeArtworkSource(raw,2400);
+    return {
+      ...fallback,
+      sourceMimeType:file.type,
+      vectorDataUrl:"",
+      isVector:false
+    };
   }
 
   async function addUploadedArtworkElement(file,type="image"){
@@ -1695,11 +1771,16 @@
         text:"",fontSizePt:12,fontWeight:"normal",textAlign:"left",
         payload:"",
         ecc:"M",
-        sourceType:"uploaded-raster",
+        sourceType:normalized.isVector?"uploaded-vector":"uploaded-raster",
         mimeType:normalized.mimeType,
+        sourceMimeType:normalized.sourceMimeType||normalized.mimeType,
+        originalFileName:file.name,
         dataUrl:normalized.dataUrl,
+        vectorDataUrl:normalized.vectorDataUrl||"",
         pixelWidth:normalized.pixelWidth,
         pixelHeight:normalized.pixelHeight,
+        sourcePixelWidth:normalized.sourcePixelWidth||normalized.pixelWidth,
+        sourcePixelHeight:normalized.sourcePixelHeight||normalized.pixelHeight,
         assetRole:type==="symbol-image"?"symbol-review":"",
         expectedPayload:"",
         decodedValue:"",
@@ -1711,7 +1792,7 @@
       selectOnlyElement(el.id);
       const saved=persistLocalDraft();
       render();
-      toast(saved?(type==="qr-image"?"二维码图片已添加":type==="symbol-image"?"自定义包装图标已添加（Review）":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
+      toast(saved?(normalized.isVector?"SVG 矢量源已保留；Proof PDF 使用独立 raster fallback":type==="qr-image"?"二维码图片已添加":type==="symbol-image"?"自定义包装图标已添加（Review）":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
     }catch(e){toast(e.message||String(e),"error");}
   }
 
@@ -1854,6 +1935,51 @@
     persistLocalDraft();render();toast("包装图标已添加（Review Library）","success");
   }
 
+  function addShippingMarkBlock(){
+    if(!localArtworkEditable()) return;
+    const selected=selectedArtworkElement();
+    const panel=panelById(selected?.panelId)||panelById("TOP_FACE")||geometry().panels[0];
+    if(!panel){toast("没有可用纸箱面板。","error");return;}
+    const configuredSafe=Math.max(0,Number(state.artwork.safeMarginMm??22));
+    const inset=Math.max(4,Math.min(configuredSafe,panel.w*.18,panel.h*.18));
+    const availableW=panel.w-inset*2,availableH=panel.h-inset*2;
+    const rows=[
+      ["shipping.skuLine","Shipping · ITEM NO.",13],
+      ["shipping.contractLine","Shipping · CONTRACT NO.",10.5],
+      ["shipping.weightLine","Shipping · N.W. / G.W.",10.5],
+      ["shipping.packageLine","Shipping · PACKAGE MEAS",10.5],
+      ["shipping.crnLine","Shipping · CRN",10.5],
+      ["shipping.originLine","Shipping · ORIGIN",10.5]
+    ];
+    const rowH=8.5,gap=1.5,totalH=rows.length*rowH+(rows.length-1)*gap;
+    if(availableW<80||availableH<totalH){
+      toast(`${panel.id} 可用安全区太小，无法放入标准 Shipping Mark Block。`,"error");
+      return;
+    }
+    const blockW=Math.min(280,availableW);
+    const x=panel.x+inset+(availableW-blockW)/2;
+    const y=panel.y+inset;
+    const groupId=newGroupId();
+    const elements=rows.map(([bindingKey,name,fontSizePt],index)=>({
+      id:newElementId(),type:"text",name,
+      x,y:y+index*(rowH+gap),w:blockW,h:rowH,rotation:0,locked:false,visible:true,
+      panelId:panel.id,constrainToPanel:true,safeAreaExempt:false,groupId,
+      text:"",bindingKey,fontSizePt,fontWeight:"normal",textAlign:"left",
+      wrapText:false,lineHeight:1.15,autoFitText:true,minFontSizePt:7,
+      symbology:"",humanReadable:false,symbolKey:"",
+      payload:"",ecc:"M",sourceType:"controlled-shipping-block",mimeType:"",
+      dataUrl:"",pixelWidth:0,pixelHeight:0,
+      blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.0.0"
+    }));
+    pushArtworkHistory();
+    artworkElements().push(...elements);
+    state.selectedElementIds=elements.map(e=>e.id);
+    state.selectedElementId=elements.at(-1)?.id||null;
+    refreshAutoFitTextElements();
+    persistLocalDraft();render();
+    toast(`标准 Shipping Mark Block 1.0.0 已添加到 ${panel.id}`,"success");
+  }
+
   function addBoundTextElement(){
     if(!localArtworkEditable()) return;
     const bindingKey=String(document.getElementById("binding-preset-select")?.value||"product.sku");
@@ -1865,7 +1991,7 @@
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
       panelId:p.panelId,constrainToPanel:true,safeAreaExempt:false,groupId:"",
       text:"",bindingKey,fontSizePt:12,fontWeight:"bold",textAlign:"left",
-      autoFitText:true,minFontSizePt:7,
+      wrapText:true,lineHeight:1.2,autoFitText:true,minFontSizePt:7,
       symbology:"",humanReadable:false,symbolKey:"",
       payload:"",ecc:"M",sourceType:"bound-variable",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
@@ -1908,7 +2034,7 @@
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
       panelId:p.panelId,constrainToPanel:true,safeAreaExempt:false,groupId:"",
       text:"NEW MARK TEXT",fontSizePt:12,fontWeight:"bold",textAlign:"left",
-      autoFitText:true,minFontSizePt:7,
+      wrapText:true,lineHeight:1.2,autoFitText:true,minFontSizePt:7,
       payload:"",ecc:"M",sourceType:"generated-text",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
@@ -2204,14 +2330,14 @@
         if(key==="panelId"){
           placeElementInPanel(e,el.value);
         }else{
-          e[key]=["x","y","w","h","rotation","fontSizePt","minFontSizePt","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
+          e[key]=["x","y","w","h","rotation","fontSizePt","minFontSizePt","lineHeight","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
           if(key==="symbology") ensureBarcodePhysicalSettings(e,true);
           if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
           if(key==="fontSizePt") e[key]=Math.max(5,Number(e[key]||5));
           if(e.type==="barcode"&&["payload","bindingKey","symbology","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)) syncBarcodeElementSize(e);
           else {
             clampElementToBounds(e);
-            if(e.type==="text"&&e.autoFitText&&["text","bindingKey","w","h","fontWeight","minFontSizePt"].includes(key)) fitTextElementInPlace(e);
+            if(e.type==="text"&&e.autoFitText&&["text","bindingKey","w","h","fontWeight","minFontSizePt","lineHeight"].includes(key)) fitTextElementInPlace(e);
           }
         }
         persistLocalDraft();
@@ -2254,6 +2380,14 @@
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
       pushArtworkHistory();
       e.safeAreaExempt=Boolean(safeExempt.checked);persistLocalDraft();render();
+    };
+    const wrapText=document.querySelector("[data-element-wrap]");
+    if(wrapText) wrapText.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable())return;
+      pushArtworkHistory();
+      e.wrapText=Boolean(wrapText.checked);
+      if(e.autoFitText) fitTextElementInPlace(e);
+      persistLocalDraft();render();
     };
     const autoFit=document.querySelector("[data-element-autofit]");
     if(autoFit) autoFit.onchange=()=>{
@@ -2435,6 +2569,7 @@
     if(action==="upload-symbol-trigger"){document.getElementById("art-symbol-file")?.click();return;}
     if(action==="verify-uploaded-qr") return verifySelectedQrImage();
     if(action==="add-text-element") return addTextElement();
+    if(action==="add-shipping-mark-block") return addShippingMarkBlock();
     if(action==="add-bound-text-element") return addBoundTextElement();
     if(action==="add-barcode-element") return addBarcodeElement();
     if(action==="normalize-sscc") return normalizeSelectedSscc();
@@ -3420,7 +3555,9 @@
   function proofPdfElements(artwork=state.artwork){
     return (Array.isArray(artwork.elements)?artwork.elements:[]).map((e)=>{
       if(e.type==="text"){
-        return {...e,text:D.resolvedElementText(e,artwork,state.factories)};
+        const text=D.resolvedElementText(e,artwork,state.factories);
+        const layout=D.textLayout(e,text);
+        return {...e,text,renderLines:layout.lines,renderLineWidthsMm:layout.widthsMm};
       }
       if(e.type==="qr-generated"){
         const payload=D.resolvedElementPayload(e,artwork,state.factories);
@@ -3471,7 +3608,7 @@
       policies:state.productionPolicies
     },null,2);
 
-    const manifest=D.manifest(artwork,"vector-svg-pdf-1.8.0");
+    const manifest=D.manifest(artwork,"vector-svg-pdf-2.1.0");
     manifest.qr={encoder:"qrcode-generator",errorCorrectionLevel:qrModel.errorCorrectionLevel,version:qrModel.version,vector:true};
     manifest.barcode={symbology:barcodeSymbology,renderer:"Code128-B",vector:true};
     manifest.productionEvidence={
@@ -3552,7 +3689,7 @@
       if(pdfFile) pdfFile.data=serverPdf.blob;
       const svgFile=built.files.find(x=>x.name==="Production.svg");
       if(svgFile) svgFile.name="Reference.svg";
-      built.manifest.rendererVersion=serverPdf.headers?.renderer||"pdfx4-embedded-truetype-1.8.0";
+      built.manifest.rendererVersion=serverPdf.headers?.renderer||"pdfx4-embedded-truetype-2.1.0";
       built.manifest.authoritativePdf=evidence.authoritativePdf;
       built.manifest.sha256.pdf=serverPdf.headers?.artifactSha256||await sha256(serverPdf.blob);
       if(built.manifest.sha256.svg){
@@ -3578,7 +3715,7 @@
         kind:"PRODUCTION_BUNDLE",
         revision:state.artwork.revision,
         filename,
-        renderer:serverPdf.headers?.renderer||"pdfx4-embedded-truetype-1.8.0",
+        renderer:serverPdf.headers?.renderer||"pdfx4-embedded-truetype-2.1.0",
         actor:"web",
         manifest:built.manifest,
         authoritativePdfExportId:serverPdf.headers?.exportId,

@@ -320,19 +320,29 @@
       if(element.visible===false) continue;
       const m=elementRotationMatrix(element,geometry);
       if(element.type==="text") {
-        const fontSizePt=Math.max(5,Number(element.fontSizePt||12));
+        const fontSizePt=Math.max(1,Number(element.fontSizePt||12));
         const fontSizeMm=fontSizePt*25.4/72;
-        const lines=String(element.text||"").split(/\r?\n/);
+        const lines=Array.isArray(element.renderLines)&&element.renderLines.length
+          ? element.renderLines.map(x=>String(x??""))
+          : String(element.text||"").split(/\r?\n/);
+        const widths=Array.isArray(element.renderLineWidthsMm)?element.renderLineWidthsMm:[];
         const boxW=Math.max(1,Number(element.w||1));
+        const boxH=Math.max(1,Number(element.h||1));
+        const lineHeight=Math.max(.8,Math.min(3,Number(element.lineHeight||1.2)));
+        const lineHeightMm=fontSizeMm*lineHeight;
         const approxWidth=(line)=>line.length*fontSizePt*0.52*25.4/72;
+        ops.push("q");
+        ops.push(`${m.co.toFixed(8)} ${m.si.toFixed(8)} ${(-m.si).toFixed(8)} ${m.co.toFixed(8)} ${m.e.toFixed(3)} ${m.f.toFixed(3)} cm`);
         for(let i=0;i<lines.length;i+=1){
           const line=lines[i];
-          let x=Number(element.x||0);
-          if(element.textAlign==="center") x+=(boxW-approxWidth(line))/2;
-          if(element.textAlign==="right") x+=boxW-approxWidth(line);
-          const y=geometry.totalHeight-Number(element.y||0)-fontSizeMm-(i*fontSizeMm*1.2);
-          ops.push(writeText(x,y,fontSizePt,line,-Number(element.rotation||0)));
+          const measured=Math.max(0,Number(widths[i]??approxWidth(line)));
+          let x=0;
+          if(element.textAlign==="center") x=(boxW-measured)/2;
+          if(element.textAlign==="right") x=boxW-measured;
+          const y=boxH-fontSizeMm-(i*lineHeightMm);
+          ops.push(writeText(x,y,fontSizePt,line,0));
         }
+        ops.push("Q");
       } else if(element.type==="barcode"&&element.barcodeModel?.bars?.length) {
         const model=element.barcodeModel;
         const sym=String(element.symbology||model.symbology||"CODE128B").toUpperCase();
@@ -615,13 +625,13 @@
   }
 
   function createEmbeddedPdfBytes({
-    artwork, geometry, computed, codeModel, qrMatrix, mode = "production", fontBytes,
+    artwork, geometry, computed, codeModel, qrMatrix, customElements = [], mode = "production", fontBytes,
     iccBytes = null, pdfxProfile = "", outputConditionIdentifier = "", documentTitle = ""
   }) {
     const fontModel = parseTrueTypeFont(fontBytes);
     const widthPt = mm(geometry.totalWidth);
     const heightPt = mm(geometry.totalHeight);
-    const streamText = buildArtworkOps(artwork, geometry, computed, codeModel, { mode, qrMatrix, fontModel });
+    const streamText = buildArtworkOps(artwork, geometry, computed, codeModel, { mode, qrMatrix, fontModel, customElements });
     const stream = new TextEncoder().encode(streamText);
     const toUnicode = new TextEncoder().encode(makeToUnicode(fontModel));
     const fontFile = fontModel.bytes;
@@ -668,7 +678,7 @@
   }) {
     if (fontBytes) {
       return createEmbeddedPdfBytes({
-        artwork, geometry, computed, codeModel, qrMatrix, mode,
+        artwork, geometry, computed, codeModel, qrMatrix, customElements, mode,
         fontBytes, iccBytes, pdfxProfile, outputConditionIdentifier, documentTitle
       });
     }

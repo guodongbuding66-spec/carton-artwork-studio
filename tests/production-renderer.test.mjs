@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { renderEmbeddedArtworkPdf } from "../worker/production-renderer.js";
+import { renderEmbeddedArtworkPdf, prepareProductionCustomElements } from "../worker/production-renderer.js";
 
 function putU16(b,o,v){b[o]=(v>>>8)&255;b[o+1]=v&255;}
 function putI16(b,o,v){putU16(b,o,v<0?0x10000+v:v);}
@@ -94,16 +94,83 @@ const customSnapshot={
   ...snapshot,
   artwork:{
     ...snapshot.artwork,
+    safeMarginMm:22,
     elements:[{
       id:"custom-visible",type:"text",name:"Bound SKU",visible:true,
-      panelId:"TOP_FACE",bindingKey:"product.sku",text:""
+      x:260,y:1060,w:180,h:20,rotation:0,locked:false,
+      panelId:"TOP_FACE",constrainToPanel:true,safeAreaExempt:false,
+      bindingKey:"product.sku",text:"",fontSizePt:10,fontWeight:"normal",textAlign:"left",
+      wrapText:false,lineHeight:1.2,autoFitText:true,minFontSizePt:7,
+      blockType:"",blockVersion:""
+    }]
+  }
+};
+const customRendered=renderEmbeddedArtworkPdf({snapshot:customSnapshot,fontBytes:makeSyntheticTrueType(),qrEcc:"M",mode:"production"});
+assert.ok(customRendered.bytes.length>0);
+assert.equal(customRendered.customElements.count,1);
+assert.deepEqual(customRendered.customElements.types,["text"]);
+assert.equal(customRendered.artwork.elements[0].text,"KF210215US-02PM-001");
+
+const boldSnapshot={
+  ...customSnapshot,
+  artwork:{
+    ...customSnapshot.artwork,
+    elements:[{...customSnapshot.artwork.elements[0],id:"bold-custom",fontWeight:"bold"}]
+  }
+};
+assert.throws(
+  ()=>renderEmbeddedArtworkPdf({snapshot:boldSnapshot,fontBytes:makeSyntheticTrueType(),qrEcc:"M",mode:"production"}),
+  (e)=>e?.code==="PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED"&&e?.detail?.[0]?.reason==="CUSTOM_BOLD_FONT_NOT_QUALIFIED"
+);
+
+const uploadedSnapshot={
+  ...customSnapshot,
+  artwork:{
+    ...customSnapshot.artwork,
+    elements:[{
+      id:"uploaded-logo",type:"image",name:"Logo",visible:true,
+      x:260,y:1060,w:60,h:30,rotation:0,locked:false,
+      panelId:"TOP_FACE",constrainToPanel:true,safeAreaExempt:false,
+      sourceType:"uploaded-vector",vectorDataUrl:"data:image/svg+xml;base64,PHN2Zy8+",
+      dataUrl:"data:image/jpeg;base64,AA==",pixelWidth:1800,pixelHeight:900
     }]
   }
 };
 assert.throws(
-  ()=>renderEmbeddedArtworkPdf({snapshot:customSnapshot,fontBytes:makeSyntheticTrueType(),qrEcc:"M",mode:"production"}),
-  (e)=>e?.code==="PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED"
+  ()=>renderEmbeddedArtworkPdf({snapshot:uploadedSnapshot,fontBytes:makeSyntheticTrueType(),qrEcc:"M",mode:"production"}),
+  (e)=>e?.code==="PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED"&&e?.detail?.[0]?.reason==="UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED"
 );
+
+const preparedText=prepareProductionCustomElements(customRendered.artwork,[{
+  id:"factory-real",name:"Factory Real",crn:"3203960FM4",country:"China"
+}]);
+assert.equal(preparedText[0].renderLines.length,1);
+
+const generatedSnapshot={
+  ...snapshot,
+  artwork:{
+    ...snapshot.artwork,
+    safeMarginMm:22,
+    elements:[
+      {
+        id:"custom-qr",type:"qr-generated",name:"QR",visible:true,
+        x:260,y:1060,w:45,h:45,rotation:0,locked:false,panelId:"TOP_FACE",constrainToPanel:true,safeAreaExempt:false,
+        payload:"https://example.com/custom",bindingKey:"",ecc:"M"
+      },
+      {
+        id:"custom-code",type:"barcode",name:"Case Code",visible:true,
+        x:360,y:1060,w:100,h:40,rotation:0,locked:false,panelId:"TOP_FACE",constrainToPanel:true,safeAreaExempt:false,
+        payload:"CASE123456",bindingKey:"",symbology:"CODE128B",humanReadable:true,
+        moduleMm:.42,barHeightMm:28,quietModules:10
+      }
+    ]
+  }
+};
+const generatedRendered=renderEmbeddedArtworkPdf({snapshot:generatedSnapshot,fontBytes:makeSyntheticTrueType(),qrEcc:"M",mode:"production"});
+assert.equal(generatedRendered.customElements.count,2);
+assert.ok(generatedRendered.customElements.types.includes("qr-generated"));
+assert.ok(generatedRendered.customElements.types.includes("barcode"));
+assert.ok(generatedRendered.artwork.elements.find(x=>x.id==="custom-code").barcodeModel?.bars?.length>0);
 
 const hiddenCustomSnapshot={
   ...snapshot,

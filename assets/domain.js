@@ -133,6 +133,8 @@
           fontSizePt:Number(e.fontSizePt||12),
           fontWeight:String(e.fontWeight||"normal"),
           textAlign:String(e.textAlign||"left"),
+          wrapText:Boolean(e.wrapText),
+          lineHeight:Number(e.lineHeight||1.2),
           bindingKey:String(e.bindingKey||""),
           symbology:String(e.symbology||""),
           humanReadable:e.humanReadable!==false,
@@ -150,6 +152,11 @@
           dataUrl:e.dataUrl||"",
           pixelWidth:Number(e.pixelWidth||0),
           pixelHeight:Number(e.pixelHeight||0),
+          sourcePixelWidth:Number(e.sourcePixelWidth||0),
+          sourcePixelHeight:Number(e.sourcePixelHeight||0),
+          sourceMimeType:String(e.sourceMimeType||e.mimeType||""),
+          originalFileName:String(e.originalFileName||""),
+          vectorDataUrl:String(e.vectorDataUrl||""),
           assetRole:String(e.assetRole||""),
           expectedPayload:String(e.expectedPayload||""),
           decodedValue:String(e.decodedValue||""),
@@ -158,7 +165,9 @@
           groupId:String(e.groupId||""),
           safeAreaExempt:Boolean(e.safeAreaExempt),
           autoFitText:Boolean(e.autoFitText),
-          minFontSizePt:Number(e.minFontSizePt||7)
+          minFontSizePt:Number(e.minFontSizePt||7),
+          blockType:String(e.blockType||""),
+          blockVersion:String(e.blockVersion||"")
         })) : []
       }
     };
@@ -194,7 +203,13 @@
     { key:"factory.crn", label:"Factory CRN" },
     { key:"factory.name", label:"Factory Name" },
     { key:"origin.country", label:"Country of Origin" },
-    { key:"origin.text", label:"Made in …" }
+    { key:"origin.text", label:"Made in …" },
+    { key:"shipping.skuLine", label:"Shipping · ITEM NO." },
+    { key:"shipping.contractLine", label:"Shipping · CONTRACT NO." },
+    { key:"shipping.weightLine", label:"Shipping · N.W. / G.W." },
+    { key:"shipping.packageLine", label:"Shipping · PACKAGE MEAS" },
+    { key:"shipping.crnLine", label:"Shipping · CRN" },
+    { key:"shipping.originLine", label:"Shipping · ORIGIN" }
   ]);
 
   function isKnownArtworkBinding(key) {
@@ -223,6 +238,12 @@
     if(k==="factory.name") return String(f?.name||"");
     if(k==="origin.country") return String(f?.country||"");
     if(k==="origin.text") return c.originText;
+    if(k==="shipping.skuLine") return `ITEM NO. ${String(a.sku??"")}`;
+    if(k==="shipping.contractLine") return `CONTRACT NO. ${String(a.contractNo??"")}`;
+    if(k==="shipping.weightLine") return `N.W. ${formatNumber(a.netWeight)} LBS   G.W. ${formatNumber(a.grossWeight)} LBS`;
+    if(k==="shipping.packageLine") return `PACKAGE MEAS ${c.packageMeas}`;
+    if(k==="shipping.crnLine") return `CRN ${String(f?.crn||"")}`;
+    if(k==="shipping.originLine") return c.originText;
     return "";
   }
 
@@ -367,11 +388,90 @@
     return 0.58;
   }
 
-  function estimateTextBox(text, fontSizePt=12, fontWeight="normal") {
+  function measureTextLineMm(line, fontSizePt=12, fontWeight="normal") {
     const fontMm=Math.max(0,Number(fontSizePt||0))/PT_PER_MM;
     const weightFactor=String(fontWeight||"normal")==="bold"?1.05:1;
+    return [...String(line??"")].reduce((sum,ch)=>sum+glyphWidthFactor(ch),0)*fontMm*weightFactor;
+  }
+
+  function wrapTextLines(text, maxWidthMm, fontSizePt=12, fontWeight="normal") {
+    const maxWidth=Math.max(0,Number(maxWidthMm||0));
+    const paragraphs=String(text??"").split(/\r?\n/);
+    if(!maxWidth) return paragraphs.length?paragraphs:[""];
+    const out=[];
+    for(const paragraph of paragraphs){
+      if(paragraph===""){out.push("");continue;}
+      let line="";
+      for(const ch of [...paragraph]){
+        const candidate=line+ch;
+        if(!line||measureTextLineMm(candidate,fontSizePt,fontWeight)<=maxWidth+0.001){
+          line=candidate;
+          continue;
+        }
+        const space=Math.max(line.lastIndexOf(" "),line.lastIndexOf("\t"));
+        if(space>0){
+          const head=line.slice(0,space).trimEnd();
+          const tail=line.slice(space+1).trimStart();
+          if(head) out.push(head);
+          line=tail+ch;
+          while(line&&measureTextLineMm(line,fontSizePt,fontWeight)>maxWidth+0.001){
+            let chunk="";
+            for(const part of [...line]){
+              if(chunk&&measureTextLineMm(chunk+part,fontSizePt,fontWeight)>maxWidth+0.001) break;
+              chunk+=part;
+            }
+            if(!chunk) break;
+            out.push(chunk);
+            line=line.slice([...chunk].length);
+          }
+        }else{
+          out.push(line);
+          line=ch;
+        }
+      }
+      out.push(line.trimEnd());
+    }
+    return out.length?out:[""];
+  }
+
+  function textLayout(element, text) {
+    const fontSizePt=Math.max(0,Number(element?.fontSizePt||12));
+    const fontWeight=String(element?.fontWeight||"normal");
+    const boxWidthMm=Math.max(0,Number(element?.w||0));
+    const boxHeightMm=Math.max(0,Number(element?.h||0));
+    const lineHeight=Math.max(0.8,Math.min(3,Number(element?.lineHeight||1.2)));
+    const wrap=Boolean(element?.wrapText);
+    const lines=wrap
+      ? wrapTextLines(text,boxWidthMm,fontSizePt,fontWeight)
+      : String(text??"").split(/\r?\n/);
+    const widths=lines.map(line=>measureTextLineMm(line,fontSizePt,fontWeight));
+    const fontMm=fontSizePt/PT_PER_MM;
+    const lineHeightMm=fontMm*lineHeight;
+    const widthMm=widths.length?Math.max(...widths):0;
+    const heightMm=Math.max(1,lines.length)*lineHeightMm;
+    return {
+      lines,
+      widthsMm:widths,
+      widthMm,
+      heightMm,
+      lineCount:Math.max(1,lines.length),
+      lineHeight,
+      lineHeightMm,
+      fontSizePt,
+      fontWeight,
+      wrapText:wrap,
+      boxWidthMm,
+      boxHeightMm,
+      fits:widthMm<=boxWidthMm+0.01&&heightMm<=boxHeightMm+0.01,
+      widthOverflowMm:Math.max(0,widthMm-boxWidthMm),
+      heightOverflowMm:Math.max(0,heightMm-boxHeightMm)
+    };
+  }
+
+  function estimateTextBox(text, fontSizePt=12, fontWeight="normal") {
     const lines=String(text??"").split(/\r?\n/);
-    const widths=lines.map((line)=>[...line].reduce((sum,ch)=>sum+glyphWidthFactor(ch),0)*fontMm*weightFactor);
+    const widths=lines.map(line=>measureTextLineMm(line,fontSizePt,fontWeight));
+    const fontMm=Math.max(0,Number(fontSizePt||0))/PT_PER_MM;
     return {
       widthMm: widths.length?Math.max(...widths):0,
       heightMm: Math.max(1,lines.length)*fontMm*1.2,
@@ -381,18 +481,7 @@
   }
 
   function textFitMetrics(element, text) {
-    const metrics=estimateTextBox(text,element?.fontSizePt||12,element?.fontWeight||"normal");
-    const boxW=Math.max(0,Number(element?.w||0));
-    const boxH=Math.max(0,Number(element?.h||0));
-    const fits=metrics.widthMm<=boxW+0.01&&metrics.heightMm<=boxH+0.01;
-    return {
-      ...metrics,
-      boxWidthMm:boxW,
-      boxHeightMm:boxH,
-      fits,
-      widthOverflowMm:Math.max(0,metrics.widthMm-boxW),
-      heightOverflowMm:Math.max(0,metrics.heightMm-boxH)
-    };
+    return textLayout(element,text);
   }
 
   function fitTextToBox(element, text, options={}) {
@@ -410,6 +499,38 @@
       else hi=mid;
     }
     return {...best,fontSizePt:round(best.fontSizePt,2)};
+  }
+
+  function effectiveImageDpi(element) {
+    const vector=Boolean(element?.vectorDataUrl)||String(element?.sourceType||"")==="uploaded-vector";
+    if(vector) return {isVector:true,xDpi:null,yDpi:null,minDpi:null};
+    const wMm=Math.max(0,Number(element?.w||0));
+    const hMm=Math.max(0,Number(element?.h||0));
+    const pxW=Math.max(0,Number(element?.pixelWidth||0));
+    const pxH=Math.max(0,Number(element?.pixelHeight||0));
+    if(!wMm||!hMm||!pxW||!pxH) return {isVector:false,xDpi:0,yDpi:0,minDpi:0};
+    const xDpi=pxW/(wMm/25.4);
+    const yDpi=pxH/(hMm/25.4);
+    return {isVector:false,xDpi,yDpi,minDpi:Math.min(xDpi,yDpi)};
+  }
+
+  function productionElementQualification(element) {
+    const type=String(element?.type||"");
+    if(type==="text"){
+      if(String(element?.fontWeight||"normal")==="bold"){
+        return {qualified:false,mode:"BLOCKED",reason:"CUSTOM_BOLD_FONT_NOT_QUALIFIED"};
+      }
+      return {qualified:true,mode:"EMBEDDED_VECTOR_TEXT"};
+    }
+    if(type==="barcode") return {qualified:true,mode:"VECTOR_BARCODE"};
+    if(type==="qr-generated") return {qualified:true,mode:"VECTOR_QR"};
+    return {
+      qualified:false,
+      mode:"BLOCKED",
+      reason:type==="image"||type==="qr-image"||type==="symbol-image"
+        ? "UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED"
+        : "CUSTOM_ELEMENT_TYPE_NOT_PRODUCTION_QUALIFIED"
+    };
   }
 
   function check(id, title, status, detail, category, blocking = false) {
@@ -800,16 +921,59 @@
           "Assets"
         ));
       }
-      if((element.type==="image"||element.type==="qr-image"||element.type==="symbol-image")&&Number(element.pixelWidth)>0&&Number(element.pixelHeight)>0&&w>0&&h>0){
-        const ppi=Math.min(Number(element.pixelWidth)/(w/25.4),Number(element.pixelHeight)/(h/25.4));
-        assetChecks.push(check(
-          `asset-resolution-${element.id||name}`,
-          `${name} effective raster resolution`,
-          ppi>=300?"pass":"warning",
-          `${round(ppi)} PPI at placed size ${round(w)}×${round(h)} mm. Internal review target is 300 PPI for raster print assets.`,
-          "Assets"
-        ));
+      if(element.type==="image"||element.type==="qr-image"||element.type==="symbol-image"){
+        const dpi=effectiveImageDpi(element);
+        if(dpi.isVector){
+          assetChecks.push(check(
+            `asset-vector-source-${element.id||name}`,
+            `${name} vector source preserved`,
+            "warning",
+            "Sanitized SVG source is preserved. Browser preview uses the vector source; current Proof PDF uses a raster fallback. Uploaded graphics remain blocked from authoritative Production until the vector asset path is qualified.",
+            "Assets"
+          ));
+        }else{
+          const ppi=Number(dpi.minDpi||0);
+          const status=ppi>=300?"pass":ppi>=150?"warning":"error";
+          assetChecks.push(check(
+            `asset-resolution-${element.id||name}`,
+            `${name} effective raster resolution`,
+            status,
+            ppi>0
+              ? `${round(ppi)} PPI at placed size ${round(w)}×${round(h)} mm. ≥300 PPI target; 150–299 PPI review warning; <150 PPI blocks.`
+              : "Raster pixel dimensions or placed size are invalid; print resolution cannot be verified.",
+            "Assets",
+            status==="error"
+          ));
+        }
       }
+    }
+
+    const shippingRequired=[
+      "shipping.skuLine","shipping.contractLine","shipping.weightLine",
+      "shipping.packageLine","shipping.crnLine","shipping.originLine"
+    ];
+    const shippingGroups=new Map();
+    for(const element of customElements){
+      if(element?.visible===false||String(element?.blockType||"")!=="SHIPPING_MARK_STANDARD") continue;
+      const key=String(element.groupId||element.id||"shipping");
+      if(!shippingGroups.has(key)) shippingGroups.set(key,[]);
+      shippingGroups.get(key).push(element);
+    }
+    for(const [groupId,items] of shippingGroups){
+      const keys=new Set(items.map(x=>String(x.bindingKey||"")));
+      const missing=shippingRequired.filter(k=>!keys.has(k));
+      const versions=new Set(items.map(x=>String(x.blockVersion||"")));
+      const versionOk=versions.size===1&&versions.has("1.0.0");
+      assetChecks.push(check(
+        `shipping-block-${groupId}`,
+        "Standard Shipping Mark Block",
+        !missing.length&&versionOk?"pass":"error",
+        !missing.length&&versionOk
+          ? `SHIPPING_MARK_STANDARD 1.0.0 · ${items.length} bound text elements.`
+          : `Controlled block is incomplete or version-mismatched. Missing: ${missing.join(", ")||"none"}; versions: ${[...versions].join(", ")||"none"}.`,
+        "Assets",
+        Boolean(missing.length||!versionOk)
+      ));
     }
 
     const print = [
@@ -895,6 +1059,8 @@
         fontSizePt:Number(e.fontSizePt||12),
         fontWeight:["normal","bold"].includes(String(e.fontWeight||"normal"))?String(e.fontWeight||"normal"):"normal",
         textAlign:["left","center","right"].includes(String(e.textAlign||"left"))?String(e.textAlign||"left"):"left",
+        wrapText:Boolean(e.wrapText),
+        lineHeight:Math.max(0.8,Math.min(3,Number(e.lineHeight||1.2))),
         bindingKey:String(e.bindingKey||""),
         symbology:String(e.symbology||""),
         humanReadable:e.humanReadable!==false,
@@ -912,6 +1078,11 @@
         dataUrl:String(e.dataUrl||""),
         pixelWidth:Number(e.pixelWidth||0),
         pixelHeight:Number(e.pixelHeight||0),
+        sourcePixelWidth:Number(e.sourcePixelWidth||0),
+        sourcePixelHeight:Number(e.sourcePixelHeight||0),
+        sourceMimeType:String(e.sourceMimeType||e.mimeType||""),
+        originalFileName:String(e.originalFileName||""),
+        vectorDataUrl:String(e.vectorDataUrl||""),
         assetRole:String(e.assetRole||""),
         expectedPayload:String(e.expectedPayload||""),
         decodedValue:String(e.decodedValue||""),
@@ -920,7 +1091,9 @@
         groupId:String(e.groupId||""),
         safeAreaExempt:Boolean(e.safeAreaExempt),
         autoFitText:Boolean(e.autoFitText),
-        minFontSizePt:Number(e.minFontSizePt||7)
+        minFontSizePt:Number(e.minFontSizePt||7),
+        blockType:String(e.blockType||""),
+        blockVersion:String(e.blockVersion||"")
       })) : []
     };
   }
@@ -963,9 +1136,14 @@
     constrainElementResize,
     calibrationMetrics,
     codeBlockDimensions,
+    measureTextLineMm,
+    wrapTextLines,
+    textLayout,
     estimateTextBox,
     textFitMetrics,
     fitTextToBox,
+    effectiveImageDpi,
+    productionElementQualification,
     runPreflight,
     preflightSummary,
     stableStringify,

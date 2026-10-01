@@ -127,4 +127,17 @@ const expectedPhysicalBar=P.rectOp(
 );
 assert.ok(physicalItfText.includes(expectedPhysicalBar),"Proof PDF must preserve true physical ITF bar width/height instead of fitting to an arbitrary box");
 
+const wrappedTextProof=P.createPdfBytes({
+  artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
+  customElements:[{
+    id:"wrapped-text",type:"text",x:300,y:900,w:90,h:35,rotation:15,visible:true,
+    text:"ignored-source",fontSizePt:10,textAlign:"left",lineHeight:1.4,
+    renderLines:["LINE ONE","LINE TWO"],renderLineWidthsMm:[15,16]
+  }]
+});
+const wrappedTextProofText=Buffer.from(wrappedTextProof).toString("latin1");
+assert.ok(wrappedTextProofText.includes("(LINE ONE) Tj"),"Wrapped custom text should emit every deterministic line");
+assert.ok(wrappedTextProofText.includes("(LINE TWO) Tj"),"Wrapped custom text should emit the second deterministic line");
+assert.ok((wrappedTextProofText.match(/\nq\n/g)||[]).length>=1,"Rotated multiline text should use a local graphics-state transform");
+
 console.log("PDF tests passed.");
