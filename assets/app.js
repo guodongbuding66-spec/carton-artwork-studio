@@ -70,7 +70,9 @@
     pdfxPromotionReadiness: null,
     pdfxPromotionEvidence: [],
     promotionEvidenceBusy: false,
-    selectedElementId: null
+    selectedElementId: null,
+    historyPast: [],
+    historyFuture: []
   };
 
   const navItems = [
@@ -161,6 +163,41 @@
   function persistLocalDraft(){
     try{localStorage.setItem("cas:draft",JSON.stringify(state.artwork));return true;}
     catch{return false;}
+  }
+  function artworkSnapshot(){
+    return JSON.stringify(state.artwork);
+  }
+  function clearArtworkHistory(){
+    state.historyPast=[];
+    state.historyFuture=[];
+  }
+  function pushArtworkHistory(){
+    const snapshot=artworkSnapshot();
+    if(state.historyPast.at(-1)===snapshot) return;
+    state.historyPast.push(snapshot);
+    if(state.historyPast.length>12) state.historyPast.shift();
+    state.historyFuture=[];
+  }
+  function restoreArtworkSnapshot(snapshot){
+    try{
+      state.artwork=JSON.parse(snapshot);
+      if(state.selectedElementId&&!artworkElements().some(e=>e.id===state.selectedElementId)) state.selectedElementId=null;
+      persistLocalDraft();
+      render();
+      return true;
+    }catch{return false;}
+  }
+  function undoArtwork(){
+    if(!state.historyPast.length){toast("没有可撤销的操作。");return;}
+    state.historyFuture.push(artworkSnapshot());
+    const snapshot=state.historyPast.pop();
+    restoreArtworkSnapshot(snapshot);
+  }
+  function redoArtwork(){
+    if(!state.historyFuture.length){toast("没有可重做的操作。");return;}
+    state.historyPast.push(artworkSnapshot());
+    const snapshot=state.historyFuture.pop();
+    restoreArtworkSnapshot(snapshot);
   }
   function artworkElements(){
     if(!Array.isArray(state.artwork.elements)) state.artwork.elements=[];
@@ -484,6 +521,8 @@
 
   function renderTools(){
     return `<div class="preview-tools">
+      <button class="tool" data-action="undo-artwork" ${state.historyPast.length?"":"disabled"} title="Ctrl/Cmd+Z">↶ Undo</button>
+      <button class="tool" data-action="redo-artwork" ${state.historyFuture.length?"":"disabled"} title="Ctrl/Cmd+Shift+Z / Ctrl+Y">↷ Redo</button>
       <button class="tool" data-preview="fit">Fit</button><button class="tool" data-preview="-">−</button><span class="zoom">${Math.round(state.zoom*100)}%</span><button class="tool" data-preview="+">＋</button><button class="tool" data-preview="100">100%</button>
       <button class="tool ${state.showDieline?"active":""}" data-preview="dieline">Dieline</button>
       <button class="tool ${state.showSafe?"active":""}" data-preview="safe">Safe Zone</button>
@@ -564,7 +603,8 @@
     return elements.filter((e)=>e.visible!==false).map((e)=>{
       const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
       const selected=mode==="editor"&&state.selectedElementId===e.id;
-      const border=selected?`<rect x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
+      const border=selected?`<rect data-element-selection x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
+      const resizeHandle=selected&&!e.locked?`<rect data-element-resize="${esc(e.id)}" x="${Math.max(0,w-4)}" y="${Math.max(0,h-4)}" width="8" height="8" rx="1.5" fill="#fff" stroke="#e13b6b" stroke-width="2" vector-effect="non-scaling-stroke" style="cursor:nwse-resize"/>`:"";
       let body="";
       if((e.type==="image"||e.type==="qr-image")&&e.dataUrl){
         body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
@@ -589,7 +629,7 @@
           body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff" stroke="#bc2f3b"/><text x="5" y="18" font-size="10" fill="#bc2f3b">Invalid QR</text>`;
         }
       }
-      return `<g data-art-element="${esc(e.id)}" data-element-locked="${e.locked?"1":"0"}" transform="${elementTransform(e)}" style="cursor:${e.locked?"default":"move"}">${body}${border}</g>`;
+      return `<g data-art-element="${esc(e.id)}" data-element-locked="${e.locked?"1":"0"}" transform="${elementTransform(e)}" style="cursor:${e.locked?"default":"move"}">${body}${border}${resizeHandle}</g>`;
     }).join("");
   }
 
@@ -1145,6 +1185,7 @@
     document.querySelectorAll("[data-quality-tab]").forEach(b=>b.onclick=async()=>{state.qualityTab=b.dataset.qualityTab;render();if(state.qualityTab==="reports")await loadAudit();if(state.qualityTab==="readiness")await loadProductionReadiness();if(state.qualityTab==="assets")await loadProductionAssets();if(state.qualityTab==="compare"&&state.remoteArtworkId&&!state.remoteRevisions.length)await refreshRemoteRevisionMetadata();});
     document.querySelectorAll("[data-impact]").forEach(b=>b.onclick=()=>loadFactoryImpact(b.dataset.impact));
     document.querySelectorAll("[data-art]").forEach(el=>{
+      el.onfocus=()=>{if(localArtworkEditable())pushArtworkHistory();};
       const apply=()=>{
         const k=el.dataset.art;
         state.artwork[k]=el.type==="number"?Number(el.value):el.value;
@@ -1181,6 +1222,7 @@
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
     bindArtworkElements();
+    bindEditorKeyboard();
     const artImageFile=document.getElementById("art-image-file");
     const artQrImageFile=document.getElementById("art-qr-image-file");
     if(artImageFile) artImageFile.onchange=async()=>{const file=artImageFile.files?.[0];if(file)await addUploadedArtworkElement(file,"image");};
@@ -1268,6 +1310,7 @@
         pixelWidth:normalized.pixelWidth,
         pixelHeight:normalized.pixelHeight
       };
+      pushArtworkHistory();
       artworkElements().push(el);
       state.selectedElementId=el.id;
       const saved=persistLocalDraft();
@@ -1291,6 +1334,7 @@
       payload,ecc,sourceType:"generated-vector",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
+    pushArtworkHistory();
     artworkElements().push(el);
     state.selectedElementId=el.id;
     persistLocalDraft();
@@ -1310,6 +1354,7 @@
       payload:String(state.artwork.barcode||"ABC123"),ecc:"M",
       sourceType:"generated-vector",mimeType:"",dataUrl:"",pixelWidth:0,pixelHeight:0
     };
+    pushArtworkHistory();
     artworkElements().push(el);state.selectedElementId=el.id;
     persistLocalDraft();render();toast("条码元素已添加","success");
   }
@@ -1328,6 +1373,7 @@
       payload:"",ecc:"M",sourceType:"builtin-review-symbol",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
+    pushArtworkHistory();
     artworkElements().push(el);state.selectedElementId=el.id;
     persistLocalDraft();render();toast("包装图标已添加（Review Library）","success");
   }
@@ -1347,6 +1393,7 @@
       payload:"",ecc:"M",sourceType:"bound-variable",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
+    pushArtworkHistory();
     artworkElements().push(el);state.selectedElementId=el.id;
     persistLocalDraft();render();toast(`数据字段已绑定：${meta?.label||bindingKey}`,"success");
   }
@@ -1362,6 +1409,7 @@
       payload:"",ecc:"M",sourceType:"generated-text",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
+    pushArtworkHistory();
     artworkElements().push(el);
     state.selectedElementId=el.id;
     persistLocalDraft();render();toast("文字元素已添加","success");
@@ -1370,6 +1418,7 @@
   function duplicateSelectedElement(){
     const current=selectedArtworkElement();
     if(!current||!localArtworkEditable()) return;
+    pushArtworkHistory();
     const copy=JSON.parse(JSON.stringify(current));
     copy.id=newElementId();copy.name=(current.name||current.type)+" copy";
     copy.locked=false;
@@ -1383,6 +1432,7 @@
   function reorderSelectedElement(mode){
     const list=artworkElements(),index=list.findIndex(e=>e.id===state.selectedElementId);
     if(index<0||!localArtworkEditable()) return;
+    pushArtworkHistory();
     const [item]=list.splice(index,1);
     let next=index;
     if(mode==="front") next=list.length;
@@ -1396,6 +1446,7 @@
   function alignSelectedElement(mode){
     const e=selectedArtworkElement();
     if(!e||!localArtworkEditable()) return;
+    pushArtworkHistory();
     const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
     if(mode==="left")e.x=b.x;
     if(mode==="hcenter")e.x=b.x+(b.w-w)/2;
@@ -1410,6 +1461,7 @@
     if(!localArtworkEditable()) return;
     const index=artworkElements().findIndex((e)=>e.id===state.selectedElementId);
     if(index<0){toast("请先选择一个元素。","error");return;}
+    pushArtworkHistory();
     artworkElements().splice(index,1);
     state.selectedElementId=null;
     persistLocalDraft();
@@ -1493,6 +1545,8 @@
   }
 
   async function handleAction(action){
+    if(action==="undo-artwork") return undoArtwork();
+    if(action==="redo-artwork") return redoArtwork();
     if(action==="upload-image-trigger"){document.getElementById("art-image-file")?.click();return;}
     if(action==="upload-qr-trigger"){document.getElementById("art-qr-image-file")?.click();return;}
     if(action==="add-text-element") return addTextElement();
@@ -1996,6 +2050,8 @@
         status:A.statusFromApi(row.status),
         revision:row.current_revision
       });
+      clearArtworkHistory();
+      state.selectedElementId=null;
       state.remoteArtworkId=id;
       state.remoteRevision=state.artwork.revision;
       state.remoteRevisions=remote.data?.revisions||[];
@@ -2293,6 +2349,7 @@
   function resetLocalArtwork(){
     if(!confirm("新建本地稿会清空当前浏览器中的未保存工作稿，继续吗？")) return;
     state.artwork={...D.defaultArtwork};
+    clearArtworkHistory();
     state.remoteArtworkId=null;
     state.remoteRevision=null;
     state.remoteRevisions=[];
@@ -2767,6 +2824,8 @@
               status:A.statusFromApi(row.status),
               revision:row.current_revision
             });
+            clearArtworkHistory();
+            state.selectedElementId=null;
             state.remoteRevision=state.artwork.revision;
             state.remoteRevisions=remote.data?.revisions||[];
             state.revisionCompare=null;
