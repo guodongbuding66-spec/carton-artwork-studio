@@ -509,7 +509,7 @@ test("new text and source metadata round-trip through canonical snapshot", () =>
   },{
     id:"txt2",type:"text",name:"Wrapped",x:p.x+100,y:p.y+100,w:100,h:30,rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
     text:"WRAPPED TEXT",fontSizePt:10,fontWeight:"normal",textAlign:"left",wrapText:true,lineHeight:1.35,
-    autoFitText:true,minFontSizePt:7,blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.0.0"
+    autoFitText:true,minFontSizePt:7,blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.0.0",blockSlot:"ITEM"
   }]};
   const snapshot=D.canonicalData(art);
   assert.equal(snapshot.artwork.elements[0].sourceMimeType,"image/svg+xml");
@@ -518,9 +518,11 @@ test("new text and source metadata round-trip through canonical snapshot", () =>
   assert.equal(snapshot.artwork.elements[1].wrapText,true);
   assert.equal(snapshot.artwork.elements[1].lineHeight,1.35);
   assert.equal(snapshot.artwork.elements[1].blockVersion,"1.0.0");
+  assert.equal(snapshot.artwork.elements[1].blockSlot,"ITEM");
   const restored=D.artworkFromCanonical(snapshot);
   assert.equal(restored.elements[0].sourcePixelWidth,300);
   assert.equal(restored.elements[1].blockType,"SHIPPING_MARK_STANDARD");
+  assert.equal(restored.elements[1].blockSlot,"ITEM");
 });
 
 test("controlled shipping mark block requires all six bindings and pinned version", () => {
@@ -553,6 +555,109 @@ test("production element qualification is an explicit vector allowlist", () => {
   assert.equal(D.productionElementQualification({type:"qr-generated"}).qualified,true);
   assert.equal(D.productionElementQualification({type:"image"}).qualified,false);
   assert.equal(D.productionElementQualification({type:"symbol"}).qualified,false);
+});
+
+test("Shipping Mark 1.1 definition is versioned and canonical", () => {
+  const def=D.controlledBlockDefinition("SHIPPING_MARK_STANDARD");
+  assert.equal(def.version,"1.1.0");
+  assert.equal(def.currentVersion,"1.1.0");
+  assert.deepEqual(def.slots.map(x=>x.id),["ITEM","CONTRACT","WEIGHT","MEAS","CRN","ORIGIN"]);
+  assert.equal(def.slots.length,6);
+  assert.ok(def.supportedVersions.includes("1.0.0"));
+  assert.ok(def.supportedVersions.includes("1.1.0"));
+});
+
+test("Shipping Mark 1.1 reflows long data and remains inside the safe area", () => {
+  const artwork={
+    ...D.defaultArtwork,
+    sku:"VERY-LONG-COMMERCIAL-SKU-IDENTIFIER-2026-EXPORT-US-WEST-COAST-001",
+    contractNo:"CONTRACT-2026-VERY-LONG-CUSTOMER-PURCHASE-ORDER-REFERENCE-888888",
+    safeMarginMm:22
+  };
+  const panel=D.sideSealGeometry(artwork).panels.find(x=>x.id==="TOP_FACE");
+  const layout=D.shippingMarkBlockLayout(artwork,panel,D.factories);
+  assert.equal(layout.ok,true);
+  assert.equal(layout.version,"1.1.0");
+  assert.equal(layout.slots.length,6);
+  assert.ok(layout.slots.some(x=>x.lineCount>1),"Long canonical data should wrap");
+  assert.ok(layout.slots.some(x=>x.h>8.5),"Wrapped row should grow vertically");
+  assert.ok(layout.x>=panel.x+22-0.01);
+  assert.ok(layout.y>=panel.y+22-0.01);
+  assert.ok(layout.x+layout.blockW<=panel.x+panel.w-22+0.01);
+  assert.ok(layout.y+layout.totalH<=panel.y+panel.h-22+0.01);
+  assert.ok(layout.slots.every(x=>x.fontSizePt>=7));
+});
+
+test("Shipping Mark 1.1 fails closed on panels that cannot hold the controlled block", () => {
+  const tooNarrow=D.shippingMarkBlockLayout(
+    D.defaultArtwork,
+    {id:"SMALL",x:0,y:0,w:100,h:200},
+    D.factories
+  );
+  assert.equal(tooNarrow.ok,false);
+  assert.equal(tooNarrow.reason,"BLOCK_PANEL_TOO_NARROW");
+
+  const tooShort=D.shippingMarkBlockLayout(
+    D.defaultArtwork,
+    {id:"SHORT",x:0,y:0,w:400,h:80},
+    D.factories
+  );
+  assert.equal(tooShort.ok,false);
+  assert.equal(tooShort.reason,"BLOCK_TOO_TALL_AT_MIN_FONT");
+});
+
+test("Shipping Mark 1.1 preflight detects layout drift and unlocked slots", () => {
+  const artwork={
+    ...D.defaultArtwork,
+    sku:"SKU-LONG-FOR-REFLOW-TEST-001",
+    contractNo:"CONTRACT-LONG-FOR-REFLOW-TEST-2026-ABC",
+    safeMarginMm:22
+  };
+  const panel=D.sideSealGeometry(artwork).panels.find(x=>x.id==="TOP_FACE");
+  const layout=D.shippingMarkBlockLayout(artwork,panel,D.factories);
+  assert.equal(layout.ok,true);
+  const groupId="grp-ship-11";
+  const elements=layout.slots.map(slot=>({
+    id:"ship11-"+slot.id,
+    type:"text",
+    name:slot.name,
+    x:slot.x,y:slot.y,w:slot.w,h:slot.h,
+    rotation:0,locked:true,visible:true,panelId:panel.id,constrainToPanel:true,safeAreaExempt:false,
+    groupId,
+    text:"",bindingKey:slot.bindingKey,
+    fontSizePt:slot.fontSizePt,fontWeight:"normal",textAlign:"left",
+    wrapText:true,lineHeight:slot.lineHeight,autoFitText:false,minFontSizePt:7,
+    blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.1.0",blockSlot:slot.id
+  }));
+
+  const good=D.runPreflight({...artwork,elements},D.factories).Assets;
+  assert.ok(good.some(x=>x.id==="shipping-block-grp-ship-11"&&x.status==="pass"));
+  assert.ok(good.some(x=>x.id==="shipping-block-layout-grp-ship-11"&&x.status==="pass"));
+  assert.ok(good.some(x=>x.id==="shipping-block-lock-grp-ship-11"&&x.status==="pass"));
+
+  const drifted=elements.map(x=>({...x}));
+  drifted[2].x+=2;
+  const driftChecks=D.runPreflight({...artwork,elements:drifted},D.factories).Assets;
+  assert.ok(driftChecks.some(x=>x.id==="shipping-block-layout-grp-ship-11"&&x.status==="error"&&x.blocking));
+
+  const unlocked=elements.map(x=>({...x}));
+  unlocked[0].locked=false;
+  const lockChecks=D.runPreflight({...artwork,elements:unlocked},D.factories).Assets;
+  assert.ok(lockChecks.some(x=>x.id==="shipping-block-lock-grp-ship-11"&&x.status==="error"&&x.blocking));
+});
+
+test("Shipping Mark 1.1 validator rejects slot/binding mismatch", () => {
+  const def=D.controlledBlockDefinition("SHIPPING_MARK_STANDARD");
+  const items=def.slots.map((slot,i)=>({
+    id:"slot-"+i,type:"text",visible:true,groupId:"g",panelId:"TOP_FACE",
+    blockVersion:"1.1.0",blockType:"SHIPPING_MARK_STANDARD",
+    blockSlot:slot.id,bindingKey:slot.bindingKey
+  }));
+  assert.equal(D.validateShippingMarkBlock(items).ok,true);
+  items[1].bindingKey="shipping.originLine";
+  const invalid=D.validateShippingMarkBlock(items);
+  assert.equal(invalid.ok,false);
+  assert.ok(invalid.wrongSlots.length>0||invalid.duplicates.length>0);
 });
 
 console.log("Domain tests passed.");
