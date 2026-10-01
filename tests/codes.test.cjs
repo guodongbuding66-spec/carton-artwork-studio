@@ -92,4 +92,28 @@ test("GS1-128 rejects invalid check digits and unsupported AIs", () => {
   assert.throws(()=>C.gs1_128Bars("(999)ABC"),/Unsupported GS1 Application Identifier/i);
 });
 
+test("ITF-14 physical profile includes bearer bars and 10X quiet zones", () => {
+  const model=C.itf14Bars("1001234500001",{moduleMm:1.016,heightMm:32,quietModules:10,wideRatio:2.5,bearerBars:true});
+  assert.equal(model.quietModules,10);
+  assert.equal(model.heightMm,32);
+  assert.equal(model.wideRatio,2.5);
+  assert.equal(model.bearerBars,true);
+  assert.equal(model.bearerRects.length,2);
+  assert.ok(model.bearerBarThicknessMm>=model.moduleMm*2);
+});
+
+test("ITF-14 rejects out-of-spec ratio and quiet zone", () => {
+  assert.throws(()=>C.itf14Bars("1001234500001",{wideRatio:2.1}),/2\.25/);
+  assert.throws(()=>C.itf14Bars("1001234500001",{quietModules:9}),/10X/);
+});
+
+test("GS1-128 logistics physical profile enforces X dimension, height and quiet zone", () => {
+  const ok=C.gs1_128Bars("(00)123456789012345675",{moduleMm:.495,heightMm:31.75,quietModules:10});
+  assert.equal(ok.moduleMm,.495);
+  assert.equal(ok.heightMm,31.75);
+  assert.throws(()=>C.gs1_128Bars("(00)123456789012345675",{moduleMm:.4,heightMm:31.75,quietModules:10}),/0\.495/);
+  assert.throws(()=>C.gs1_128Bars("(00)123456789012345675",{moduleMm:.495,heightMm:30,quietModules:10}),/31\.75/);
+  assert.throws(()=>C.gs1_128Bars("(00)123456789012345675",{moduleMm:.495,heightMm:31.75,quietModules:9}),/10X/);
+});
+
 console.log("Code tests passed.");
