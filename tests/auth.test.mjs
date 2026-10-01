@@ -37,6 +37,12 @@ assert.equal(permissionForRequest("POST","/api/artworks/a1/exports"),"EXPORT_PRO
 assert.equal(permissionForRequest("PUT","/api/admin/users/u1/roles"),"ADMIN");
 assert.equal(permissionForRequest("GET","/api/artworks"),"READ");
 assert.equal(permissionForRequest("GET","/api/audit"),"AUDIT_READ");
+assert.equal(permissionForRequest("GET","/api/pdfx/promotion/readiness"),"AUDIT_READ");
+assert.equal(permissionForRequest("GET","/api/pdfx/promotion/evidence"),"AUDIT_READ");
+assert.equal(permissionForRequest("POST","/api/pdfx/promotion/evidence/upload"),"PRODUCTION_POLICY_WRITE");
+assert.equal(permissionForRequest("POST","/api/pdfx/promotion/evidence/e1/submit"),"PRODUCTION_POLICY_WRITE");
+assert.equal(permissionForRequest("POST","/api/pdfx/promotion/evidence/e1/approval"),"PRODUCTION_POLICY_APPROVE");
+assert.equal(permissionForRequest("GET","/api/pdfx/promotion/evidence/e1/file"),"AUDIT_READ");
 assert.equal(permissionForRequest("POST","/api/factories"),"ADMIN");
 assert.equal(permissionForRequest("PATCH","/api/factories/ningbo-a"),"ADMIN");
 assert.equal(permissionForRequest("POST","/api/templates/t1/versions"),"TEMPLATE_WRITE");
