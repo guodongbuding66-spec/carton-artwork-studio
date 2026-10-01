@@ -2137,6 +2137,17 @@
     toast(ids.size>1?`已删除 ${ids.size} 个元素`:"元素已删除","success");
   }
 
+  function constrainResizeDimensions(element,desiredW,desiredH,minSize=5){
+    return D.constrainElementResize(
+      element,
+      elementBounds(element),
+      desiredW,
+      desiredH,
+      minSize
+    );
+  }
+
+
   function bindEditorKeyboard(){
     document.onkeydown=(event)=>{
       const target=event.target;
@@ -2266,18 +2277,20 @@
           const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;
           return p.matrixTransform(group.getScreenCTM().inverse());
         };
-        const bounds=elementBounds(element);
-        const maxW=Math.max(5,bounds.x+bounds.w-Number(element.x||0));
-        const maxH=Math.max(5,bounds.y+bounds.h-Number(element.y||0));
         let nextW=Number(element.w||5),nextH=Number(element.h||5);
+        let resizeLimited=false;
         try{handle.setPointerCapture(ev.pointerId);}catch{}
         handle.onpointermove=(move)=>{
           if(move.pointerId!==ev.pointerId)return;
           const p=localPoint(move);
-          nextW=Math.max(5,Math.min(maxW,p.x));
-          nextH=Math.max(5,Math.min(maxH,p.y));
+          const resolved=constrainResizeDimensions(element,Math.max(5,p.x),Math.max(5,p.y));
+          nextW=resolved.w;nextH=resolved.h;resizeLimited=resolved.limited;
           const selection=group.querySelector("[data-element-selection]");
-          if(selection){selection.setAttribute("width",String(nextW));selection.setAttribute("height",String(nextH));}
+          if(selection){
+            selection.setAttribute("width",String(nextW));
+            selection.setAttribute("height",String(nextH));
+            selection.setAttribute("stroke",resizeLimited?"#a86b00":"#e13b6b");
+          }
           handle.setAttribute("x",String(Math.max(0,nextW-4)));
           handle.setAttribute("y",String(Math.max(0,nextH-4)));
         };
@@ -2286,6 +2299,7 @@
           element.w=nextW;element.h=nextH;clampElementToBounds(element);
           if(element.type==="text"&&element.autoFitText) fitTextElementInPlace(element);
           persistLocalDraft();render();
+          if(resizeLimited) toast("尺寸已限制在旋转后的面板边界内。");
         };
         handle.onpointerup=finish;handle.onpointercancel=finish;
       };
