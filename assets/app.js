@@ -1511,6 +1511,64 @@
     persistLocalDraft();render();
   }
 
+  function selectionBounds(elements=selectedArtworkElements()){
+    if(!elements.length) return null;
+    const left=Math.min(...elements.map(e=>Number(e.x||0)));
+    const top=Math.min(...elements.map(e=>Number(e.y||0)));
+    const right=Math.max(...elements.map(e=>Number(e.x||0)+Math.max(1,Number(e.w||1))));
+    const bottom=Math.max(...elements.map(e=>Number(e.y||0)+Math.max(1,Number(e.h||1))));
+    return {left,top,right,bottom,width:right-left,height:bottom-top};
+  }
+
+  function sameSelectionPanel(elements=selectedArtworkElements()){
+    const panels=new Set(elements.map(e=>String(e.panelId||"")));
+    return panels.size<=1;
+  }
+
+  function alignSelectedElements(mode){
+    const items=selectedArtworkElements().filter(e=>!e.locked);
+    if(items.length<2||!localArtworkEditable()) return;
+    if(!sameSelectionPanel(items)){toast("多选对齐要求元素位于同一纸箱面板，避免跨折线误移动。","error");return;}
+    const b=selectionBounds(items);if(!b)return;
+    pushArtworkHistory();
+    for(const e of items){
+      const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
+      if(mode==="left") e.x=b.left;
+      if(mode==="hcenter") e.x=b.left+(b.width-w)/2;
+      if(mode==="right") e.x=b.right-w;
+      if(mode==="top") e.y=b.top;
+      if(mode==="vcenter") e.y=b.top+(b.height-h)/2;
+      if(mode==="bottom") e.y=b.bottom-h;
+      clampElementToBounds(e);
+    }
+    persistLocalDraft();render();
+  }
+
+  function distributeSelectedElements(axis){
+    const items=selectedArtworkElements().filter(e=>!e.locked);
+    if(items.length<3||!localArtworkEditable()) return;
+    if(!sameSelectionPanel(items)){toast("等距分布要求元素位于同一纸箱面板。","error");return;}
+    pushArtworkHistory();
+    if(axis==="horizontal"){
+      const sorted=[...items].sort((a,b)=>Number(a.x||0)-Number(b.x||0));
+      const first=sorted[0],last=sorted.at(-1);
+      const left=Number(first.x||0),right=Number(last.x||0)+Number(last.w||0);
+      const totalWidth=sorted.reduce((sum,e)=>sum+Number(e.w||0),0);
+      const gap=(right-left-totalWidth)/(sorted.length-1);
+      let x=left;
+      for(const e of sorted){e.x=x;x+=Number(e.w||0)+gap;clampElementToBounds(e);}
+    }else{
+      const sorted=[...items].sort((a,b)=>Number(a.y||0)-Number(b.y||0));
+      const first=sorted[0],last=sorted.at(-1);
+      const top=Number(first.y||0),bottom=Number(last.y||0)+Number(last.h||0);
+      const totalHeight=sorted.reduce((sum,e)=>sum+Number(e.h||0),0);
+      const gap=(bottom-top-totalHeight)/(sorted.length-1);
+      let y=top;
+      for(const e of sorted){e.y=y;y+=Number(e.h||0)+gap;clampElementToBounds(e);}
+    }
+    persistLocalDraft();render();
+  }
+
   function alignSelectedElement(mode){
     const e=selectedArtworkElement();
     if(!e||!localArtworkEditable()) return;
@@ -1527,14 +1585,14 @@
 
   function deleteSelectedElement(){
     if(!localArtworkEditable()) return;
-    const index=artworkElements().findIndex((e)=>e.id===state.selectedElementId);
-    if(index<0){toast("请先选择一个元素。","error");return;}
+    const ids=new Set(selectedArtworkElements().filter(e=>!e.locked).map(e=>e.id));
+    if(!ids.size){toast("请先选择可编辑元素。","error");return;}
     pushArtworkHistory();
-    artworkElements().splice(index,1);
-    state.selectedElementId=null;
+    state.artwork.elements=artworkElements().filter(e=>!ids.has(e.id));
+    selectOnlyElement(null);
     persistLocalDraft();
     render();
-    toast("元素已删除","success");
+    toast(ids.size>1?`已删除 ${ids.size} 个元素`:"元素已删除","success");
   }
 
   function bindEditorKeyboard(){
@@ -1576,7 +1634,11 @@
 
   function bindArtworkElements(){
     document.querySelectorAll("[data-select-element]").forEach((b)=>{
-      b.onclick=()=>{state.selectedElementId=b.dataset.selectElement;render();};
+      b.onclick=(event)=>{
+        if(event.shiftKey) toggleElementSelection(b.dataset.selectElement);
+        else selectOnlyElement(b.dataset.selectElement);
+        render();
+      };
     });
     document.querySelectorAll("[data-element-prop]").forEach((el)=>{
       el.onfocus=()=>{if(localArtworkEditable())pushArtworkHistory();};
@@ -1664,7 +1726,13 @@
         const id=group.dataset.artElement;
         const element=artworkElements().find((x)=>x.id===id);
         if(!element) return;
-        state.selectedElementId=id;
+        if(ev.shiftKey){
+          toggleElementSelection(id);
+          ev.preventDefault();
+          render();
+          return;
+        }
+        selectOnlyElement(id);
         if(element.locked||!localArtworkEditable()){render();return;}
         pushArtworkHistory();
         ev.preventDefault();
@@ -1714,6 +1782,15 @@
     if(action==="align-top") return alignSelectedElement("top");
     if(action==="align-vcenter") return alignSelectedElement("vcenter");
     if(action==="align-bottom") return alignSelectedElement("bottom");
+    if(action==="multi-align-left") return alignSelectedElements("left");
+    if(action==="multi-align-hcenter") return alignSelectedElements("hcenter");
+    if(action==="multi-align-right") return alignSelectedElements("right");
+    if(action==="multi-align-top") return alignSelectedElements("top");
+    if(action==="multi-align-vcenter") return alignSelectedElements("vcenter");
+    if(action==="multi-align-bottom") return alignSelectedElements("bottom");
+    if(action==="distribute-horizontal") return distributeSelectedElements("horizontal");
+    if(action==="distribute-vertical") return distributeSelectedElements("vertical");
+    if(action==="delete-selection") return deleteSelectedElement();
     if(action==="delete-element") return deleteSelectedElement();
     if(action==="new-local") return resetLocalArtwork();
     if(action==="save") return saveDraft();
