@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { renderEmbeddedArtworkPdf, prepareProductionCustomElements } from "../worker/production-renderer.js";
+import { renderEmbeddedArtworkPdf, prepareProductionCustomElements, qualifyProductionArtwork } from "../worker/production-renderer.js";
 
 function putU16(b,o,v){b[o]=(v>>>8)&255;b[o+1]=v&255;}
 function putI16(b,o,v){putU16(b,o,v<0?0x10000+v:v);}
@@ -141,6 +141,12 @@ assert.throws(
   (e)=>e?.code==="PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED"&&e?.detail?.[0]?.reason==="UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED"
 );
 
+const uploadedQualification=qualifyProductionArtwork({snapshot:uploadedSnapshot});
+assert.equal(uploadedQualification.report.ok,false);
+assert.equal(uploadedQualification.report.customElements.unqualified,1);
+assert.equal(uploadedQualification.report.customElements.items[0].reason,"UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED");
+assert.equal(uploadedQualification.report.rendererVersion,"pdfx4-embedded-truetype-2.1.0");
+
 const preparedText=prepareProductionCustomElements(customRendered.artwork,[{
   id:"factory-real",name:"Factory Real",crn:"3203960FM4",country:"China"
 }]);
@@ -171,6 +177,13 @@ assert.equal(generatedRendered.customElements.count,2);
 assert.ok(generatedRendered.customElements.types.includes("qr-generated"));
 assert.ok(generatedRendered.customElements.types.includes("barcode"));
 assert.ok(generatedRendered.artwork.elements.find(x=>x.id==="custom-code").barcodeModel?.bars?.length>0);
+
+const generatedQualification=qualifyProductionArtwork({snapshot:generatedSnapshot});
+assert.equal(generatedQualification.report.ok,true);
+assert.equal(generatedQualification.report.customElements.visible,2);
+assert.equal(generatedQualification.report.customElements.unqualified,0);
+assert.equal(generatedQualification.report.preflight.summary.blocking,0);
+assert.ok(generatedQualification.report.customElements.items.find(x=>x.id==="custom-code").resolvedSize.w>0);
 
 const hiddenCustomSnapshot={
   ...snapshot,
