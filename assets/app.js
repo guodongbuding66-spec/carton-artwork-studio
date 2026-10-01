@@ -983,15 +983,16 @@
       const border=selected?`<rect data-element-selection x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
       const resizeHandle=selected&&selectedArtworkElements().length===1&&!e.locked&&e.type!=="barcode"?`<rect data-element-resize="${esc(e.id)}" x="${Math.max(0,w-4)}" y="${Math.max(0,h-4)}" width="8" height="8" rx="1.5" fill="#fff" stroke="#e13b6b" stroke-width="2" vector-effect="non-scaling-stroke" style="cursor:nwse-resize"/>`:"";
       let body="";
-      if((e.type==="image"||e.type==="qr-image"||e.type==="symbol-image")&&e.dataUrl){
-        body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
+      if((e.type==="image"||e.type==="qr-image"||e.type==="symbol-image")&&(e.vectorDataUrl||e.dataUrl)){
+        const source=e.vectorDataUrl||e.dataUrl;
+        body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(source)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
       }else if(e.type==="text"){
+        const layout=D.textLayout(e,D.resolvedElementText(e,artwork,factoryList));
         const fontMm=Math.max(1,Number(e.fontSizePt||12))*25.4/72;
-        const lines=D.resolvedElementText(e,artwork,factoryList).split(/\r?\n/);
         const anchor=e.textAlign==="center"?"middle":e.textAlign==="right"?"end":"start";
         const tx=e.textAlign==="center"?w/2:e.textAlign==="right"?w:0;
         const weight=e.fontWeight==="bold"?"700":"400";
-        body=`<text x="${tx}" y="${fontMm}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="${fontMm}" font-weight="${weight}" fill="#000">${lines.map((line,i)=>`<tspan x="${tx}" dy="${i===0?0:fontMm*1.2}">${esc(line)}</tspan>`).join("")}</text>`;
+        body=`<text x="${tx}" y="${fontMm}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="${fontMm}" font-weight="${weight}" fill="#000">${layout.lines.map((line,i)=>`<tspan x="${tx}" dy="${i===0?0:layout.lineHeightMm}">${esc(line)}</tspan>`).join("")}</text>`;
       }else if(e.type==="barcode"){
         body=barcodeSvgBody(e,w,h,artwork,factoryList);
       }else if(e.type==="symbol"){
@@ -1651,17 +1652,36 @@
     });
   }
 
-  async function normalizeArtworkImageFile(file){
-    if(!file) throw new Error("请选择图片。");
-    const allowed=["image/png","image/jpeg","image/webp","image/svg+xml"];
-    if(!allowed.includes(file.type)) throw new Error("仅支持 PNG / JPG / WebP / SVG。");
-    if(file.size>8*1024*1024) throw new Error("图片超过 8 MB，请先压缩后再上传。");
-    const raw=await fileToDataUrl(file);
-    const img=await loadImageElement(raw);
-    const maxPx=1200;
-    const scale=Math.min(1,maxPx/Math.max(img.naturalWidth||1,img.naturalHeight||1));
-    const width=Math.max(1,Math.round((img.naturalWidth||1)*scale));
-    const height=Math.max(1,Math.round((img.naturalHeight||1)*scale));
+  function sanitizeSvgText(svgText){
+    if(typeof DOMParser!=="function"||typeof XMLSerializer!=="function") throw new Error("当前浏览器无法安全处理 SVG。");
+    const doc=new DOMParser().parseFromString(String(svgText||""),"image/svg+xml");
+    if(doc.querySelector("parsererror")) throw new Error("SVG XML 格式无效。");
+    if(!doc.documentElement||String(doc.documentElement.localName||"").toLowerCase()!=="svg") throw new Error("文件不是有效 SVG。");
+    const blocked=["script","foreignObject","iframe","object","embed","audio","video","canvas"];
+    if(doc.querySelector(blocked.join(","))) throw new Error("SVG 包含不允许的脚本/嵌入内容。");
+    for(const node of doc.querySelectorAll("*")){
+      for(const attr of [...node.attributes]){
+        const name=String(attr.name||"").toLowerCase();
+        const value=String(attr.value||"").trim();
+        if(name.startsWith("on")) node.removeAttribute(attr.name);
+        if((name==="href"||name==="xlink:href")&&value&&!value.startsWith("#")&&!value.startsWith("data:image/")){
+          node.removeAttribute(attr.name);
+        }
+        if(name==="style"&&/url\s*\(\s*['"]?(?:https?:|\/\/|data:text\/html)/i.test(value)){
+          node.removeAttribute(attr.name);
+        }
+      }
+    }
+    return new XMLSerializer().serializeToString(doc.documentElement);
+  }
+
+  async function rasterizeArtworkSource(sourceUrl,maxPx=2400){
+    const img=await loadImageElement(sourceUrl);
+    const sourceWidth=Math.max(1,Number(img.naturalWidth||img.width||1));
+    const sourceHeight=Math.max(1,Number(img.naturalHeight||img.height||1));
+    const scale=Math.min(1,maxPx/Math.max(sourceWidth,sourceHeight));
+    const width=Math.max(1,Math.round(sourceWidth*scale));
+    const height=Math.max(1,Math.round(sourceHeight*scale));
     const canvas=document.createElement("canvas");
     canvas.width=width;canvas.height=height;
     const ctx=canvas.getContext("2d",{alpha:false});
@@ -1669,12 +1689,41 @@
     ctx.drawImage(img,0,0,width,height);
     let quality=.94;
     let dataUrl=canvas.toDataURL("image/jpeg",quality);
-    while(dataUrl.length>900000&&quality>.72){
-      quality-=.06;
+    while(dataUrl.length>1500000&&quality>.72){
+      quality-=.05;
       dataUrl=canvas.toDataURL("image/jpeg",quality);
     }
-    if(dataUrl.length>1200000) throw new Error("图片归一化后仍然过大，请使用更简单的 Logo/图标或降低图片尺寸。");
-    return {dataUrl,mimeType:"image/jpeg",pixelWidth:width,pixelHeight:height};
+    if(dataUrl.length>1900000) throw new Error("图片归一化后仍然过大，请降低图片尺寸或使用更简单的矢量 Logo。");
+    return {dataUrl,mimeType:"image/jpeg",pixelWidth:width,pixelHeight:height,sourcePixelWidth:sourceWidth,sourcePixelHeight:sourceHeight};
+  }
+
+  async function normalizeArtworkImageFile(file){
+    if(!file) throw new Error("请选择图片。");
+    const allowed=["image/png","image/jpeg","image/webp","image/svg+xml"];
+    if(!allowed.includes(file.type)) throw new Error("仅支持 PNG / JPG / WebP / SVG。");
+    if(file.size>8*1024*1024) throw new Error("图片超过 8 MB，请先压缩后再上传。");
+
+    if(file.type==="image/svg+xml"){
+      if(file.size>2*1024*1024) throw new Error("SVG 超过 2 MB，请精简路径和元数据。");
+      const sanitized=sanitizeSvgText(await file.text());
+      const vectorDataUrl=await fileToDataUrl(new Blob([sanitized],{type:"image/svg+xml"}));
+      const fallback=await rasterizeArtworkSource(vectorDataUrl,2400);
+      return {
+        ...fallback,
+        sourceMimeType:"image/svg+xml",
+        vectorDataUrl,
+        isVector:true
+      };
+    }
+
+    const raw=await fileToDataUrl(file);
+    const fallback=await rasterizeArtworkSource(raw,2400);
+    return {
+      ...fallback,
+      sourceMimeType:file.type,
+      vectorDataUrl:"",
+      isVector:false
+    };
   }
 
   async function addUploadedArtworkElement(file,type="image"){
@@ -1695,11 +1744,16 @@
         text:"",fontSizePt:12,fontWeight:"normal",textAlign:"left",
         payload:"",
         ecc:"M",
-        sourceType:"uploaded-raster",
+        sourceType:normalized.isVector?"uploaded-vector":"uploaded-raster",
         mimeType:normalized.mimeType,
+        sourceMimeType:normalized.sourceMimeType||normalized.mimeType,
+        originalFileName:file.name,
         dataUrl:normalized.dataUrl,
+        vectorDataUrl:normalized.vectorDataUrl||"",
         pixelWidth:normalized.pixelWidth,
         pixelHeight:normalized.pixelHeight,
+        sourcePixelWidth:normalized.sourcePixelWidth||normalized.pixelWidth,
+        sourcePixelHeight:normalized.sourcePixelHeight||normalized.pixelHeight,
         assetRole:type==="symbol-image"?"symbol-review":"",
         expectedPayload:"",
         decodedValue:"",
@@ -1711,7 +1765,7 @@
       selectOnlyElement(el.id);
       const saved=persistLocalDraft();
       render();
-      toast(saved?(type==="qr-image"?"二维码图片已添加":type==="symbol-image"?"自定义包装图标已添加（Review）":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
+      toast(saved?(normalized.isVector?"SVG 矢量源已保留；Proof PDF 使用独立 raster fallback":type==="qr-image"?"二维码图片已添加":type==="symbol-image"?"自定义包装图标已添加（Review）":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
     }catch(e){toast(e.message||String(e),"error");}
   }
 
@@ -1865,7 +1919,7 @@
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
       panelId:p.panelId,constrainToPanel:true,safeAreaExempt:false,groupId:"",
       text:"",bindingKey,fontSizePt:12,fontWeight:"bold",textAlign:"left",
-      autoFitText:true,minFontSizePt:7,
+      wrapText:true,lineHeight:1.2,autoFitText:true,minFontSizePt:7,
       symbology:"",humanReadable:false,symbolKey:"",
       payload:"",ecc:"M",sourceType:"bound-variable",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
@@ -1908,7 +1962,7 @@
       x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
       panelId:p.panelId,constrainToPanel:true,safeAreaExempt:false,groupId:"",
       text:"NEW MARK TEXT",fontSizePt:12,fontWeight:"bold",textAlign:"left",
-      autoFitText:true,minFontSizePt:7,
+      wrapText:true,lineHeight:1.2,autoFitText:true,minFontSizePt:7,
       payload:"",ecc:"M",sourceType:"generated-text",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
