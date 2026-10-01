@@ -120,11 +120,15 @@
       try{
         const sym=String(element.symbology||"").toUpperCase();
         const payload=D.resolvedElementPayload(element,artwork,state.factories);
+        ensureBarcodePhysicalSettings(element);
         const model=sym==="ITF14"
-          ? C.itf14Bars(payload)
+          ? C.itf14Bars(payload,{
+              moduleMm:Number(element.moduleMm),heightMm:Number(element.barHeightMm),quietModules:Number(element.quietModules),
+              wideRatio:Number(element.wideRatio),bearerBars:element.bearerBars!==false,bearerBarThicknessMm:Number(element.bearerBarThicknessMm)
+            })
           : sym==="GS1_128"
-            ? C.gs1_128Bars(payload)
-            : C.code128Bars(payload);
+            ? C.gs1_128Bars(payload,{moduleMm:Number(element.moduleMm),heightMm:Number(element.barHeightMm),quietModules:Number(element.quietModules)})
+            : C.code128Bars(payload,{moduleMm:Number(element.moduleMm),heightMm:Number(element.barHeightMm),quietModules:Number(element.quietModules)});
         if(item){
           item.status="pass";item.blocking=false;
           item.title=sym==="ITF14"
