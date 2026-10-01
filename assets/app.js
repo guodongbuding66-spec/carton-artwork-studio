@@ -244,15 +244,31 @@
   function isElementSelected(id){
     return selectedArtworkElements().some((e)=>e.id===id);
   }
+  function selectionUnitIds(id){
+    const element=artworkElements().find(e=>e.id===id);
+    if(!element) return [];
+    const groupId=String(element.groupId||"");
+    return groupId
+      ? artworkElements().filter(e=>String(e.groupId||"")===groupId).map(e=>e.id)
+      : [id];
+  }
   function selectOnlyElement(id){
+    const ids=id?selectionUnitIds(id):[];
     state.selectedElementId=id||null;
-    state.selectedElementIds=id?[id]:[];
+    state.selectedElementIds=ids;
   }
   function toggleElementSelection(id){
+    const unit=selectionUnitIds(id);
     const ids=new Set(state.selectedElementIds||[]);
-    if(ids.has(id)) ids.delete(id); else ids.add(id);
+    const allSelected=unit.length>0&&unit.every(x=>ids.has(x));
+    for(const unitId of unit){
+      if(allSelected) ids.delete(unitId); else ids.add(unitId);
+    }
     state.selectedElementIds=[...ids];
     state.selectedElementId=ids.has(id)?id:(state.selectedElementIds.at(-1)||null);
+  }
+  function newGroupId(){
+    return "grp-"+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36));
   }
   function newElementId(){
     return "el-"+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36));
@@ -314,23 +330,26 @@
       ry:freeY>0?Math.max(0,Math.min(1,(Number(element.y||0)-panel.y)/freeY)):.5
     };
   }
-  function cloneSelectionToPanel(targetPanelId){
-    const items=selectedArtworkElements();
-    if(!items.length||!localArtworkEditable()) return;
-    if(!sameSelectionPanel(items)){toast("复制到面板前，请先选择同一面板内的元素。","error");return;}
+  function cloneElementsToPanel(items,targetPanelId,options={}){
+    if(!items.length||!localArtworkEditable()) return [];
+    if(!sameSelectionPanel(items)){toast("复制到面板前，请先选择同一面板内的元素。","error");return [];}
     const source=panelById(items[0].panelId),target=panelById(targetPanelId);
-    if(!source||!target){toast("目标面板无效。","error");return;}
+    if(!source||!target){toast("目标面板无效。","error");return [];}
     const oversized=items.find(e=>Number(e.w||0)>target.w||Number(e.h||0)>target.h);
-    if(oversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return;}
-    pushArtworkHistory();
+    if(oversized){toast(`${oversized.name||oversized.type} 尺寸大于目标面板，已阻止复制。`,"error");return [];}
+    const groupMap=new Map();
     const clones=[];
     for(const item of items){
       const copy=JSON.parse(JSON.stringify(item));
       const rel=panelRelativePosition(item,source);
       copy.id=newElementId();
-      copy.name=(item.name||item.type)+" · "+target.id;
+      copy.name=(item.name||item.type)+(options.nameSuffix||(" · "+target.id));
       copy.panelId=target.id;
-      copy.locked=false;
+      if(options.unlockCopies!==false) copy.locked=false;
+      if(copy.groupId){
+        if(!groupMap.has(copy.groupId)) groupMap.set(copy.groupId,newGroupId());
+        copy.groupId=groupMap.get(copy.groupId);
+      }
       copy.x=target.x+rel.rx*Math.max(0,target.w-Number(copy.w||0));
       copy.y=target.y+rel.ry*Math.max(0,target.h-Number(copy.h||0));
       clampElementToBounds(copy);
@@ -339,9 +358,27 @@
     artworkElements().push(...clones);
     state.selectedElementIds=clones.map(e=>e.id);
     state.selectedElementId=clones.at(-1)?.id||null;
-    persistLocalDraft();render();
-    toast(`已复制 ${clones.length} 个元素到 ${target.id}`,"success");
+    return clones;
   }
+  function cloneSelectionToPanel(targetPanelId){
+    const items=selectedArtworkElements();
+    if(!items.length||!localArtworkEditable()) return;
+    pushArtworkHistory();
+    const clones=cloneElementsToPanel(items,targetPanelId);
+    if(!clones.length){state.historyPast.pop();return;}
+    persistLocalDraft();render();
+    toast(`已复制 ${clones.length} 个元素到 ${targetPanelId}`,"success");
+  }
+  function clonePanelLayout(sourcePanelId,targetPanelId){
+    const items=artworkElements().filter(e=>String(e.panelId||"")===String(sourcePanelId||""));
+    if(!items.length){toast(`${sourcePanelId} 没有可复制的自定义元素。`,"error");return;}
+    pushArtworkHistory();
+    const clones=cloneElementsToPanel(items,targetPanelId,{nameSuffix:" · "+targetPanelId,unlockCopies:false});
+    if(!clones.length){state.historyPast.pop();return;}
+    persistLocalDraft();render();
+    toast(`已复制 ${sourcePanelId} 的整套布局（${clones.length} 个元素）到 ${targetPanelId}`,"success");
+  }
+
   function cloneSelectionToOppositePanel(){
     const items=selectedArtworkElements();
     if(!items.length||!sameSelectionPanel(items)){toast("对称面复制要求选择同一面板内的元素。","error");return;}
@@ -593,6 +630,10 @@
         ${field("QR payload","Locked template CodeBlock",input("qr",a.qr))}
         ${field("CodeBlock Profile","locked component",`<select class="select" data-art="codeBlockProfile" ${isArtworkLocked()?"disabled":""}><option value="250x80" ${a.codeBlockProfile==="250x80"?"selected":""}>250 × 80 mm</option><option value="200x64" ${a.codeBlockProfile==="200x64"?"selected":""}>200 × 64 mm</option></select>`)}
         <div class="notice">模板自带 Barcode + QR 仍作为锁定 CodeBlock。下面“元素”区可额外上传 Logo/图片、上传二维码，或生成独立矢量 QR。</div>
+      `)}
+      ${formSection("Layout Safety 安全区", `
+        ${field("Safe Margin","mm",`<input class="input mono" type="number" min="0" max="100" step="1" data-art="safeMarginMm" value="${esc(Number(a.safeMarginMm??22))}" ${isArtworkLocked()?"disabled":""}/>`)}
+        <div class="notice">对每个面板从折线/切线向内缩进。默认 22 mm。文字、条码、QR、图标等越过安全区会在 Preflight 中 BLOCK；确有贴边需求时可对单个对象显式豁免。</div>
       `)}
       ${renderElementEditor()}
     `;
@@ -935,7 +976,7 @@
     const g=D.sideSealGeometry(a);
     const factoryList=options.factories||state.factories;
     const c=D.computed(a,factoryList);
-    const safe=22;
+    const safe=Math.max(0,Number(a.safeMarginMm??22));
     const proof=mode==="proof", production=mode==="production";
     const showD=production?false:(proof?true:state.showDieline);
     const showS=production?false:(proof?true:state.showSafe);
@@ -943,7 +984,10 @@
     const vb=`-50 -50 ${g.totalWidth+100} ${g.totalHeight+100}`;
     const cut=showD?`<g fill="none" stroke="#202a34" stroke-width="1.2"><rect x="${g.H}" y="0" width="${g.L}" height="${g.totalHeight}"/><rect x="0" y="${g.H}" width="${g.totalWidth}" height="${g.W}"/><rect x="0" y="${g.H+g.W+g.H}" width="${g.totalWidth}" height="${g.W}"/></g>`:"";
     const crease=showD?`<g stroke="#3978b8" stroke-width=".8" stroke-dasharray="8 5"><line x1="${g.H}" y1="0" x2="${g.H}" y2="${g.totalHeight}"/><line x1="${g.H+g.L}" y1="0" x2="${g.H+g.L}" y2="${g.totalHeight}"/>${[g.H,g.H+g.W,g.H+g.W+g.H,g.H+g.W+g.H+g.W].map(y=>`<line x1="0" y1="${y}" x2="${g.totalWidth}" y2="${y}"/>`).join("")}</g>`:"";
-    const safeBox=showS?`<rect x="${g.H+safe}" y="${g.H+g.W+g.H+safe}" width="${g.L-safe*2}" height="${g.W-safe*2}" fill="none" stroke="#15976d" stroke-dasharray="6 4"/>`:"";
+    const safeBox=showS?g.panels.map(p=>{
+      const w=Math.max(0,p.w-safe*2),h=Math.max(0,p.h-safe*2);
+      return `<rect x="${p.x+safe}" y="${p.y+safe}" width="${w}" height="${h}" fill="none" stroke="#15976d" stroke-dasharray="6 4" opacity=".78"/>`;
+    }).join(""):"";
     const labels=showP?g.panels.map(p=>`<text x="${p.x+p.w/2}" y="${p.y+p.h/2}" text-anchor="middle" fill="#aab4be" font-size="16" font-family="Arial">${p.id}</text>`).join(""):"";
     const bx=g.H+45, by=g.H+g.W+g.H+68;
     const qrEcc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
@@ -1808,9 +1852,14 @@
     if(!items.length||!localArtworkEditable()) return;
     pushArtworkHistory();
     const copies=[];
+    const groupMap=new Map();
     for(const current of items){
       const copy=JSON.parse(JSON.stringify(current));
       copy.id=newElementId();copy.name=(current.name||current.type)+" copy";
+      if(copy.groupId){
+        if(!groupMap.has(copy.groupId)) groupMap.set(copy.groupId,newGroupId());
+        copy.groupId=groupMap.get(copy.groupId);
+      }
       copy.locked=false;
       copy.x=Number(current.x||0)+8;copy.y=Number(current.y||0)+8;
       clampElementToBounds(copy);
@@ -1849,6 +1898,26 @@
   function sameSelectionPanel(elements=selectedArtworkElements()){
     const panels=new Set(elements.map(e=>String(e.panelId||"")));
     return panels.size<=1;
+  }
+
+  function groupSelectedElements(){
+    const items=selectedArtworkElements();
+    if(items.length<2||!localArtworkEditable()) return;
+    if(!sameSelectionPanel(items)){toast("Group 要求元素位于同一纸箱面板。","error");return;}
+    pushArtworkHistory();
+    const groupId=newGroupId();
+    for(const item of items) item.groupId=groupId;
+    persistLocalDraft();render();toast(`已组合 ${items.length} 个元素`,"success");
+  }
+  function ungroupSelectedElements(){
+    const ids=new Set(selectedArtworkElements().map(e=>String(e.groupId||"")).filter(Boolean));
+    if(!ids.size||!localArtworkEditable()) return;
+    pushArtworkHistory();
+    let count=0;
+    for(const item of artworkElements()){
+      if(ids.has(String(item.groupId||""))){item.groupId="";count+=1;}
+    }
+    persistLocalDraft();render();toast(`已解除 ${count} 个元素的组合`,"success");
   }
 
   function selectionMoveLimits(items){
