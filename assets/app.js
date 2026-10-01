@@ -139,13 +139,51 @@
   function elementTransform(e){
     return `translate(${Number(e.x||0).toFixed(3)} ${Number(e.y||0).toFixed(3)}) rotate(${Number(e.rotation||0).toFixed(2)} ${(Number(e.w||0)/2).toFixed(3)} ${(Number(e.h||0)/2).toFixed(3)})`;
   }
+  function panelById(id,artwork=state.artwork){
+    return D.sideSealGeometry(artwork).panels.find((p)=>p.id===id)||null;
+  }
   function defaultElementPlacement(w=50,h=50){
     const g=geometry();
     const panel=g.panels.find((p)=>p.id==="TOP_FACE")||g.panels[0];
     return {
-      x:Math.max(0,panel.x+(panel.w-w)/2),
-      y:Math.max(0,panel.y+(panel.h-h)/2)
+      panelId:panel.id,
+      x:Math.max(panel.x,panel.x+(panel.w-w)/2),
+      y:Math.max(panel.y,panel.y+(panel.h-h)/2)
     };
+  }
+  function elementBounds(e){
+    const g=geometry();
+    if(e.constrainToPanel!==false){
+      const p=panelById(e.panelId);
+      if(p) return p;
+    }
+    return {x:0,y:0,w:g.totalWidth,h:g.totalHeight};
+  }
+  function clampElementToBounds(e){
+    const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
+    e.x=Math.max(b.x,Math.min(b.x+b.w-w,Number(e.x||b.x)));
+    e.y=Math.max(b.y,Math.min(b.y+b.h-h,Number(e.y||b.y)));
+    return e;
+  }
+  function placeElementInPanel(e,panelId){
+    const p=panelById(panelId);
+    if(!p)return;
+    e.panelId=p.id;
+    const w=Math.min(Math.max(5,Number(e.w||5)),p.w);
+    const h=Math.min(Math.max(5,Number(e.h||5)),p.h);
+    e.w=w;e.h=h;
+    e.x=p.x+(p.w-w)/2;
+    e.y=p.y+(p.h-h)/2;
+  }
+  function snapElementPosition(e,x,y){
+    const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1)),snap=4;
+    let nx=Math.max(b.x,Math.min(b.x+b.w-w,x));
+    let ny=Math.max(b.y,Math.min(b.y+b.h-h,y));
+    const xs=[b.x,b.x+b.w-w,b.x+(b.w-w)/2];
+    const ys=[b.y,b.y+b.h-h,b.y+(b.h-h)/2];
+    for(const v of xs) if(Math.abs(nx-v)<=snap){nx=v;break;}
+    for(const v of ys) if(Math.abs(ny-v)<=snap){ny=v;break;}
+    return {x:nx,y:ny};
   }
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
   function productionPolicy(code){return state.productionPolicies.find(x=>x.code===code)||null;}
@@ -295,39 +333,62 @@
     const elements=artworkElements();
     const selected=selectedArtworkElement();
     const locked=isArtworkLocked();
-    const rows=elements.map((e)=>`
-      <button type="button" class="element-row ${state.selectedElementId===e.id?"active":""}" data-select-element="${esc(e.id)}">
-        <span class="element-type">${e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":"IMG"}</span>
+    const rows=[...elements].reverse().map((e)=>{
+      const label=e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":e.type==="text"?"TEXT":"IMG";
+      return `<button type="button" class="element-row ${state.selectedElementId===e.id?"active":""} ${e.visible===false?"muted":""}" data-select-element="${esc(e.id)}">
+        <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
-        <span class="mono subtle">${Number(e.w||0).toFixed(0)}×${Number(e.h||0).toFixed(0)} mm</span>
-        ${e.locked?'<span class="badge amber">LOCK</span>':""}
-      </button>`).join("");
+        <span class="mono subtle">${esc(e.panelId||"—")}</span>
+        ${e.visible===false?'<span class="badge gray">HIDE</span>':e.locked?'<span class="badge amber">LOCK</span>':""}
+      </button>`;
+    }).join("");
+    const panelOptions=geometry().panels.map(p=>`<option value="${p.id}" ${selected?.panelId===p.id?"selected":""}>${p.id}</option>`).join("");
     const props=selected?`
       <div class="element-properties">
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
+        <div class="field"><label>Panel 面板</label><select class="select" data-element-prop="panelId">${panelOptions}</select></div>
+        <div class="row2">
+          <label class="toggle-line"><input type="checkbox" data-element-visible ${selected.visible!==false?"checked":""}/> Visible</label>
+          <label class="toggle-line"><input type="checkbox" data-element-lock ${selected.locked?"checked":""}/> Lock</label>
+        </div>
+        <label class="toggle-line"><input type="checkbox" data-element-constrain ${selected.constrainToPanel!==false?"checked":""}/> 限制在所属面板内</label>
+        ${selected.type==="text"?`
+          <div class="field"><label>Text 文本</label><textarea class="input" rows="3" data-element-prop="text">${esc(selected.text||"")}</textarea></div>
+          <div class="row3">
+            <div class="field"><label>pt</label><input class="input mono" type="number" min="5" step="0.5" data-element-prop="fontSizePt" value="${esc(selected.fontSizePt||12)}"/></div>
+            <div class="field"><label>Weight</label><select class="select" data-element-prop="fontWeight"><option value="normal" ${selected.fontWeight!=="bold"?"selected":""}>Normal</option><option value="bold" ${selected.fontWeight==="bold"?"selected":""}>Bold</option></select></div>
+            <div class="field"><label>Align</label><select class="select" data-element-prop="textAlign"><option value="left" ${selected.textAlign==="left"?"selected":""}>Left</option><option value="center" ${selected.textAlign==="center"?"selected":""}>Center</option><option value="right" ${selected.textAlign==="right"?"selected":""}>Right</option></select></div>
+          </div>`:""}
+        ${selected.type==="qr-generated"?`
+          <div class="field"><label>QR payload</label><textarea class="input" rows="3" data-element-prop="payload">${esc(selected.payload||"")}</textarea></div>
+          <div class="field"><label>Error correction</label><select class="select" data-element-prop="ecc">${["L","M","Q","H"].map(x=>`<option ${selected.ecc===x?"selected":""}>${x}</option>`).join("")}</select></div>`:""}
         <div class="row2">
           <div class="field"><label>X mm</label><input class="input mono" type="number" step="1" data-element-prop="x" value="${esc(selected.x)}"/></div>
           <div class="field"><label>Y mm</label><input class="input mono" type="number" step="1" data-element-prop="y" value="${esc(selected.y)}"/></div>
         </div>
-        <div class="row2">
+        <div class="row3">
           <div class="field"><label>W mm</label><input class="input mono" type="number" min="5" step="1" data-element-prop="w" value="${esc(selected.w)}"/></div>
           <div class="field"><label>H mm</label><input class="input mono" type="number" min="5" step="1" data-element-prop="h" value="${esc(selected.h)}"/></div>
+          <div class="field"><label>°</label><input class="input mono" type="number" step="1" data-element-prop="rotation" value="${esc(selected.rotation||0)}"/></div>
         </div>
-        <div class="row2">
-          <div class="field"><label>Rotation</label><input class="input mono" type="number" step="1" data-element-prop="rotation" value="${esc(selected.rotation||0)}"/></div>
-          <div class="field"><label>Lock</label><label class="toggle-line"><input type="checkbox" data-element-lock ${selected.locked?"checked":""}/> Lock position</label></div>
+        <div class="element-action-grid">
+          <button class="btn small" data-action="duplicate-element">Duplicate</button>
+          <button class="btn small" data-action="layer-front">To Front</button>
+          <button class="btn small" data-action="layer-up">Up</button>
+          <button class="btn small" data-action="layer-down">Down</button>
+          <button class="btn small" data-action="layer-back">To Back</button>
+          <button class="btn danger small" data-action="delete-element" ${locked?"disabled":""}>Delete</button>
         </div>
-        ${selected.type==="qr-generated"?`
-          <div class="field"><label>QR payload</label><textarea class="input" rows="3" data-element-prop="payload">${esc(selected.payload||"")}</textarea></div>
-          <div class="field"><label>Error correction</label><select class="select" data-element-prop="ecc">${["L","M","Q","H"].map(x=>`<option ${selected.ecc===x?"selected":""}>${x}</option>`).join("")}</select></div>
-        `:""}
-        <div class="toolbar" style="justify-content:flex-end"><button class="btn danger small" data-action="delete-element" ${locked?"disabled":""}>Delete Element</button></div>
-      </div>`:'<div class="notice">选择画布上的元素或列表项后，可精确设置毫米位置、尺寸和旋转。</div>' ;
+        <div class="align-grid">
+          ${[["align-left","左"],["align-hcenter","水平中"],["align-right","右"],["align-top","顶"],["align-vcenter","垂直中"],["align-bottom","底"]].map(([a,n])=>`<button class="tool" data-action="${a}">${n}</button>`).join("")}
+        </div>
+      </div>`:'<div class="notice">选择元素后可设置面板、图层、对齐、锁定与毫米位置。</div>';
     return formSection("Elements 元素",`
-      <div class="notice" style="margin-bottom:10px"><strong>真实唛头元素</strong>：Logo / 产品图 / 包装图标 / QR 可作为独立对象放到纸箱版面。生产前需通过边界、分辨率和扫码检查。</div>
+      <div class="notice" style="margin-bottom:10px"><strong>面板化唛头元素</strong>：每个对象属于一个纸箱面板；默认不会越过折线。后添加的对象位于更高图层。</div>
       <div class="toolbar element-tools">
         <input id="art-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <input id="art-qr-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
+        <button class="btn small" data-action="add-text-element" ${locked?"disabled":""}>＋ 文字</button>
         <button class="btn small" data-action="upload-image-trigger" ${locked?"disabled":""}>＋ 图片 / Logo</button>
         <button class="btn small" data-action="upload-qr-trigger" ${locked?"disabled":""}>＋ 上传二维码</button>
       </div>
@@ -383,13 +444,20 @@
 
   function renderCustomElements(artwork=state.artwork,mode="editor"){
     const elements=Array.isArray(artwork.elements)?artwork.elements:[];
-    return elements.map((e)=>{
+    return elements.filter((e)=>e.visible!==false).map((e)=>{
       const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
       const selected=mode==="editor"&&state.selectedElementId===e.id;
       const border=selected?`<rect x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
       let body="";
       if((e.type==="image"||e.type==="qr-image")&&e.dataUrl){
         body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
+      }else if(e.type==="text"){
+        const fontMm=Math.max(1,Number(e.fontSizePt||12))*25.4/72;
+        const lines=String(e.text||"").split(/\r?\n/);
+        const anchor=e.textAlign==="center"?"middle":e.textAlign==="right"?"end":"start";
+        const tx=e.textAlign==="center"?w/2:e.textAlign==="right"?w:0;
+        const weight=e.fontWeight==="bold"?"700":"400";
+        body=`<text x="${tx}" y="${fontMm}" text-anchor="${anchor}" font-family="Arial,Helvetica,sans-serif" font-size="${fontMm}" font-weight="${weight}" fill="#000">${lines.map((line,i)=>`<tspan x="${tx}" dy="${i===0?0:fontMm*1.2}">${esc(line)}</tspan>`).join("")}</text>`;
       }else if(e.type==="qr-generated"){
         try{
           const model=C.qrMatrix(e.payload||"",e.ecc||"M");
@@ -437,7 +505,7 @@
         ${note}
         <g transform="translate(${g.H*.55} ${g.H+g.W*.56}) rotate(90)"><text font-size="14">CRN ${esc(c.crn)}</text></g>
       </g>
-      ${code}${watermark}
+      ${code}${custom}${watermark}
     </svg>`;
   }
 
@@ -1068,7 +1136,9 @@
         id:newElementId(),
         type,
         name:type==="qr-image"?`QR image · ${file.name}`:file.name,
-        x:p.x,y:p.y,w,h,rotation:0,locked:false,
+        x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
+        panelId:p.panelId,constrainToPanel:true,
+        text:"",fontSizePt:12,fontWeight:"normal",textAlign:"left",
         payload:"",
         ecc:"M",
         sourceType:"uploaded-raster",
@@ -1094,7 +1164,9 @@
     const size=45,p=defaultElementPlacement(size,size);
     const el={
       id:newElementId(),type:"qr-generated",name:"Generated QR",
-      x:p.x,y:p.y,w:size,h:size,rotation:0,locked:false,
+      x:p.x,y:p.y,w:size,h:size,rotation:0,locked:false,visible:true,
+      panelId:p.panelId,constrainToPanel:true,
+      text:"",fontSizePt:12,fontWeight:"normal",textAlign:"left",
       payload,ecc,sourceType:"generated-vector",mimeType:"",
       dataUrl:"",pixelWidth:0,pixelHeight:0
     };
@@ -1103,6 +1175,61 @@
     persistLocalDraft();
     render();
     toast("矢量二维码已添加","success");
+  }
+
+  function addTextElement(){
+    if(!localArtworkEditable()) return;
+    const w=120,h=28,p=defaultElementPlacement(w,h);
+    const el={
+      id:newElementId(),type:"text",name:"Text",
+      x:p.x,y:p.y,w,h,rotation:0,locked:false,visible:true,
+      panelId:p.panelId,constrainToPanel:true,
+      text:"NEW MARK TEXT",fontSizePt:12,fontWeight:"bold",textAlign:"left",
+      payload:"",ecc:"M",sourceType:"generated-text",mimeType:"",
+      dataUrl:"",pixelWidth:0,pixelHeight:0
+    };
+    artworkElements().push(el);
+    state.selectedElementId=el.id;
+    persistLocalDraft();render();toast("文字元素已添加","success");
+  }
+
+  function duplicateSelectedElement(){
+    const current=selectedArtworkElement();
+    if(!current||!localArtworkEditable()) return;
+    const copy=JSON.parse(JSON.stringify(current));
+    copy.id=newElementId();copy.name=(current.name||current.type)+" copy";
+    copy.locked=false;
+    copy.x=Number(current.x||0)+8;copy.y=Number(current.y||0)+8;
+    clampElementToBounds(copy);
+    artworkElements().push(copy);
+    state.selectedElementId=copy.id;
+    persistLocalDraft();render();
+  }
+
+  function reorderSelectedElement(mode){
+    const list=artworkElements(),index=list.findIndex(e=>e.id===state.selectedElementId);
+    if(index<0||!localArtworkEditable()) return;
+    const [item]=list.splice(index,1);
+    let next=index;
+    if(mode==="front") next=list.length;
+    if(mode==="back") next=0;
+    if(mode==="up") next=Math.min(list.length,index+1);
+    if(mode==="down") next=Math.max(0,index-1);
+    list.splice(next,0,item);
+    persistLocalDraft();render();
+  }
+
+  function alignSelectedElement(mode){
+    const e=selectedArtworkElement();
+    if(!e||!localArtworkEditable()) return;
+    const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
+    if(mode==="left")e.x=b.x;
+    if(mode==="hcenter")e.x=b.x+(b.w-w)/2;
+    if(mode==="right")e.x=b.x+b.w-w;
+    if(mode==="top")e.y=b.y;
+    if(mode==="vcenter")e.y=b.y+(b.h-h)/2;
+    if(mode==="bottom")e.y=b.y+b.h-h;
+    clampElementToBounds(e);persistLocalDraft();render();
   }
 
   function deleteSelectedElement(){
@@ -1125,8 +1252,14 @@
         const e=selectedArtworkElement();
         if(!e||!localArtworkEditable()) return;
         const key=el.dataset.elementProp;
-        e[key]=["x","y","w","h","rotation"].includes(key)?Number(el.value):el.value;
-        if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
+        if(key==="panelId"){
+          placeElementInPanel(e,el.value);
+        }else{
+          e[key]=["x","y","w","h","rotation","fontSizePt"].includes(key)?Number(el.value):el.value;
+          if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
+          if(key==="fontSizePt") e[key]=Math.max(5,Number(e[key]||5));
+          clampElementToBounds(e);
+        }
         persistLocalDraft();
       };
       el.oninput=apply;
@@ -1134,9 +1267,18 @@
     });
     const lock=document.querySelector("[data-element-lock]");
     if(lock) lock.onchange=()=>{
-      const e=selectedArtworkElement();
-      if(!e||!localArtworkEditable()) return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
       e.locked=Boolean(lock.checked);persistLocalDraft();render();
+    };
+    const visible=document.querySelector("[data-element-visible]");
+    if(visible) visible.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      e.visible=Boolean(visible.checked);persistLocalDraft();render();
+    };
+    const constrain=document.querySelector("[data-element-constrain]");
+    if(constrain) constrain.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      e.constrainToPanel=Boolean(constrain.checked);clampElementToBounds(e);persistLocalDraft();render();
     };
 
     document.querySelectorAll("[data-art-element]").forEach((group)=>{
@@ -1157,9 +1299,9 @@
         try{group.setPointerCapture(ev.pointerId);}catch{}
         group.onpointermove=(move)=>{
           if(move.pointerId!==ev.pointerId) return;
-          const p=point(move),g=geometry();
-          element.x=Math.max(0,Math.min(g.totalWidth-Math.max(1,Number(element.w||1)),startX+(p.x-start.x)));
-          element.y=Math.max(0,Math.min(g.totalHeight-Math.max(1,Number(element.h||1)),startY+(p.y-start.y)));
+          const p=point(move);
+          const snapped=snapElementPosition(element,startX+(p.x-start.x),startY+(p.y-start.y));
+          element.x=snapped.x;element.y=snapped.y;
           group.setAttribute("transform",elementTransform(element));
         };
         const finish=()=>{
@@ -1174,7 +1316,19 @@
   async function handleAction(action){
     if(action==="upload-image-trigger"){document.getElementById("art-image-file")?.click();return;}
     if(action==="upload-qr-trigger"){document.getElementById("art-qr-image-file")?.click();return;}
+    if(action==="add-text-element") return addTextElement();
     if(action==="add-generated-qr") return addGeneratedQrElement();
+    if(action==="duplicate-element") return duplicateSelectedElement();
+    if(action==="layer-front") return reorderSelectedElement("front");
+    if(action==="layer-back") return reorderSelectedElement("back");
+    if(action==="layer-up") return reorderSelectedElement("up");
+    if(action==="layer-down") return reorderSelectedElement("down");
+    if(action==="align-left") return alignSelectedElement("left");
+    if(action==="align-hcenter") return alignSelectedElement("hcenter");
+    if(action==="align-right") return alignSelectedElement("right");
+    if(action==="align-top") return alignSelectedElement("top");
+    if(action==="align-vcenter") return alignSelectedElement("vcenter");
+    if(action==="align-bottom") return alignSelectedElement("bottom");
     if(action==="delete-element") return deleteSelectedElement();
     if(action==="new-local") return resetLocalArtwork();
     if(action==="save") return saveDraft();

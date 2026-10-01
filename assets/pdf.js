@@ -260,11 +260,26 @@
     return {co,si,e,f,w,h};
   }
 
-  function customElementOps(elements, geometry) {
+  function customElementOps(elements, geometry, writeText) {
     const ops=[];
     for(const element of Array.isArray(elements)?elements:[]) {
+      if(element.visible===false) continue;
       const m=elementRotationMatrix(element,geometry);
-      if(element.type==="qr-generated"&&Array.isArray(element.matrix)&&element.matrix.length) {
+      if(element.type==="text") {
+        const fontSizePt=Math.max(5,Number(element.fontSizePt||12));
+        const fontSizeMm=fontSizePt*25.4/72;
+        const lines=String(element.text||"").split(/\r?\n/);
+        const boxW=Math.max(1,Number(element.w||1));
+        const approxWidth=(line)=>line.length*fontSizePt*0.52*25.4/72;
+        for(let i=0;i<lines.length;i+=1){
+          const line=lines[i];
+          let x=Number(element.x||0);
+          if(element.textAlign==="center") x+=(boxW-approxWidth(line))/2;
+          if(element.textAlign==="right") x+=boxW-approxWidth(line);
+          const y=geometry.totalHeight-Number(element.y||0)-fontSizeMm-(i*fontSizeMm*1.2);
+          ops.push(writeText(x,y,fontSizePt,line,-Number(element.rotation||0)));
+        }
+      } else if(element.type==="qr-generated"&&Array.isArray(element.matrix)&&element.matrix.length) {
         const matrix=element.matrix,quiet=4,n=matrix.length;
         const size=Math.min(Number(element.w||1),Number(element.h||1));
         const ox=(Number(element.w||1)-size)/2,oy=(Number(element.h||1)-size)/2;
@@ -363,7 +378,7 @@
       }
     }
 
-    ops.push(...customElementOps(options.customElements||[],geometry));
+    ops.push(...customElementOps(options.customElements||[],geometry,writeText));
 
     if (proof) {
       ops.push("0.78 g");

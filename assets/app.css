@@ -79,3 +79,9 @@ button{cursor:pointer}.app{min-height:100vh;display:grid;grid-template-columns:2
 .element-properties{border-top:1px solid #e7ebef;padding-top:10px;margin-top:10px}
 .toggle-line{display:flex!important;align-items:center;gap:7px;min-height:34px}
 [data-art-element]{touch-action:none}
+
+
+.element-row.muted{opacity:.55}
+.element-action-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:9px}
+.align-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:7px}
+.align-grid .tool{width:100%}

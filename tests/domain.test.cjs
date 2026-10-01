@@ -99,6 +99,36 @@ test("uploaded QR image is explicitly marked as unverified", () => {
   assert.ok(assets.some(x=>x.id==="qr-upload-qr-img"&&x.status==="warning"));
 });
 
+test("panel-constrained custom text is persisted and preflighted", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const panel=g.panels.find(p=>p.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[{
+    id:"txt-1",type:"text",name:"Side Mark",x:panel.x+20,y:panel.y+20,w:120,h:30,
+    rotation:0,locked:false,visible:true,panelId:"TOP_FACE",constrainToPanel:true,
+    text:"MADE FOR RETAIL",fontSizePt:12,fontWeight:"bold",textAlign:"center"
+  }]};
+  const snapshot=D.canonicalData(a);
+  assert.equal(snapshot.artwork.elements[0].panelId,"TOP_FACE");
+  assert.equal(snapshot.artwork.elements[0].text,"MADE FOR RETAIL");
+  const restored=D.artworkFromCanonical(snapshot);
+  assert.equal(restored.elements[0].fontWeight,"bold");
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="asset-panel-bounds-txt-1"&&x.status==="pass"));
+  assert.ok(assets.some(x=>x.id==="text-content-txt-1"&&x.status==="pass"));
+});
+
+test("custom element crossing its assigned fold line blocks", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const panel=g.panels.find(p=>p.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[{
+    id:"bad-1",type:"text",name:"Bad",x:panel.x+panel.w-10,y:panel.y+20,w:60,h:20,
+    rotation:0,locked:false,visible:true,panelId:"TOP_FACE",constrainToPanel:true,
+    text:"OVER FOLD",fontSizePt:12,fontWeight:"normal",textAlign:"left"
+  }]};
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="asset-panel-bounds-bad-1"&&x.status==="error"&&x.blocking));
+});
+
 test("computed and preflight can use remote factory master", () => {
   const remoteFactories = [{ id: "remote-a", name: "Remote A", crn: "CRN-NEW", country: "Mexico" }];
   const a = { ...D.defaultArtwork, factoryId: "remote-a" };

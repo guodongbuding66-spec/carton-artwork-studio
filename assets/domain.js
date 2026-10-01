@@ -124,6 +124,13 @@
           h:Number(e.h||0),
           rotation:Number(e.rotation||0),
           locked:Boolean(e.locked),
+          visible:e.visible!==false,
+          panelId:e.panelId||"TOP_FACE",
+          constrainToPanel:e.constrainToPanel!==false,
+          text:e.text||"",
+          fontSizePt:Number(e.fontSizePt||12),
+          fontWeight:String(e.fontWeight||"normal"),
+          textAlign:String(e.textAlign||"left"),
           payload:e.payload||"",
           ecc:e.ecc||"M",
           sourceType:e.sourceType||"",
@@ -332,6 +339,17 @@
     for(const element of customElements){
       const name=element.name||element.type||"element";
       const x=Number(element.x||0),y=Number(element.y||0),w=Number(element.w||0),h=Number(element.h||0);
+      const visible=element.visible!==false;
+      if(!visible){
+        assetChecks.push(check(
+          `asset-hidden-${element.id||name}`,
+          `${name} is hidden`,
+          "warning",
+          "Hidden custom elements are excluded from preview/proof output.",
+          "Assets"
+        ));
+        continue;
+      }
       const within=x>=0&&y>=0&&w>0&&h>0&&(x+w)<=g.totalWidth&&(y+h)<=g.totalHeight;
       assetChecks.push(check(
         `asset-bounds-${element.id||name}`,
@@ -341,6 +359,45 @@
         "Assets",
         true
       ));
+      const panel=g.panels.find((p)=>p.id===String(element.panelId||""));
+      assetChecks.push(check(
+        `asset-panel-${element.id||name}`,
+        `${name} panel assignment`,
+        panel?"pass":"error",
+        panel?`Assigned to ${panel.id}.`:"Element has no valid carton panel assignment.",
+        "Assets",
+        true
+      ));
+      if(panel&&element.constrainToPanel!==false){
+        const inPanel=x>=panel.x&&y>=panel.y&&(x+w)<=panel.x+panel.w&&(y+h)<=panel.y+panel.h;
+        assetChecks.push(check(
+          `asset-panel-bounds-${element.id||name}`,
+          `${name} inside ${panel.id}`,
+          inPanel?"pass":"error",
+          inPanel?"Element stays inside its assigned carton panel.":"Element crosses the assigned panel boundary/fold line.",
+          "Assets",
+          true
+        ));
+      }
+      if(element.type==="text"){
+        const text=String(element.text||"");
+        const size=Number(element.fontSizePt||0);
+        assetChecks.push(check(
+          `text-content-${element.id||name}`,
+          `${name} text content`,
+          text.trim()?"pass":"error",
+          text.trim()?`${text.length} characters.`:"Text element is empty.",
+          "Assets",
+          true
+        ));
+        assetChecks.push(check(
+          `text-size-${element.id||name}`,
+          `${name} font size`,
+          size>=7?"pass":"warning",
+          `${round(size,1)} pt. Internal review threshold is 7 pt.`,
+          "Assets"
+        ));
+      }
       if(element.type==="qr-generated"){
         const size=Math.min(w,h);
         assetChecks.push(check(
@@ -459,6 +516,13 @@
         h:Number(e.h||0),
         rotation:Number(e.rotation||0),
         locked:Boolean(e.locked),
+        visible:e.visible!==false,
+        panelId:String(e.panelId||"TOP_FACE"),
+        constrainToPanel:e.constrainToPanel!==false,
+        text:String(e.text||""),
+        fontSizePt:Number(e.fontSizePt||12),
+        fontWeight:["normal","bold"].includes(String(e.fontWeight||"normal"))?String(e.fontWeight||"normal"):"normal",
+        textAlign:["left","center","right"].includes(String(e.textAlign||"left"))?String(e.textAlign||"left"):"left",
         payload:String(e.payload||""),
         ecc:["L","M","Q","H"].includes(String(e.ecc||"M").toUpperCase())?String(e.ecc||"M").toUpperCase():"M",
         sourceType:String(e.sourceType||""),
