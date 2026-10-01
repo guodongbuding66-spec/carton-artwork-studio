@@ -83,3 +83,4 @@ assert.equal(can(bootstrap,"ADMIN"),true);
 console.log("Auth/RBAC tests passed.");
 
 assert.equal(permissionForRequest("POST","/api/import-jobs/job-1/create-drafts"),"ARTWORK_WRITE");
+assert.equal(permissionForRequest("POST","/api/import-jobs/job-1/process-drafts"),"ARTWORK_WRITE");
