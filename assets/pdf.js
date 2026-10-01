@@ -236,6 +236,61 @@
     ].join("\n");
   }
 
+  function dataUrlBytes(dataUrl) {
+    const value=String(dataUrl||"");
+    const m=/^data:([^;,]+);base64,(.+)$/i.exec(value);
+    if(!m) return null;
+    const binary=(typeof atob==="function"?atob(m[2]):null);
+    if(binary===null) return null;
+    const bytes=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i+=1) bytes[i]=binary.charCodeAt(i)&255;
+    return {mimeType:m[1].toLowerCase(),bytes};
+  }
+
+  function elementRotationMatrix(element, geometry) {
+    const w=mm(Math.max(1,Number(element.w||1)));
+    const h=mm(Math.max(1,Number(element.h||1)));
+    const cx=mm(Math.max(0,Number(element.x||0))+Math.max(1,Number(element.w||1))/2);
+    const cy=mm(geometry.totalHeight-(Math.max(0,Number(element.y||0))+Math.max(1,Number(element.h||1))/2));
+    const angle=-(Number(element.rotation||0))*Math.PI/180;
+    const co=Math.cos(angle),si=Math.sin(angle);
+    const localCx=w/2,localCy=h/2;
+    const e=cx-co*localCx+si*localCy;
+    const f=cy-si*localCx-co*localCy;
+    return {co,si,e,f,w,h};
+  }
+
+  function customElementOps(elements, geometry) {
+    const ops=[];
+    for(const element of Array.isArray(elements)?elements:[]) {
+      const m=elementRotationMatrix(element,geometry);
+      if(element.type==="qr-generated"&&Array.isArray(element.matrix)&&element.matrix.length) {
+        const matrix=element.matrix,quiet=4,n=matrix.length;
+        const size=Math.min(Number(element.w||1),Number(element.h||1));
+        const ox=(Number(element.w||1)-size)/2,oy=(Number(element.h||1)-size)/2;
+        const cell=size/(n+quiet*2);
+        ops.push("q");
+        ops.push(`${m.co.toFixed(8)} ${m.si.toFixed(8)} ${(-m.si).toFixed(8)} ${m.co.toFixed(8)} ${m.e.toFixed(3)} ${m.f.toFixed(3)} cm`);
+        ops.push("0 g");
+        for(let row=0;row<n;row+=1) for(let col=0;col<n;col+=1) {
+          if(!matrix[row][col]) continue;
+          const x=ox+(col+quiet)*cell;
+          const y=Number(element.h||1)-(oy+(row+quiet+1)*cell);
+          ops.push(rectOp(x,y,cell,cell,true));
+        }
+        ops.push("Q");
+      } else if((element.type==="image"||element.type==="qr-image")&&element.pdfName) {
+        ops.push("q");
+        const a=m.co*m.w,b=m.si*m.w,c2=-m.si*m.h,d=m.co*m.h;
+        const e=m.e,f2=m.f;
+        ops.push(`${a.toFixed(3)} ${b.toFixed(3)} ${c2.toFixed(3)} ${d.toFixed(3)} ${e.toFixed(3)} ${f2.toFixed(3)} cm`);
+        ops.push(`/${element.pdfName} Do`);
+        ops.push("Q");
+      }
+    }
+    return ops;
+  }
+
   function buildArtworkOps(artwork, geometry, computed, codeModel, options = {}) {
     const proof = options.mode === "proof";
     const fontModel = options.fontModel || null;
@@ -307,6 +362,8 @@
         }
       }
     }
+
+    ops.push(...customElementOps(options.customElements||[],geometry));
 
     if (proof) {
       ops.push("0.78 g");
@@ -505,35 +562,61 @@
     return buildBinaryPdf(objects, "1.4");
   }
 
-  function createPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode = "production", fontBytes = null, iccBytes = null, pdfxProfile = "", outputConditionIdentifier = "", documentTitle = "" }) {
-    if (fontBytes) return createEmbeddedPdfBytes({ artwork, geometry, computed, codeModel, qrMatrix, mode, fontBytes, iccBytes, pdfxProfile, outputConditionIdentifier, documentTitle });
+  function createPdfBytes({
+    artwork, geometry, computed, codeModel, qrMatrix, customElements = [],
+    mode = "production", fontBytes = null, iccBytes = null, pdfxProfile = "",
+    outputConditionIdentifier = "", documentTitle = ""
+  }) {
+    if (fontBytes) {
+      return createEmbeddedPdfBytes({
+        artwork, geometry, computed, codeModel, qrMatrix, mode,
+        fontBytes, iccBytes, pdfxProfile, outputConditionIdentifier, documentTitle
+      });
+    }
+
+    const prepared=[];
+    const imageObjects=[];
+    let imageIndex=0;
+    for(const element of Array.isArray(customElements)?customElements:[]) {
+      if((element.type==="image"||element.type==="qr-image")&&element.dataUrl) {
+        const decoded=dataUrlBytes(element.dataUrl);
+        if(decoded?.mimeType==="image/jpeg"&&decoded.bytes.length) {
+          imageIndex+=1;
+          const pdfName=`Im${imageIndex}`;
+          prepared.push({...element,pdfName});
+          imageObjects.push({
+            pdfName,
+            width:Math.max(1,Number(element.pixelWidth||1)),
+            height:Math.max(1,Number(element.pixelHeight||1)),
+            bytes:decoded.bytes
+          });
+          continue;
+        }
+      }
+      prepared.push({...element});
+    }
+
     const widthPt = mm(geometry.totalWidth);
     const heightPt = mm(geometry.totalHeight);
-    const stream = buildArtworkOps(artwork, geometry, computed, codeModel, { mode, qrMatrix });
+    const stream = buildArtworkOps(artwork, geometry, computed, codeModel, {
+      mode, qrMatrix, customElements:prepared
+    });
     const objects = [];
+    const xObjects=imageObjects.map((img,i)=>`/${img.pdfName} ${6+i} 0 R`).join(" ");
 
     objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
     objects[2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
-    objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>`;
-    objects[4] = `<< /Length ${new TextEncoder().encode(stream).length} >>\nstream\n${stream}\nendstream`;
+    objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${widthPt.toFixed(3)} ${heightPt.toFixed(3)}] /Resources << /Font << /F1 5 0 R >> ${xObjects?`/XObject << ${xObjects} >>`:""} >> /Contents 4 0 R >>`;
+    objects[4] = makeStream("",new TextEncoder().encode(stream));
     objects[5] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
-
-    let pdf = "%PDF-1.4\n%CAS4\n";
-    const offsets = [0];
-
-    for (let i = 1; i <= 5; i += 1) {
-      offsets[i] = new TextEncoder().encode(pdf).length;
-      pdf += `${i} 0 obj\n${objects[i]}\nendobj\n`;
+    for(let i=0;i<imageObjects.length;i+=1) {
+      const img=imageObjects[i];
+      objects[6+i]=makeStream(
+        `/Type /XObject /Subtype /Image /Width ${img.width} /Height ${img.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`,
+        img.bytes
+      );
     }
-
-    const xref = new TextEncoder().encode(pdf).length;
-    pdf += "xref\n0 6\n";
-    pdf += "0000000000 65535 f \n";
-    for (let i = 1; i <= 5; i += 1) {
-      pdf += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
-    }
-    pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-    return new TextEncoder().encode(pdf);
+    return buildBinaryPdf(objects,"1.4");
   }
 
   function createPdfBlob(args) {
