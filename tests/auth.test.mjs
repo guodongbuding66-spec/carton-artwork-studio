@@ -81,3 +81,5 @@ const bootstrap=await resolveIdentity(bootstrapReq,{BOOTSTRAP_ADMIN_EMAIL:"owner
 assert.equal(can(bootstrap,"ADMIN"),true);
 
 console.log("Auth/RBAC tests passed.");
+
+assert.equal(permissionForRequest("POST","/api/import-jobs/job-1/create-drafts"),"ARTWORK_WRITE");
