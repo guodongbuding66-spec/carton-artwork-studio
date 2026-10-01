@@ -79,3 +79,13 @@ assert.match(workerSource,/artwork_id IS NULL/);
 
 assert.match(workerSource,/LEFT JOIN artworks a ON a\.id=r\.artwork_id/);
 assert.match(workerSource,/a\.artwork_no AS artworkNo/);
+
+
+assert.equal(EXPECTED_LATEST_MIGRATION,"0011_batch_processing.sql");
+assert.match(workerSource,/importProcessMatch=.*process-drafts/);
+assert.match(workerSource,/qualifyProductionArtwork\(\{/);
+assert.match(workerSource,/BATCH_SERVER_RUN/);
+assert.match(workerSource,/BATCH_SUBMIT_REVIEW/);
+assert.match(workerSource,/batch_preflight_status/);
+assert.match(workerSource,/batch_submit_status/);
+assert.match(workerSource,/WHERE id=\? AND status='DRAFT' AND current_revision=\?/);

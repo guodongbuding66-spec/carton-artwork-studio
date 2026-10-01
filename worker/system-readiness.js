@@ -1,4 +1,4 @@
-export const EXPECTED_LATEST_MIGRATION = "0009_pdfx_promotion_evidence.sql";
+export const EXPECTED_LATEST_MIGRATION = "0011_batch_processing.sql";
 export const ARTIFACT_PROBE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function gate(id, label, ok, detail, category="STAGING", blocking=true) {
