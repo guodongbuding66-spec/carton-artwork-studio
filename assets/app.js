@@ -223,6 +223,7 @@
         <div><div class="artwork-title">美线侧封箱 <span class="badge blue">US_SIDE_SEAL</span></div><div class="meta mono">Template 2026.05.20 · Revision ${state.artwork.revision} · SKU ${esc(state.artwork.sku)}</div></div>
         <div class="spacer"></div>
         <span class="badge ${state.artwork.status==="approved"?"green":state.artwork.status==="in_review"?"blue":state.artwork.status==="rejected"?"red":"amber"}">${esc(state.artwork.status.replace("_"," ").toUpperCase())}</span>
+        <button class="btn" data-action="new-local">新建本地稿</button>
         <button class="btn" data-action="save" ${state.apiBusy||!localArtworkEditable()?"disabled":""}>${cloudWrite?"保存草稿":"保存本地草稿"}</button>
         <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
         <button class="btn primary" data-action="submit" title="${cloudWrite?"":"需要 Cloudflare Access + Artwork Write 权限"}" ${!["draft","rejected"].includes(state.artwork.status)||summary().blocking>0||state.apiBusy||!cloudWrite?"disabled":""}>${cloudWrite?"提交审核":"提交审核（需登录）"}</button>
@@ -908,6 +909,7 @@
   }
 
   async function handleAction(action){
+    if(action==="new-local") return resetLocalArtwork();
     if(action==="save") return saveDraft();
     if(action==="preflight") return runPreflightAction();
     if(action==="submit") return submitForReview();
@@ -1683,6 +1685,22 @@
       await loadAdminUsers();
       toast("Roles 已更新","success");
     }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  function resetLocalArtwork(){
+    if(!confirm("新建本地稿会清空当前浏览器中的未保存工作稿，继续吗？")) return;
+    state.artwork={...D.defaultArtwork};
+    state.remoteArtworkId=null;
+    state.remoteRevision=null;
+    state.remoteRevisions=[];
+    state.comments=[];
+    state.revisionCompare=null;
+    localStorage.removeItem("cas:remoteArtworkId");
+    persistLocalDraft();
+    state.page="artwork";
+    state.tab="artwork";
+    render();
+    toast("已新建本地工作稿","success");
   }
 
   async function ensureRemoteArtwork(){
