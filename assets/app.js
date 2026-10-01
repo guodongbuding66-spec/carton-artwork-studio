@@ -149,14 +149,14 @@
           <nav class="nav">
             ${navItems.map(([id,ic,zh,en]) => `<button class="nav-btn ${state.page===id?"active":""}" data-page="${id}"><span class="nav-icon">${ic}</span><span>${zh}</span><span>${en}</span></button>`).join("")}
           </nav>
-          <div class="sidebar-foot">Environment<br><strong>DEV · Cloudflare-ready</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline&&state.identity?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline&&state.identity?"Access Connected":state.apiChecked?"Access Required / Local":"API Checking…"}</span><div class="subtle" style="margin-top:6px;word-break:break-word">${esc(identityLabel())}</div></div>
+          <div class="sidebar-foot">Environment<br><strong>STAGING · Cloudflare Workers</strong><br>Geometry: mm<br><span class="badge ${state.apiOnline&&state.identity?"green":state.apiChecked?"amber":"blue"}">${state.apiOnline&&state.identity?"Cloud Connected":state.apiChecked?"Local Editing · Cloud Login Required":"Connecting…"}</span><div class="subtle" style="margin-top:6px;word-break:break-word">${esc(identityLabel())}</div></div>
         </aside>
         <section class="main">
           <header class="topbar">
             <div class="breadcrumb">Carton Artwork Studio /</div><div class="page-title">${esc(titleZh)}</div><div class="breadcrumb">${esc(titleEn)}</div>
             <div class="spacer"></div>
             <label class="search"><input id="global-search" placeholder="搜索 SKU / Contract / Artwork…" /></label>
-            <span class="dev">DEV</span><span class="subtle mono">${state.identity?esc(state.identity.email):"No Access identity"}</span><button class="icon-btn" title="Notifications">◔</button><div class="avatar">${state.identity?esc((state.identity.displayName||state.identity.email).slice(0,2).toUpperCase()):"—"}</div>
+            <span class="dev">STAGING</span><span class="subtle mono">${state.identity?esc(state.identity.email):"Local workspace"}</span><button class="icon-btn" title="Notifications">◔</button><div class="avatar">${state.identity?esc((state.identity.displayName||state.identity.email).slice(0,2).toUpperCase()):"—"}</div>
           </header>
           <main class="content">${body}</main>
         </section>
