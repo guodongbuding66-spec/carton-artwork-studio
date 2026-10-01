@@ -352,6 +352,12 @@
       async saveMappingProfile(profile) {
         return request("/api/mapping-profiles", { method:"POST", body:JSON.stringify(profile) });
       },
+      async importJobs() {
+        return request("/api/import-jobs");
+      },
+      async importJob(jobId) {
+        return request(`/api/import-jobs/${encodeURIComponent(jobId)}`);
+      },
       async createImportJob(job) {
         return request("/api/import-jobs", { method:"POST", body:JSON.stringify(job) });
       },

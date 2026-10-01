@@ -242,3 +242,17 @@ assert.match(app,/state\.remoteImportJobId&&cloudBatchWritable\(\)&&cloudArtwork
 assert.match(app,/async function createBatchDrafts\(\)/);
 assert.match(app,/api\.createImportDrafts\(state\.remoteImportJobId\)/);
 assert.match(app,/draftArtworkId/);
+
+
+assert.match(app,/batchJobs:\s*\[\]/);
+assert.match(app,/batchJobLoading:\s*false/);
+assert.match(app,/Import Job History/);
+assert.match(app,/data-open-import-job/);
+assert.match(app,/async function loadBatchJobs\(renderAfter=true\)/);
+assert.match(app,/api\.importJobs\(\)/);
+assert.match(app,/async function resumeImportJob\(jobId\)/);
+assert.match(app,/api\.importJob\(jobId\)/);
+assert.match(app,/D\.artworkFromCanonical\(snapshot\)/);
+assert.match(app,/draftArtworkNo:row\.artworkNo\|\|""/);
+assert.match(app,/pendingDrafts=state\.batchReview\.filter/);
+assert.match(app,/Create Remaining Drafts/);
