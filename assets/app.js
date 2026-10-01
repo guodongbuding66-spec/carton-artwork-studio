@@ -4247,6 +4247,159 @@
     return jobId;
   }
 
+  async function loadReviewerJobs(renderAfter=true){
+    if(!state.apiOnline||!permitted("review")){
+      state.reviewerJobs=[];
+      state.reviewerQueue=[];
+      state.reviewerSummary=null;
+      state.reviewerSelectedId=null;
+      state.reviewerComments=[];
+      state.reviewerDiff=null;
+      if(renderAfter) render();
+      return;
+    }
+    state.reviewerLoading=true;
+    state.reviewerError="";
+    if(renderAfter) render();
+    try{
+      const response=await api.importJobs();
+      const priority=new Map(["SUBMITTED_FOR_REVIEW","PARTIAL_SUBMIT","PREFLIGHTED","PREFLIGHT_PARTIAL","PROCESSING_REQUIRED","DRAFTS_CREATED"].map((x,i)=>[x,i]));
+      state.reviewerJobs=[...(response.data||[])].sort((a,b)=>{
+        const as=String(a.status||"").toUpperCase(), bs=String(b.status||"").toUpperCase();
+        const ap=priority.has(as)?priority.get(as):99;
+        const bp=priority.has(bs)?priority.get(bs):99;
+        return ap-bp||String(b.updatedAt||b.createdAt||"").localeCompare(String(a.updatedAt||a.createdAt||""));
+      });
+      const currentStillExists=state.reviewerJobs.some((x)=>x.id===state.reviewerJobId);
+      if(!currentStillExists){
+        const preferred=state.reviewerJobs.find((x)=>["SUBMITTED_FOR_REVIEW","PARTIAL_SUBMIT"].includes(String(x.status||"").toUpperCase()))
+          ||state.reviewerJobs.find((x)=>x.id===state.remoteImportJobId)
+          ||state.reviewerJobs[0]
+          ||null;
+        state.reviewerJobId=preferred?.id||null;
+      }
+      if(state.reviewerJobId) await loadReviewerQueue(state.reviewerJobId,false);
+      else{
+        state.reviewerQueue=[];
+        state.reviewerSummary=null;
+        state.reviewerSelectedId=null;
+        state.reviewerComments=[];
+        state.reviewerDiff=null;
+      }
+    }catch(e){
+      state.reviewerError=e.message||String(e);
+      state.reviewerQueue=[];
+      state.reviewerSummary=null;
+    }finally{
+      state.reviewerLoading=false;
+      if(renderAfter) render();
+    }
+  }
+
+  async function loadReviewerQueue(jobId=state.reviewerJobId,renderAfter=true){
+    if(!jobId||!state.apiOnline||!permitted("review")){
+      state.reviewerJobId=jobId||null;
+      state.reviewerQueue=[];
+      state.reviewerSummary=null;
+      state.reviewerSelectedId=null;
+      state.reviewerComments=[];
+      state.reviewerDiff=null;
+      if(renderAfter) render();
+      return;
+    }
+    state.reviewerJobId=jobId;
+    state.reviewerLoading=true;
+    state.reviewerError="";
+    if(renderAfter) render();
+    try{
+      const response=await api.reviewerQueue(jobId);
+      const prior=state.reviewerSelectedId;
+      state.reviewerQueue=response.data?.queue||[];
+      state.reviewerSummary=response.data?.summary||null;
+      const selected=state.reviewerQueue.find((x)=>x.artworkId===prior)||state.reviewerQueue[0]||null;
+      state.reviewerSelectedId=selected?.artworkId||null;
+      state.reviewerComments=[];
+      state.reviewerDiff=null;
+      if(selected) await loadReviewerDetail(selected.artworkId,false);
+    }catch(e){
+      state.reviewerError=e.message||String(e);
+      state.reviewerQueue=[];
+      state.reviewerSummary=null;
+      state.reviewerSelectedId=null;
+      state.reviewerComments=[];
+      state.reviewerDiff=null;
+    }finally{
+      state.reviewerLoading=false;
+      if(renderAfter) render();
+    }
+  }
+
+  async function loadReviewerDetail(artworkId,renderAfter=true){
+    const selected=(state.reviewerQueue||[]).find((x)=>x.artworkId===artworkId);
+    if(!selected) return;
+    state.reviewerSelectedId=artworkId;
+    state.reviewerComments=[];
+    state.reviewerDiff=null;
+    state.reviewerError="";
+    if(renderAfter) render();
+    const revision=selected.revision;
+    try{
+      const commentsPromise=api.comments(artworkId,revision);
+      const diffPromise=selected.previousRevision
+        ? api.compareArtwork(artworkId,selected.previousRevision,revision)
+        : Promise.resolve(null);
+      const [comments,diff]=await Promise.all([commentsPromise,diffPromise]);
+      if(state.reviewerSelectedId!==artworkId) return;
+      state.reviewerComments=comments?.data||[];
+      state.reviewerDiff=diff?.data||null;
+    }catch(e){
+      if(state.reviewerSelectedId===artworkId) state.reviewerError=e.message||String(e);
+    }finally{
+      if(renderAfter&&state.reviewerSelectedId===artworkId) render();
+    }
+  }
+
+  async function reviewerDecision(decision){
+    const selected=reviewerSelected();
+    if(!permitted("review")||!state.apiOnline||!selected){
+      toast("需要 Reviewer / Admin 权限和有效审核队列。","error");
+      return;
+    }
+    const normalized=String(decision||"").toUpperCase();
+    if(!["APPROVE","REJECT"].includes(normalized)) return;
+    if(selected.fourEyesBlocked){
+      toast("四眼审批要求：当前身份是此 Revision 的提交人，不能作出该稿审批决定。","error");
+      return;
+    }
+    if(normalized==="APPROVE"&&!selected.canApprove){
+      toast("当前稿件未通过全部批准门禁：检查 Preflight 与 Blocking comments。","error");
+      return;
+    }
+    const comment=document.getElementById("reviewer-decision-comment")?.value?.trim()||"";
+    if(normalized==="REJECT"&&!comment){
+      toast("Reject 必须填写明确的退回原因。","error");
+      return;
+    }
+    if(state.reviewerDecisionBusy) return;
+    state.reviewerDecisionBusy=true;
+    render();
+    const jobId=state.reviewerJobId;
+    try{
+      await api.decision(selected.artworkId,normalized,{
+        revision:selected.revision,
+        comment:comment||(normalized==="APPROVE"?"Reviewed individually in Batch Reviewer Center.":"Revision required.")
+      });
+      toast(normalized==="APPROVE"?`${selected.artworkNo} · ${selected.revision} 已独立批准`:`${selected.artworkNo} · ${selected.revision} 已退回`,"success");
+      await loadReviewerQueue(jobId,false);
+      await loadRemoteArtworks("");
+    }catch(e){
+      toast(e.message||String(e),"error");
+    }finally{
+      state.reviewerDecisionBusy=false;
+      render();
+    }
+  }
+
   async function loadBatchJobs(renderAfter=true){
     if(!state.apiOnline||!state.identity){
       state.batchJobs=[];
