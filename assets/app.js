@@ -990,6 +990,11 @@
     if(compareOpacity) compareOpacity.oninput=()=>{state.compareOpacity=Number(compareOpacity.value);const top=document.getElementById("compare-overlay-top");if(top)top.style.opacity=String(state.compareOpacity);};
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
+    bindArtworkElements();
+    const artImageFile=document.getElementById("art-image-file");
+    const artQrImageFile=document.getElementById("art-qr-image-file");
+    if(artImageFile) artImageFile.onchange=async()=>{const file=artImageFile.files?.[0];if(file)await addUploadedArtworkElement(file,"image");};
+    if(artQrImageFile) artQrImageFile.onchange=async()=>{const file=artQrImageFile.files?.[0];if(file)await addUploadedArtworkElement(file,"qr-image");};
     const file=document.getElementById("batch-file");
     const dropzone=document.getElementById("batch-dropzone");
     if(file) file.onchange=async()=>{ if(file.files?.[0]) await importBatch(file.files[0]); };
@@ -1005,7 +1010,175 @@
     }
   }
 
+  function fileToDataUrl(file){
+    return new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(String(reader.result||""));
+      reader.onerror=()=>reject(reader.error||new Error("FILE_READ_FAILED"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageElement(src){
+    return new Promise((resolve,reject)=>{
+      const img=new Image();
+      img.onload=()=>resolve(img);
+      img.onerror=()=>reject(new Error("IMAGE_DECODE_FAILED"));
+      img.src=src;
+    });
+  }
+
+  async function normalizeArtworkImageFile(file){
+    if(!file) throw new Error("请选择图片。");
+    const allowed=["image/png","image/jpeg","image/webp","image/svg+xml"];
+    if(!allowed.includes(file.type)) throw new Error("仅支持 PNG / JPG / WebP / SVG。");
+    if(file.size>8*1024*1024) throw new Error("图片超过 8 MB，请先压缩后再上传。");
+    const raw=await fileToDataUrl(file);
+    const img=await loadImageElement(raw);
+    const maxPx=1200;
+    const scale=Math.min(1,maxPx/Math.max(img.naturalWidth||1,img.naturalHeight||1));
+    const width=Math.max(1,Math.round((img.naturalWidth||1)*scale));
+    const height=Math.max(1,Math.round((img.naturalHeight||1)*scale));
+    const canvas=document.createElement("canvas");
+    canvas.width=width;canvas.height=height;
+    const ctx=canvas.getContext("2d",{alpha:true});
+    ctx.clearRect(0,0,width,height);
+    ctx.drawImage(img,0,0,width,height);
+    let dataUrl=canvas.toDataURL("image/png");
+    let mimeType="image/png";
+    if(dataUrl.length>900000){
+      const white=document.createElement("canvas");
+      white.width=width;white.height=height;
+      const wctx=white.getContext("2d");
+      wctx.fillStyle="#fff";wctx.fillRect(0,0,width,height);wctx.drawImage(canvas,0,0);
+      dataUrl=white.toDataURL("image/jpeg",0.88);
+      mimeType="image/jpeg";
+    }
+    if(dataUrl.length>1200000) throw new Error("图片归一化后仍然过大，请使用更简单的 Logo/图标或降低图片尺寸。");
+    return {dataUrl,mimeType,pixelWidth:width,pixelHeight:height};
+  }
+
+  async function addUploadedArtworkElement(file,type="image"){
+    if(!localArtworkEditable()){toast("当前 Revision 已锁定，不能添加元素。","error");return;}
+    try{
+      const normalized=await normalizeArtworkImageFile(file);
+      const ratio=normalized.pixelWidth/Math.max(1,normalized.pixelHeight);
+      let w=type==="qr-image"?45:Math.min(90,Math.max(35,60));
+      let h=type==="qr-image"?45:w/Math.max(.1,ratio);
+      if(h>90){h=90;w=h*ratio;}
+      const p=defaultElementPlacement(w,h);
+      const el={
+        id:newElementId(),
+        type,
+        name:type==="qr-image"?`QR image · ${file.name}`:file.name,
+        x:p.x,y:p.y,w,h,rotation:0,locked:false,
+        payload:"",
+        ecc:"M",
+        sourceType:"uploaded-raster",
+        mimeType:normalized.mimeType,
+        dataUrl:normalized.dataUrl,
+        pixelWidth:normalized.pixelWidth,
+        pixelHeight:normalized.pixelHeight
+      };
+      artworkElements().push(el);
+      state.selectedElementId=el.id;
+      const saved=persistLocalDraft();
+      render();
+      toast(saved?(type==="qr-image"?"二维码图片已添加":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  function addGeneratedQrElement(){
+    if(!localArtworkEditable()){toast("当前 Revision 已锁定，不能添加元素。","error");return;}
+    const payload=document.getElementById("custom-qr-payload")?.value?.trim()||"";
+    const ecc=String(document.getElementById("custom-qr-ecc")?.value||"M").toUpperCase();
+    if(!payload){toast("请输入二维码内容。","error");return;}
+    try{C.qrMatrix(payload,ecc);}catch(e){toast("二维码内容无法编码："+(e.message||e),"error");return;}
+    const size=45,p=defaultElementPlacement(size,size);
+    const el={
+      id:newElementId(),type:"qr-generated",name:"Generated QR",
+      x:p.x,y:p.y,w:size,h:size,rotation:0,locked:false,
+      payload,ecc,sourceType:"generated-vector",mimeType:"",
+      dataUrl:"",pixelWidth:0,pixelHeight:0
+    };
+    artworkElements().push(el);
+    state.selectedElementId=el.id;
+    persistLocalDraft();
+    render();
+    toast("矢量二维码已添加","success");
+  }
+
+  function deleteSelectedElement(){
+    if(!localArtworkEditable()) return;
+    const index=artworkElements().findIndex((e)=>e.id===state.selectedElementId);
+    if(index<0){toast("请先选择一个元素。","error");return;}
+    artworkElements().splice(index,1);
+    state.selectedElementId=null;
+    persistLocalDraft();
+    render();
+    toast("元素已删除","success");
+  }
+
+  function bindArtworkElements(){
+    document.querySelectorAll("[data-select-element]").forEach((b)=>{
+      b.onclick=()=>{state.selectedElementId=b.dataset.selectElement;render();};
+    });
+    document.querySelectorAll("[data-element-prop]").forEach((el)=>{
+      const apply=()=>{
+        const e=selectedArtworkElement();
+        if(!e||!localArtworkEditable()) return;
+        const key=el.dataset.elementProp;
+        e[key]=["x","y","w","h","rotation"].includes(key)?Number(el.value):el.value;
+        if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
+        persistLocalDraft();
+      };
+      el.oninput=apply;
+      el.onchange=()=>{apply();render();};
+    });
+    const lock=document.querySelector("[data-element-lock]");
+    if(lock) lock.onchange=()=>{
+      const e=selectedArtworkElement();
+      if(!e||!localArtworkEditable()) return;
+      e.locked=Boolean(lock.checked);persistLocalDraft();render();
+    };
+
+    document.querySelectorAll("[data-art-element]").forEach((group)=>{
+      group.onpointerdown=(ev)=>{
+        const id=group.dataset.artElement;
+        const element=artworkElements().find((x)=>x.id===id);
+        if(!element) return;
+        state.selectedElementId=id;
+        if(element.locked||!localArtworkEditable()){render();return;}
+        ev.preventDefault();
+        const svg=group.ownerSVGElement;
+        if(!svg?.createSVGPoint) return;
+        const point=(event)=>{
+          const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;
+          return p.matrixTransform(svg.getScreenCTM().inverse());
+        };
+        const start=point(ev),startX=Number(element.x||0),startY=Number(element.y||0);
+        try{group.setPointerCapture(ev.pointerId);}catch{}
+        group.onpointermove=(move)=>{
+          if(move.pointerId!==ev.pointerId) return;
+          const p=point(move),g=geometry();
+          element.x=Math.max(0,Math.min(g.totalWidth-Math.max(1,Number(element.w||1)),startX+(p.x-start.x)));
+          element.y=Math.max(0,Math.min(g.totalHeight-Math.max(1,Number(element.h||1)),startY+(p.y-start.y)));
+          group.setAttribute("transform",elementTransform(element));
+        };
+        const finish=()=>{
+          group.onpointermove=null;group.onpointerup=null;group.onpointercancel=null;
+          persistLocalDraft();render();
+        };
+        group.onpointerup=finish;group.onpointercancel=finish;
+      };
+    });
+  }
+
   async function handleAction(action){
+    if(action==="upload-image-trigger"){document.getElementById("art-image-file")?.click();return;}
+    if(action==="upload-qr-trigger"){document.getElementById("art-qr-image-file")?.click();return;}
+    if(action==="add-generated-qr") return addGeneratedQrElement();
+    if(action==="delete-element") return deleteSelectedElement();
     if(action==="new-local") return resetLocalArtwork();
     if(action==="save") return saveDraft();
     if(action==="preflight") return runPreflightAction();
