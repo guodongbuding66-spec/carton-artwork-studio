@@ -71,6 +71,7 @@
     pdfxPromotionEvidence: [],
     promotionEvidenceBusy: false,
     selectedElementId: null,
+    selectedElementIds: [],
     historyPast: [],
     historyFuture: []
   };
@@ -192,6 +193,8 @@
     try{
       state.artwork=JSON.parse(snapshot);
       if(state.selectedElementId&&!artworkElements().some(e=>e.id===state.selectedElementId)) state.selectedElementId=null;
+      state.selectedElementIds=(state.selectedElementIds||[]).filter(id=>artworkElements().some(e=>e.id===id));
+      if(state.selectedElementId&&!state.selectedElementIds.includes(state.selectedElementId)) state.selectedElementIds=[state.selectedElementId];
       persistLocalDraft();
       render();
       return true;
@@ -215,6 +218,24 @@
   }
   function selectedArtworkElement(){
     return artworkElements().find((e)=>e.id===state.selectedElementId)||null;
+  }
+  function selectedArtworkElements(){
+    const ids=new Set(state.selectedElementIds||[]);
+    if(state.selectedElementId) ids.add(state.selectedElementId);
+    return artworkElements().filter((e)=>ids.has(e.id));
+  }
+  function isElementSelected(id){
+    return selectedArtworkElements().some((e)=>e.id===id);
+  }
+  function selectOnlyElement(id){
+    state.selectedElementId=id||null;
+    state.selectedElementIds=id?[id]:[];
+  }
+  function toggleElementSelection(id){
+    const ids=new Set(state.selectedElementIds||[]);
+    if(ids.has(id)) ids.delete(id); else ids.add(id);
+    state.selectedElementIds=[...ids];
+    state.selectedElementId=ids.has(id)?id:(state.selectedElementIds.at(-1)||null);
   }
   function newElementId(){
     return "el-"+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36));
@@ -415,10 +436,11 @@
   function renderElementEditor(){
     const elements=artworkElements();
     const selected=selectedArtworkElement();
+    const selectedMany=selectedArtworkElements();
     const locked=isArtworkLocked();
     const rows=[...elements].reverse().map((e)=>{
       const label=e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":e.type==="text"?"TEXT":e.type==="barcode"?"BAR":e.type==="symbol"?"SYM":"IMG";
-      return `<button type="button" class="element-row ${state.selectedElementId===e.id?"active":""} ${e.visible===false?"muted":""}" data-select-element="${esc(e.id)}">
+      return `<button type="button" class="element-row ${isElementSelected(e.id)?"active":""} ${e.visible===false?"muted":""}" data-select-element="${esc(e.id)}">
         <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
         <span class="mono subtle">${esc(e.panelId||"—")}</span>
@@ -426,6 +448,16 @@
       </button>`;
     }).join("");
     const panelOptions=geometry().panels.map(p=>`<option value="${p.id}" ${selected?.panelId===p.id?"selected":""}>${p.id}</option>`).join("");
+    const multiTools=selectedMany.length>1?`
+      <div class="multi-selection-tools">
+        <div class="notice"><strong>${selectedMany.length} 个元素已多选</strong><br>Shift+点击继续增减选择；对齐/分布会以当前选择整体为参考。</div>
+        <div class="align-grid">
+          ${[["multi-align-left","左对齐"],["multi-align-hcenter","水平居中"],["multi-align-right","右对齐"],["multi-align-top","顶对齐"],["multi-align-vcenter","垂直居中"],["multi-align-bottom","底对齐"]].map(([a,n])=>`<button class="tool" data-action="${a}">${n}</button>`).join("")}
+          <button class="tool" data-action="distribute-horizontal" ${selectedMany.length<3?"disabled":""}>水平等距</button>
+          <button class="tool" data-action="distribute-vertical" ${selectedMany.length<3?"disabled":""}>垂直等距</button>
+        </div>
+        <div class="toolbar" style="justify-content:flex-end;margin-top:8px"><button class="btn danger small" data-action="delete-selection">删除所选</button></div>
+      </div>`:"";
     const bindingOptions=(D.artworkBindings||[]).map(b=>`<option value="${esc(b.key)}" ${selected?.bindingKey===b.key?"selected":""}>${esc(b.label)}</option>`).join("");
     const props=selected?`
       <div class="element-properties">
@@ -520,7 +552,7 @@
         <div class="field"><label>&nbsp;</label><button class="btn primary" style="width:100%" data-action="add-generated-qr" ${locked?"disabled":""}>生成矢量 QR</button></div>
       </div>
       <div class="element-list">${rows||'<div class="subtle">还没有自定义元素。</div>'}</div>
-      ${props}
+      ${multiTools}${props}
     `);
   }
 
@@ -619,9 +651,9 @@
     const elements=Array.isArray(artwork.elements)?artwork.elements:[];
     return elements.filter((e)=>e.visible!==false).map((e)=>{
       const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
-      const selected=mode==="editor"&&state.selectedElementId===e.id;
+      const selected=mode==="editor"&&isElementSelected(e.id);
       const border=selected?`<rect data-element-selection x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
-      const resizeHandle=selected&&!e.locked?`<rect data-element-resize="${esc(e.id)}" x="${Math.max(0,w-4)}" y="${Math.max(0,h-4)}" width="8" height="8" rx="1.5" fill="#fff" stroke="#e13b6b" stroke-width="2" vector-effect="non-scaling-stroke" style="cursor:nwse-resize"/>`:"";
+      const resizeHandle=selected&&selectedArtworkElements().length===1&&!e.locked?`<rect data-element-resize="${esc(e.id)}" x="${Math.max(0,w-4)}" y="${Math.max(0,h-4)}" width="8" height="8" rx="1.5" fill="#fff" stroke="#e13b6b" stroke-width="2" vector-effect="non-scaling-stroke" style="cursor:nwse-resize"/>`:"";
       let body="";
       if((e.type==="image"||e.type==="qr-image")&&e.dataUrl){
         body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
