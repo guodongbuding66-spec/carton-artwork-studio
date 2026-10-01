@@ -61,7 +61,7 @@ const barSymbolText=Buffer.from(barSymbolProof).toString("latin1");
 assert.ok(barSymbolText.includes("(10012345000017) Tj"),"ITF-14 human-readable data should be emitted into proof PDF");
 assert.ok((barSymbolText.match(/ re f/g)||[]).length>(text.match(/ re f/g)||[]).length,"Custom barcode should add vector bar rectangles");
 assert.ok((barSymbolText.match(/ m .* l S/g)||[]).length>0,"Handling symbol should add vector line operations");
-const gs1=C.gs1_128Bars("(00)123456789012345675",{moduleMm:.42,heightMm:28});
+const gs1=C.gs1_128Bars("(00)123456789012345675",{moduleMm:.495,heightMm:31.75,quietModules:10});
 const gs1Proof=P.createPdfBytes({
   artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
   customElements:[
