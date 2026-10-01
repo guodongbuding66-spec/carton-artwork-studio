@@ -53,6 +53,15 @@ function validSha(value) {
   return /^[0-9a-f]{64}$/i.test(String(value||""));
 }
 
+function productionWorkflowKey(evidence={}) {
+  return [
+    evidence.printServiceProvider,
+    evidence.ripProduct,
+    evidence.ripVersion,
+    evidence.outputDevice
+  ].map(norm).join("|");
+}
+
 function validateFreshTimestamp(value, maxDays, nowMs, label) {
   const errors=[];
   const testedAt=Date.parse(String(value||""));
@@ -159,8 +168,12 @@ export function summarizePdfxPromotionEvidence(input={}) {
   const uniqueSecondary=new Set(trustedSecondary.map((x)=>String(x.artifactSha256||"").toLowerCase()));
   const sharedRegression=new Set([...uniquePrimary].filter((sha)=>uniqueSecondary.has(sha)));
   const validRip=ripRuns.filter((x)=>validateRipQualificationEvidence(x,nowMs).ok);
+  const validRipWorkflows=new Set(validRip.map(productionWorkflowKey));
   const validTrials=productionTrials.filter((x)=>validateProductionTrialEvidence(x,nowMs).ok);
-  const qualifiedTrials=validTrials.filter((x)=>sharedRegression.has(String(x.artifactSha256||"").toLowerCase()));
+  const qualifiedTrials=validTrials.filter((x)=>
+    sharedRegression.has(String(x.artifactSha256||"").toLowerCase()) &&
+    validRipWorkflows.has(productionWorkflowKey(x))
+  );
 
   const errors=[];
   if(uniquePrimary.size<p.regression.minimumUniqueArtifacts) {
@@ -175,7 +188,7 @@ export function summarizePdfxPromotionEvidence(input={}) {
   if(validRip.length===0) errors.push("At least one current approved printer/RIP qualification is required.");
   if(validTrials.length===0) errors.push("At least one current approved end-to-end production trial is required.");
   if(p.productionTrial.requireQualifiedRegressionArtifact && qualifiedTrials.length===0) {
-    errors.push("Production trial artifact must be one of the same-byte regression artifacts that passed both validators.");
+    errors.push("Production trial must use a same-byte regression artifact that passed both validators and the exact print-provider/RIP/device workflow covered by an approved RIP qualification.");
   }
 
   return {
