@@ -56,6 +56,8 @@
     referenceRecords: [],
     productionPolicies: [],
     productionReadiness: { ready:false, gates:[] },
+    productionQualification: null,
+    productionQualificationBusy: false,
     remoteRevisions: [],
     compareFrom: null,
     compareTo: null,
@@ -189,6 +191,7 @@
   function cloudArtworkWritable(){return state.apiOnline&&permitted("artworkWrite");}
   function cloudBatchWritable(){return state.apiOnline&&permitted("batchWrite");}
   function persistLocalDraft(){
+    state.productionQualification=null;
     try{localStorage.setItem("cas:draft",JSON.stringify(state.artwork));return true;}
     catch{return false;}
   }
@@ -702,8 +705,8 @@
           <button class="tool" data-action="distribute-vertical" ${selectedMany.length<3?"disabled":""}>垂直等距</button>
         </div>
         <div class="toolbar" style="justify-content:flex-end;margin-top:8px">
-          <button class="btn small" data-action="group-selection" ${sameSelectionPanel(selectedMany)?"":"disabled"}>Group 组合</button>
-          <button class="btn small" data-action="ungroup-selection" ${selectedMany.some(e=>e.groupId)?"":"disabled"}>Ungroup</button>
+          <button class="btn small" data-action="group-selection" ${sameSelectionPanel(selectedMany)&&!selectedMany.some(e=>e.blockType)?"":"disabled"}>Group 组合</button>
+          <button class="btn small" data-action="ungroup-selection" ${selectedMany.some(e=>e.groupId)&&!selectedMany.some(e=>e.blockType)?"":"disabled"}>Ungroup</button>
           <button class="btn danger small" data-action="delete-selection">删除所选</button>
         </div>
       </div>`:"";
@@ -715,8 +718,13 @@
       ? D.effectiveImageDpi(selected)
       : null;
     const selectedProductionQualification=selected?D.productionElementQualification(selected):null;
+    const selectedBlockItems=selected?.blockType
+      ? artworkElements().filter(e=>String(e.blockType||"")===String(selected.blockType||"")&&String(e.groupId||"")===String(selected.groupId||""))
+      : [];
+    const selectedBlockLocked=selectedBlockItems.length>0&&selectedBlockItems.every(e=>e.locked);
     const props=selected?`
       <div class="element-properties">
+        ${selected.locked?'<div class="notice warn"><strong>LOCKED</strong>：该对象不能修改属性、移动、Resize、对齐或删除；先解除 Lock。</div>':""}
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
         <div class="field"><label>Panel 面板</label><select class="select" data-element-prop="panelId">${panelOptions}</select></div>
         <div class="row2">
@@ -725,6 +733,17 @@
         </div>
         <label class="toggle-line"><input type="checkbox" data-element-constrain ${selected.constrainToPanel!==false?"checked":""}/> 限制在所属面板内</label>
         <label class="toggle-line"><input type="checkbox" data-element-safe-exempt ${selected.safeAreaExempt?"checked":""}/> 允许超出 Safe Margin（显式豁免）</label>
+        ${selected.blockType?`
+          <div class="notice ${selectedBlockLocked?"success":""}">
+            <strong>Controlled Block · ${esc(selected.blockType)}</strong><br>
+            Version ${esc(selected.blockVersion||"—")} · ${selectedBlockItems.length} element(s) · ${selectedBlockLocked?"LOCKED":"EDITABLE"}<br>
+            受控 Block 不允许普通 Group / Ungroup，避免破坏字段完整性。
+          </div>
+          <div class="row2">
+            <button class="btn small" data-action="lock-controlled-block" ${selectedBlockLocked?"disabled":""}>Lock Whole Block</button>
+            <button class="btn small" data-action="unlock-controlled-block" ${!selectedBlockLocked?"disabled":""}>Unlock Whole Block</button>
+          </div>
+        `:""}
         ${selected.type==="text"?`
           <div class="field"><label>Data Source 数据源</label><select class="select" data-element-prop="bindingKey">${bindingOptions}</select></div>
           ${selected.bindingKey?`<div class="notice binding-preview"><strong>Resolved</strong><br><span class="mono">${esc(D.resolvedElementText(selected,state.artwork,state.factories)||"—")}</span></div>`:""}
@@ -1095,8 +1114,43 @@
 
   function renderPreflight(){
     const groups=checks(),s=summary();
+    const q=state.productionQualification;
+    const qReport=q?.qualification||null;
+    const serverGates=q?.gates||[];
+    const serverCard=state.remoteArtworkId?`
+      <section class="pf-group server-qualification">
+        <div class="pf-group-title" style="display:flex;align-items:center;gap:6px">
+          Server Production Qualification
+          <span class="spacer"></span>
+          ${q?`<span class="badge ${qReport?.ok?"green":"red"}">${qReport?.ok?"ARTWORK QUALIFIED":"ARTWORK BLOCKED"}</span>`:""}
+        </div>
+        <div style="padding:8px 10px;border-bottom:1px solid #edf1f4">
+          <button class="btn small" style="width:100%" data-action="server-production-qualification" ${state.productionQualificationBusy?"disabled":""}>
+            ${state.productionQualificationBusy?"Checking server…":"Refresh Server Qualification"}
+          </button>
+        </div>
+        ${q?`
+          <div class="pf-item">
+            <i class="pf-dot ${q.finalRenderReady?"pass":"warning"}"></i>
+            <div>
+              <div class="pf-title">Final Render ${q.finalRenderReady?"READY":"NOT READY"}</div>
+              <div class="pf-detail">Renderer ${esc(q.rendererVersion||"—")} · Revision ${esc(q.revision||"—")}</div>
+            </div>
+          </div>
+          ${serverGates.map(g=>`<div class="pf-item">
+            <i class="pf-dot ${g.ok?"pass":"error"}"></i>
+            <div><div class="pf-title">${esc(g.label)}</div><div class="pf-detail">${esc(g.detail)}</div></div>
+          </div>`).join("")}
+          ${(qReport?.customElements?.items||[]).filter(x=>!x.qualified).map(x=>`<div class="pf-item">
+            <i class="pf-dot error"></i>
+            <div><div class="pf-title">${esc(x.name||x.type)} <span class="badge red">SERVER BLOCK</span></div><div class="pf-detail">${esc(x.reason||x.errorCode||"Not production qualified")}</div></div>
+          </div>`).join("")}
+        `:'<div class="pf-item"><div><div class="pf-title">Not checked yet</div><div class="pf-detail">Run Server Qualification after synchronizing the Artwork.</div></div></div>'}
+      </section>
+    `:`<section class="pf-group"><div class="pf-group-title">Server Production Qualification</div><div class="pf-item"><div><div class="pf-title">Cloud Artwork required</div><div class="pf-detail">保存/同步到 D1 后可运行服务器权威资格检查。</div></div></div></section>`;
     return `<div class="preflight-summary"><div class="pf-stat"><div class="pf-num" style="color:#bc2f3b">${s.error}</div><div class="pf-label">Errors</div></div><div class="pf-stat"><div class="pf-num" style="color:#a86b00">${s.warning}</div><div class="pf-label">Warnings</div></div><div class="pf-stat"><div class="pf-num" style="color:#16835d">${s.pass}</div><div class="pf-label">Passed</div></div></div>
       <div style="padding:10px;border-bottom:1px solid #e8edf2"><button class="btn primary" style="width:100%" data-action="preflight" ${state.pfBusy?"disabled":""}>${state.pfBusy?"Checking…":"Run Preflight"}</button></div>
+      ${serverCard}
       ${Object.entries(groups).map(([name,items])=>`<section class="pf-group"><div class="pf-group-title">${name}</div>${items.map(i=>`<div class="pf-item"><i class="pf-dot ${i.status}"></i><div><div class="pf-title">${esc(i.title)} ${i.blocking&&i.status==="error"?'<span class="badge red">BLOCKING</span>':""}</div><div class="pf-detail">${esc(i.detail)}</div></div></div>`).join("")}</section>`).join("")}`;
   }
 
@@ -2013,7 +2067,7 @@
   }
   function fitSelectedTextElement(){
     const element=selectedArtworkElement();
-    if(!element||element.type!=="text"||!localArtworkEditable()) return;
+    if(!element||element.type!=="text"||!localArtworkEditable()||element.locked) return;
     pushArtworkHistory();
     const result=fitTextElementInPlace(element);
     persistLocalDraft();render();
@@ -2071,7 +2125,7 @@
 
   function reorderSelectedElement(mode){
     const list=artworkElements(),index=list.findIndex(e=>e.id===state.selectedElementId);
-    if(index<0||!localArtworkEditable()) return;
+    if(index<0||!localArtworkEditable()||list[index]?.locked) return;
     pushArtworkHistory();
     const [item]=list.splice(index,1);
     let next=index;
@@ -2139,6 +2193,7 @@
   function groupSelectedElements(){
     const items=selectedArtworkElements();
     if(items.length<2||!localArtworkEditable()) return;
+    if(items.some(e=>e.blockType)){toast("受控 Block 不能用普通 Group 重组。请保持 Block 结构完整。","error");return;}
     if(!sameSelectionPanel(items)){toast("Group 要求元素位于同一纸箱面板。","error");return;}
     pushArtworkHistory();
     const groupId=newGroupId();
@@ -2146,7 +2201,9 @@
     persistLocalDraft();render();toast(`已组合 ${items.length} 个元素`,"success");
   }
   function ungroupSelectedElements(){
-    const ids=new Set(selectedArtworkElements().map(e=>String(e.groupId||"")).filter(Boolean));
+    const selectedItems=selectedArtworkElements();
+    if(selectedItems.some(e=>e.blockType)){toast("受控 Block 不能解除组合。可以整块复制、锁定或删除。","error");return;}
+    const ids=new Set(selectedItems.map(e=>String(e.groupId||"")).filter(Boolean));
     if(!ids.size||!localArtworkEditable()) return;
     pushArtworkHistory();
     let count=0;
@@ -2154,6 +2211,26 @@
       if(ids.has(String(item.groupId||""))){item.groupId="";count+=1;}
     }
     persistLocalDraft();render();toast(`已解除 ${count} 个元素的组合`,"success");
+  }
+
+  function controlledBlockItemsFor(element=selectedArtworkElement()){
+    if(!element?.blockType||!element?.groupId) return [];
+    return artworkElements().filter(e=>
+      String(e.blockType||"")===String(element.blockType||"")&&
+      String(e.groupId||"")===String(element.groupId||"")
+    );
+  }
+
+  function setSelectedControlledBlockLock(locked){
+    if(!localArtworkEditable()) return;
+    const items=controlledBlockItemsFor();
+    if(!items.length){toast("当前选择不是受控 Block。","error");return;}
+    pushArtworkHistory();
+    for(const item of items) item.locked=Boolean(locked);
+    state.selectedElementIds=items.map(e=>e.id);
+    state.selectedElementId=items.at(-1)?.id||null;
+    persistLocalDraft();render();
+    toast(locked?"受控 Block 已整块锁定":"受控 Block 已整块解锁","success");
   }
 
   function selectionMoveLimits(items){
@@ -2239,7 +2316,7 @@
 
   function alignSelectedElement(mode){
     const e=selectedArtworkElement();
-    if(!e||!localArtworkEditable()) return;
+    if(!e||!localArtworkEditable()||e.locked) return;
     pushArtworkHistory();
     const b=elementBounds(e),v=D.elementVisualBounds(e);
     if(mode==="left")e.x=Number(e.x||0)+(b.x-v.left);
@@ -2325,7 +2402,7 @@
       el.onfocus=()=>{if(localArtworkEditable())pushArtworkHistory();};
       const apply=()=>{
         const e=selectedArtworkElement();
-        if(!e||!localArtworkEditable()) return;
+        if(!e||!localArtworkEditable()||e.locked) return;
         const key=el.dataset.elementProp;
         if(key==="panelId"){
           placeElementInPanel(e,el.value);
@@ -2348,42 +2425,46 @@
     const lock=document.querySelector("[data-element-lock]");
     if(lock) lock.onchange=()=>{
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      if(e.blockType&&e.groupId){
+        setSelectedControlledBlockLock(Boolean(lock.checked));
+        return;
+      }
       pushArtworkHistory();
       e.locked=Boolean(lock.checked);persistLocalDraft();render();
     };
     const visible=document.querySelector("[data-element-visible]");
     if(visible) visible.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.visible=Boolean(visible.checked);persistLocalDraft();render();
     };
     const hri=document.querySelector("[data-element-hri]");
     if(hri) hri.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.humanReadable=Boolean(hri.checked);syncBarcodeElementSize(e);persistLocalDraft();render();
     };
     const bearer=document.querySelector("[data-element-bearer]");
     if(bearer) bearer.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.bearerBars=Boolean(bearer.checked);syncBarcodeElementSize(e);persistLocalDraft();render();
     };
     const constrain=document.querySelector("[data-element-constrain]");
     if(constrain) constrain.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.constrainToPanel=Boolean(constrain.checked);clampElementToBounds(e);persistLocalDraft();render();
     };
     const safeExempt=document.querySelector("[data-element-safe-exempt]");
     if(safeExempt) safeExempt.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.safeAreaExempt=Boolean(safeExempt.checked);persistLocalDraft();render();
     };
     const wrapText=document.querySelector("[data-element-wrap]");
     if(wrapText) wrapText.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.wrapText=Boolean(wrapText.checked);
       if(e.autoFitText) fitTextElementInPlace(e);
@@ -2391,7 +2472,7 @@
     };
     const autoFit=document.querySelector("[data-element-autofit]");
     if(autoFit) autoFit.onchange=()=>{
-      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable())return;
+      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable()||e.locked)return;
       pushArtworkHistory();
       e.autoFitText=Boolean(autoFit.checked);
       if(e.autoFitText) fitTextElementInPlace(e);
@@ -2591,6 +2672,8 @@
     if(action==="copy-opposite-panel") return cloneSelectionToOppositePanel();
     if(action==="group-selection") return groupSelectedElements();
     if(action==="ungroup-selection") return ungroupSelectedElements();
+    if(action==="lock-controlled-block") return setSelectedControlledBlockLock(true);
+    if(action==="unlock-controlled-block") return setSelectedControlledBlockLock(false);
     if(action==="fit-text-element") return fitSelectedTextElement();
     if(action==="layer-front") return reorderSelectedElement("front");
     if(action==="layer-back") return reorderSelectedElement("back");
@@ -2632,6 +2715,7 @@
     if(action==="refresh-dashboard") return loadRemoteArtworks();
     if(action==="refresh-audit") return loadAudit();
     if(action==="refresh-system-readiness") return loadSystemReadiness();
+    if(action==="server-production-qualification") return loadProductionQualification();
     if(action==="run-readiness-probe") return runSystemReadinessProbe();
     if(action==="refresh-promotion-evidence") return loadPromotionEvidence();
     if(action==="upload-promotion-evidence") return uploadPromotionEvidence();
@@ -2942,6 +3026,29 @@
     }catch(e){toast(e.message||String(e),"error");}
   }
 
+  async function loadProductionQualification(renderAfter=true,{silent=false}={}){
+    if(!state.apiOnline||!state.identity||!state.remoteArtworkId){
+      state.productionQualification=null;
+      state.productionQualificationBusy=false;
+      if(renderAfter) render();
+      return null;
+    }
+    state.productionQualificationBusy=true;
+    if(renderAfter) render();
+    try{
+      const response=await api.productionQualification(state.remoteArtworkId);
+      state.productionQualification=response.data||null;
+      return state.productionQualification;
+    }catch(e){
+      state.productionQualification=null;
+      if(!silent) toast("Server Production Qualification failed: "+(e.message||e),"error");
+      return null;
+    }finally{
+      state.productionQualificationBusy=false;
+      if(renderAfter) render();
+    }
+  }
+
   async function loadProductionReadiness(renderAfter=true){
     if(!state.apiOnline||!state.identity){
       state.productionPolicies=[];
@@ -3109,6 +3216,7 @@
       state.page="artwork";
       state.tab="artwork";
       await loadComments();
+      await loadProductionQualification(false,{silent:true});
       render();
     }catch(e){toast(e.message||String(e),"error");}
   }
@@ -3447,6 +3555,7 @@
     state.apiBusy=true;render();
     try{
       const remote=await ensureRemoteArtwork();
+      if(state.remoteArtworkId) await loadProductionQualification(false,{silent:true});
       toast(remote?"草稿已同步到 D1":"本地草稿已保存","success");
     }catch(e){
       toast("云端同步失败，本地草稿已保留："+(e.message||String(e)),"error");
@@ -3473,6 +3582,7 @@
       if(cloudArtworkWritable()){
         if(!state.remoteArtworkId) await ensureRemoteArtwork();
         await persistPreflight();
+        await loadProductionQualification(false,{silent:true});
       }
       await new Promise(r=>setTimeout(r,180));
       const s=summary();

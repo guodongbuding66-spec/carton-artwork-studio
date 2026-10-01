@@ -93,16 +93,7 @@ export function prepareProductionCustomElements(artwork,factories=[]){
   });
 }
 
-export function renderEmbeddedArtworkPdf({
-  snapshot,
-  metadata={},
-  fontBytes,
-  iccBytes=null,
-  pdfxProfile="",
-  outputConditionIdentifier="",
-  qrEcc="M",
-  mode="production"
-}) {
+function hydrateProductionContext(snapshot,metadata={}){
   const s=snapshot||{};
   const artwork=D.artworkFromCanonical(s,{
     sku:metadata.sku,
@@ -119,23 +110,135 @@ export function renderEmbeddedArtworkPdf({
     crn:s.factory.crn,
     country:s.factory.country
   }:null;
-  const factories=factory?[factory]:[];
+  return {snapshot:s,artwork,factories:factory?[factory]:[]};
+}
 
-  const customElements=prepareProductionCustomElements(artwork,factories);
-  const productionArtwork={...artwork,elements:customElements};
+function publicCheck(check){
+  return {
+    id:String(check?.id||""),
+    title:String(check?.title||""),
+    status:String(check?.status||""),
+    detail:String(check?.detail||""),
+    category:String(check?.category||""),
+    blocking:Boolean(check?.blocking)
+  };
+}
+
+export function qualifyProductionArtwork({snapshot,metadata={}}){
+  const {artwork,factories}=hydrateProductionContext(snapshot,metadata);
+  const visible=(Array.isArray(artwork.elements)?artwork.elements:[]).filter(e=>e?.visible!==false);
+  const elementQualifications=[];
+  const resolvedElements=[];
+
+  for(const element of visible){
+    const qualification=D.productionElementQualification(element);
+    const item={
+      id:String(element.id||""),
+      name:String(element.name||element.type||""),
+      type:String(element.type||""),
+      panelId:String(element.panelId||""),
+      qualified:Boolean(qualification.qualified),
+      mode:String(qualification.mode||""),
+      reason:String(qualification.reason||""),
+      errorCode:"",
+      errorDetail:null,
+      placedSize:{
+        w:Number(element.w||0),
+        h:Number(element.h||0)
+      },
+      resolvedSize:null
+    };
+    if(!qualification.qualified){
+      elementQualifications.push(item);
+      resolvedElements.push({...element});
+      continue;
+    }
+    try{
+      const prepared=prepareProductionCustomElements({...artwork,elements:[element]},factories)[0];
+      resolvedElements.push(prepared);
+      item.resolvedSize={w:Number(prepared?.w||0),h:Number(prepared?.h||0)};
+    }catch(e){
+      item.qualified=false;
+      item.reason=String(e?.code||e?.message||"CUSTOM_ELEMENT_PREPARE_FAILED");
+      item.errorCode=String(e?.code||e?.message||"CUSTOM_ELEMENT_PREPARE_FAILED");
+      item.errorDetail=e?.detail??null;
+      resolvedElements.push({...element});
+    }
+    elementQualifications.push(item);
+  }
+
+  const productionArtwork={...artwork,elements:resolvedElements};
   const preflight=D.runPreflight(productionArtwork,factories);
   const preflightSummary=D.preflightSummary(preflight);
-  if(preflightSummary.blocking>0){
+  const allChecks=Object.values(preflight).flat();
+  const blockingChecks=allChecks.filter(x=>x.status==="error"&&x.blocking).map(publicCheck);
+  const warningChecks=allChecks.filter(x=>x.status==="warning").map(publicCheck);
+  const unqualified=elementQualifications.filter(x=>!x.qualified);
+
+  return {
+    ok:unqualified.length===0&&preflightSummary.blocking===0,
+    report:{
+      ok:unqualified.length===0&&preflightSummary.blocking===0,
+      rendererVersion:"pdfx4-embedded-truetype-2.1.0",
+      revision:String(productionArtwork.revision||""),
+      customElements:{
+        visible:visible.length,
+        qualified:elementQualifications.length-unqualified.length,
+        unqualified:unqualified.length,
+        items:elementQualifications
+      },
+      preflight:{
+        summary:preflightSummary,
+        blockingChecks,
+        warningChecks
+      }
+    },
+    artwork:productionArtwork,
+    factories,
+    preflight,
+    elementQualifications
+  };
+}
+
+export function renderEmbeddedArtworkPdf({
+  snapshot,
+  metadata={},
+  fontBytes,
+  iccBytes=null,
+  pdfxProfile="",
+  outputConditionIdentifier="",
+  qrEcc="M",
+  mode="production"
+}) {
+  const qualification=qualifyProductionArtwork({snapshot,metadata});
+  const productionArtwork=qualification.artwork;
+  const factories=qualification.factories;
+  const unqualified=qualification.elementQualifications.filter(x=>!x.qualified);
+  if(unqualified.length){
+    const customPolicyFailures=unqualified.filter(x=>
+      ["UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED","CUSTOM_ELEMENT_TYPE_NOT_PRODUCTION_QUALIFIED","CUSTOM_BOLD_FONT_NOT_QUALIFIED"].includes(x.reason)
+    );
+    const first=unqualified[0];
+    const code=customPolicyFailures.length
+      ? "PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED"
+      : (first.errorCode||first.reason||"PRODUCTION_CUSTOM_ELEMENT_INVALID");
+    const error=new Error(code);
+    error.code=code;
+    error.detail=unqualified;
+    throw error;
+  }
+  if(qualification.report.preflight.summary.blocking>0){
     const error=new Error("PRODUCTION_PREFLIGHT_BLOCKED");
     error.code="PRODUCTION_PREFLIGHT_BLOCKED";
-    error.detail=Object.values(preflight).flat().filter(x=>x.status==="error"&&x.blocking);
+    error.detail=qualification.report.preflight.blockingChecks;
     throw error;
   }
 
+  const customElements=productionArtwork.elements||[];
   const geometry=D.sideSealGeometry(productionArtwork);
   const computed=D.computed(productionArtwork,factories);
-  const codeModel=C.code128Bars(artwork.barcode,{moduleMm:.42,heightMm:25});
-  const qrModel=C.qrMatrix(artwork.qr,qrEcc);
+  const codeModel=C.code128Bars(productionArtwork.barcode,{moduleMm:.42,heightMm:25});
+  const qrModel=C.qrMatrix(productionArtwork.qr,qrEcc);
   const bytes=P.createPdfBytes({
     artwork:productionArtwork,
     geometry,
@@ -148,7 +251,7 @@ export function renderEmbeddedArtworkPdf({
     iccBytes,
     pdfxProfile,
     outputConditionIdentifier,
-    documentTitle:`${artwork.sku} ${artwork.revision}`
+    documentTitle:`${productionArtwork.sku} ${productionArtwork.revision}`
   });
   return {
     bytes,

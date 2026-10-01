@@ -4,7 +4,7 @@ import { parsePolicyConfig, validateProductionPolicy, summarizeProductionReadine
 import { diffJson } from "./diff.js";
 import { EXPECTED_LATEST_MIGRATION, buildSystemReadiness } from "./system-readiness.js";
 import { inspectProductionAsset, safeAssetCode } from "./production-assets.js";
-import { renderEmbeddedArtworkPdf } from "./production-renderer.js";
+import { renderEmbeddedArtworkPdf, qualifyProductionArtwork } from "./production-renderer.js";
 import { runExternalPdfxValidation, validateValidatorConfig } from "./pdfx-validator.js";
 import { PDFX_PRODUCTION_PROMOTION_POLICY } from "./pdfx-promotion-policy.js";
 import { collectPdfxPromotionReadiness } from "./pdfx-promotion-readiness.js";
@@ -1408,6 +1408,108 @@ export default {
           try{report=JSON.parse(x.reportJson||"{}");}catch{}
           return {...x,report};
         })});
+      }
+
+      const productionQualificationMatch=/^\/api\/artworks\/([^/]+)\/production-qualification$/.exec(url.pathname);
+      if(request.method==="GET"&&productionQualificationMatch){
+        const artworkId=productionQualificationMatch[1];
+        const artwork=await env.DB.prepare(`
+          SELECT id,sku,contract_no AS contractNo,factory_id AS factoryId,status,current_revision AS currentRevision,
+                 canonical_data_json AS canonicalDataJson
+          FROM artworks WHERE id=?
+        `).bind(artworkId).first();
+        if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
+
+        const [{results:policyRows},approvedAssets,revision,unresolved]=await Promise.all([
+          env.DB.prepare(`
+            SELECT code,display_name AS displayName,status,config_json AS configJson,
+                   approved_by AS approvedBy,approved_at AS approvedAt
+            FROM production_policies ORDER BY code
+          `).all(),
+          loadApprovedProductionAssets(env),
+          env.DB.prepare(
+            "SELECT status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
+          ).bind(artworkId,artwork.currentRevision).first(),
+          env.DB.prepare(`
+            SELECT COUNT(*) AS count FROM comments
+            WHERE artwork_id=? AND revision=? AND blocking=1 AND resolved=0
+          `).bind(artworkId,artwork.currentRevision).first()
+        ]);
+
+        let qualification;
+        try{
+          qualification=qualifyProductionArtwork({
+            snapshot:parseJsonObject(artwork.canonicalDataJson),
+            metadata:{
+              sku:artwork.sku,
+              contractNo:artwork.contractNo,
+              factoryId:artwork.factoryId,
+              revision:artwork.currentRevision,
+              status:artwork.status
+            }
+          });
+        }catch(e){
+          return err(409,"PRODUCTION_QUALIFICATION_FAILED","Authoritative production qualification could not be evaluated.",e.message||String(e));
+        }
+
+        const readiness=summarizeProductionReadiness(policyRows,undefined,approvedAssets);
+        const r2Ready=Boolean(env.ARTWORK_FILES)&&env.ARTIFACT_STORE_KIND==="R2";
+        const gates=[
+          {
+            id:"artwork-approved",
+            label:"Artwork approved",
+            ok:String(artwork.status||"").toUpperCase()==="APPROVED",
+            detail:`Artwork status: ${String(artwork.status||"MISSING").toUpperCase()}.`
+          },
+          {
+            id:"revision-approved",
+            label:"Current Revision approved",
+            ok:String(revision?.status||"").toUpperCase()==="APPROVED",
+            detail:`Revision ${artwork.currentRevision}: ${String(revision?.status||"MISSING").toUpperCase()}.`
+          },
+          {
+            id:"blocking-comments",
+            label:"Blocking comments resolved",
+            ok:Number(unresolved?.count||0)===0,
+            detail:`${Number(unresolved?.count||0)} unresolved blocking comment(s).`
+          },
+          {
+            id:"production-policy-readiness",
+            label:"Production policies and pinned assets",
+            ok:Boolean(readiness.ready),
+            detail:readiness.ready
+              ?"All production policy gates are approved and valid."
+              :"One or more production policy / pinned asset gates are incomplete."
+          },
+          {
+            id:"artwork-production-qualification",
+            label:"Artwork production qualification",
+            ok:Boolean(qualification.report.ok),
+            detail:qualification.report.ok
+              ?"Resolved production geometry and custom-element allowlist pass."
+              :`${qualification.report.customElements.unqualified} unqualified element(s); ${qualification.report.preflight.summary.blocking} blocking Preflight check(s).`
+          },
+          {
+            id:"r2-artifact-store",
+            label:"Authoritative R2 artifact store",
+            ok:r2Ready,
+            detail:r2Ready
+              ?"R2 binding is available for authoritative production artifacts."
+              :`Artifact store is ${env.ARTIFACT_STORE_KIND||"NONE"}; final Production requires R2.`
+          }
+        ];
+
+        return json({data:{
+          artworkId,
+          revision:artwork.currentRevision,
+          artworkStatus:String(artwork.status||"").toUpperCase(),
+          rendererVersion:"pdfx4-embedded-truetype-2.1.0",
+          qualification:qualification.report,
+          productionReadiness:readiness,
+          gates,
+          finalRenderReady:gates.every(x=>x.ok),
+          note:"This endpoint is read-only. Final Production render re-verifies approved asset bytes and PDF/X structural gates."
+        }});
       }
 
       const productionRenderMatch=/^\/api\/artworks\/([^/]+)\/render-production-pdf$/.exec(url.pathname);
