@@ -335,27 +335,27 @@
         }
       } else if(element.type==="barcode"&&element.barcodeModel?.bars?.length) {
         const model=element.barcodeModel;
+        const sym=String(element.symbology||model.symbology||"CODE128B").toUpperCase();
         const hri=element.humanReadable!==false;
-        const boxW=Math.max(1,Number(element.w||1)),boxH=Math.max(1,Number(element.h||1));
-        const hriH=hri?Math.min(8,boxH*.22):0;
-        const bearer= model.bearerBars ? Number(model.bearerBarThicknessMm||0) : 0;
-        const physicalH=Math.max(1,Number(model.heightMm||1)+bearer*2);
-        const maxW=Math.max(1,boxW-4),maxH=Math.max(1,boxH-hriH-3);
-        const sx=maxW/Math.max(1,Number(model.widthMm||1));
-        const sy=maxH/physicalH;
+        const bearer=model.bearerBars?Number(model.bearerBarThicknessMm||0):0;
+        const hriFontMm=sym==="ITF14"?4:3.2;
+        const hriGapMm=sym==="ITF14"?1.02:1;
+        const hriBlock=hri?hriGapMm+hriFontMm*1.35:0;
+        const barY=hriBlock+bearer;
         ops.push("q");
         ops.push(`${m.co.toFixed(8)} ${m.si.toFixed(8)} ${(-m.si).toFixed(8)} ${m.co.toFixed(8)} ${m.e.toFixed(3)} ${m.f.toFixed(3)} cm`);
         ops.push("0 g");
         if(model.bearerBars&&bearer>0){
-          ops.push(rectOp(2,hriH+2,maxW,Math.max(.12,bearer*sy),true));
-          ops.push(rectOp(2,hriH+2+(bearer+Number(model.heightMm||1))*sy,maxW,Math.max(.12,bearer*sy),true));
+          ops.push(rectOp(0,hriBlock,Number(model.widthMm||1),bearer,true));
+          ops.push(rectOp(0,hriBlock+bearer+Number(model.heightMm||1),Number(model.widthMm||1),bearer,true));
         }
         for(const b of model.bars){
-          ops.push(rectOp(2+Number(b.x||0)*sx,hriH+2+bearer*sy,Math.max(.12,Number(b.w||0)*sx),Math.max(.5,Number(b.h||0)*sy),true));
+          ops.push(rectOp(Number(b.x||0),barY+Number(b.y||0),Math.max(.01,Number(b.w||0)),Math.max(.01,Number(b.h||0)),true));
         }
         if(hri){
           const label=String(model.hri||model.payload||element.payload||"");
-          ops.push(writeText(2,2,7,label,0));
+          const fontPt=hriFontMm*72/25.4;
+          ops.push(writeText(0,.35,fontPt,label,0));
         }
         ops.push("Q");
       } else if(element.type==="symbol"&&element.symbolKey) {
