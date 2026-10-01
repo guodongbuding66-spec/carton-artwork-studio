@@ -295,15 +295,57 @@
     e.x=p.x+(p.w-w)/2;
     e.y=p.y+(p.h-h)/2;
   }
-  function snapElementPosition(e,x,y){
+  function snapElementPosition(e,x,y,ignoreIds=[]){
     const b=elementBounds(e),w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1)),snap=4;
-    let nx=Math.max(b.x,Math.min(b.x+b.w-w,x));
-    let ny=Math.max(b.y,Math.min(b.y+b.h-h,y));
-    const xs=[b.x,b.x+b.w-w,b.x+(b.w-w)/2];
-    const ys=[b.y,b.y+b.h-h,b.y+(b.h-h)/2];
-    for(const v of xs) if(Math.abs(nx-v)<=snap){nx=v;break;}
-    for(const v of ys) if(Math.abs(ny-v)<=snap){ny=v;break;}
-    return {x:nx,y:ny};
+    const rawX=Math.max(b.x,Math.min(b.x+b.w-w,x));
+    const rawY=Math.max(b.y,Math.min(b.y+b.h-h,y));
+    const ignore=new Set(ignoreIds);
+    const xCandidates=[
+      {position:b.x,line:b.x},
+      {position:b.x+b.w-w,line:b.x+b.w},
+      {position:b.x+(b.w-w)/2,line:b.x+b.w/2}
+    ];
+    const yCandidates=[
+      {position:b.y,line:b.y},
+      {position:b.y+b.h-h,line:b.y+b.h},
+      {position:b.y+(b.h-h)/2,line:b.y+b.h/2}
+    ];
+    const siblings=artworkElements().filter(other=>
+      other.id!==e.id&&!ignore.has(other.id)&&other.visible!==false&&
+      String(other.panelId||"")===String(e.panelId||"")
+    );
+    for(const other of siblings){
+      const ow=Math.max(1,Number(other.w||1)),oh=Math.max(1,Number(other.h||1));
+      const vertical=[Number(other.x||0),Number(other.x||0)+ow/2,Number(other.x||0)+ow];
+      const horizontal=[Number(other.y||0),Number(other.y||0)+oh/2,Number(other.y||0)+oh];
+      for(const line of vertical) for(const anchor of [0,w/2,w]) xCandidates.push({position:line-anchor,line});
+      for(const line of horizontal) for(const anchor of [0,h/2,h]) yCandidates.push({position:line-anchor,line});
+    }
+    const nearest=(raw,candidates,min,max)=>{
+      let best=null,bestDist=Infinity;
+      for(const candidate of candidates){
+        if(candidate.position<min-.001||candidate.position>max+.001) continue;
+        const dist=Math.abs(raw-candidate.position);
+        if(dist<=snap&&dist<bestDist){best=candidate;bestDist=dist;}
+      }
+      return best;
+    };
+    const xBest=nearest(rawX,xCandidates,b.x,b.x+b.w-w);
+    const yBest=nearest(rawY,yCandidates,b.y,b.y+b.h-h);
+    const nx=xBest?xBest.position:rawX;
+    const ny=yBest?yBest.position:rawY;
+    const guides=[];
+    if(xBest) guides.push({axis:"x",value:xBest.line,from:b.y,to:b.y+b.h});
+    if(yBest) guides.push({axis:"y",value:yBest.line,from:b.x,to:b.x+b.w});
+    return {x:nx,y:ny,guides};
+  }
+  function updateSmartGuideLayer(svg,guides=[]){
+    const layer=svg?.querySelector?.("#smart-guide-layer");
+    if(!layer)return;
+    layer.innerHTML=guides.map(g=>g.axis==="x"
+      ? `<line x1="${g.value}" y1="${g.from}" x2="${g.value}" y2="${g.to}" stroke="#e13b6b" stroke-width="1.2" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>`
+      : `<line x1="${g.from}" y1="${g.value}" x2="${g.to}" y2="${g.value}" stroke="#e13b6b" stroke-width="1.2" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>`
+    ).join("");
   }
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
   function productionPolicy(code){return state.productionPolicies.find(x=>x.code===code)||null;}
@@ -849,7 +891,7 @@
         ${note}
         <g transform="translate(${g.H*.55} ${g.H+g.W*.56}) rotate(90)"><text font-size="14">CRN ${esc(c.crn)}</text></g>
       </g>
-      ${code}${custom}${watermark}
+      ${code}${custom}${mode==="editor"?'<g id="smart-guide-layer" pointer-events="none"></g>':""}${watermark}
     </svg>`;
   }
 
@@ -1945,8 +1987,16 @@
           render();
           return;
         }
-        selectOnlyElement(id);
-        if(element.locked||!localArtworkEditable()){render();return;}
+        const priorSelection=selectedArtworkElements();
+        const keepGroup=isElementSelected(id)&&priorSelection.length>1;
+        if(!keepGroup) selectOnlyElement(id);
+        const activeSelection=keepGroup?priorSelection:selectedArtworkElements();
+        if(keepGroup&&!sameSelectionPanel(activeSelection)){
+          toast("跨面板多选不能整体拖动，请先把元素放在同一面板。","error");
+          render();return;
+        }
+        const dragItems=activeSelection.filter(item=>!item.locked);
+        if(!dragItems.length||!localArtworkEditable()){render();return;}
         pushArtworkHistory();
         ev.preventDefault();
         const svg=group.ownerSVGElement;
@@ -1956,16 +2006,33 @@
           return p.matrixTransform(svg.getScreenCTM().inverse());
         };
         const start=point(ev),startX=Number(element.x||0),startY=Number(element.y||0);
+        const starts=new Map(dragItems.map(item=>[item.id,{x:Number(item.x||0),y:Number(item.y||0)}]));
+        const groupBounds=selectionBounds(dragItems);
+        const movementBounds=elementBounds(element);
+        const minDx=movementBounds.x-groupBounds.left;
+        const maxDx=movementBounds.x+movementBounds.w-groupBounds.right;
+        const minDy=movementBounds.y-groupBounds.top;
+        const maxDy=movementBounds.y+movementBounds.h-groupBounds.bottom;
+        const ignoreIds=dragItems.map(item=>item.id);
         try{group.setPointerCapture(ev.pointerId);}catch{}
         group.onpointermove=(move)=>{
           if(move.pointerId!==ev.pointerId) return;
           const p=point(move);
-          const snapped=snapElementPosition(element,startX+(p.x-start.x),startY+(p.y-start.y));
-          element.x=snapped.x;element.y=snapped.y;
-          group.setAttribute("transform",elementTransform(element));
+          const snapped=snapElementPosition(element,startX+(p.x-start.x),startY+(p.y-start.y),ignoreIds);
+          let dx=snapped.x-startX,dy=snapped.y-startY;
+          dx=Math.max(minDx,Math.min(maxDx,dx));
+          dy=Math.max(minDy,Math.min(maxDy,dy));
+          for(const item of dragItems){
+            const origin=starts.get(item.id);
+            item.x=origin.x+dx;item.y=origin.y+dy;
+            const node=svg.querySelector(`[data-art-element="${CSS.escape(item.id)}"]`);
+            if(node) node.setAttribute("transform",elementTransform(item));
+          }
+          updateSmartGuideLayer(svg,snapped.guides);
         };
         const finish=()=>{
           group.onpointermove=null;group.onpointerup=null;group.onpointercancel=null;
+          updateSmartGuideLayer(svg,[]);
           persistLocalDraft();render();
         };
         group.onpointerup=finish;group.onpointercancel=finish;
