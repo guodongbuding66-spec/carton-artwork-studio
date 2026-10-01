@@ -15,6 +15,12 @@
   //   "database_id": "<D1_DATABASE_ID>",
   //   "migrations_dir": "migrations"
   // }],
+  // Staging may use Workers KV:
+  // "kv_namespaces": [{
+  //   "binding": "ARTWORK_KV",
+  //   "id": "<KV_NAMESPACE_ID>"
+  // }]
+  // Production requires R2:
   // "r2_buckets": [{
   //   "binding": "ARTWORK_FILES",
   //   "bucket_name": "carton-artwork-studio-files"
