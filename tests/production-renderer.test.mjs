@@ -6,6 +6,7 @@ function putI16(b,o,v){putU16(b,o,v<0?0x10000+v:v);}
 function putU32(b,o,v){b[o]=(v>>>24)&255;b[o+1]=(v>>>16)&255;b[o+2]=(v>>>8)&255;b[o+3]=v&255;}
 function tagBytes(tag){return [...tag].map(ch=>ch.charCodeAt(0));}
 function align4(n){return (n+3)&~3;}
+function svgData(xml){return "data:image/svg+xml;base64,"+Buffer.from(xml,"utf8").toString("base64");}
 
 function makeSyntheticTrueType(){
   const tables=[];
@@ -131,21 +132,66 @@ const uploadedSnapshot={
       id:"uploaded-logo",type:"image",name:"Logo",visible:true,
       x:260,y:1060,w:60,h:30,rotation:0,locked:false,
       panelId:"TOP_FACE",constrainToPanel:true,safeAreaExempt:false,
-      sourceType:"uploaded-vector",vectorDataUrl:"data:image/svg+xml;base64,PHN2Zy8+",
+      sourceType:"uploaded-vector",sourceMimeType:"image/svg+xml",mimeType:"image/jpeg",
+      vectorDataUrl:svgData(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60"><path d="M5 5 L115 5 L100 55 L20 55 Z" fill="#000"/></svg>`),
       dataUrl:"data:image/jpeg;base64,AA==",pixelWidth:1800,pixelHeight:900
     }]
   }
 };
+const uploadedQualification=qualifyProductionArtwork({snapshot:uploadedSnapshot});
+assert.equal(uploadedQualification.report.ok,true);
+assert.equal(uploadedQualification.report.customElements.unqualified,0);
+assert.equal(uploadedQualification.report.customElements.items[0].mode,"CONTROLLED_K_ONLY_SVG");
+assert.equal(uploadedQualification.report.rendererVersion,"pdfx4-embedded-truetype-2.2.0");
+
+const uploadedRendered=renderEmbeddedArtworkPdf({
+  snapshot:uploadedSnapshot,
+  fontBytes:makeSyntheticTrueType(),
+  qrEcc:"M",
+  mode:"production"
+});
+assert.equal(uploadedRendered.artwork.elements[0].vectorModel.profile,"CAS_SVG_K_ONLY_1");
+const uploadedPdfText=Buffer.from(uploadedRendered.bytes).toString("latin1");
+assert.ok(!uploadedPdfText.includes("/Subtype /Image"),"Controlled SVG must remain native vector content, not an image XObject");
+assert.ok(uploadedPdfText.includes(" m")&&uploadedPdfText.includes(" l"),"Controlled SVG should emit PDF path operators");
+
+const unsafeSvgSnapshot={
+  ...uploadedSnapshot,
+  artwork:{
+    ...uploadedSnapshot.artwork,
+    elements:[{
+      ...uploadedSnapshot.artwork.elements[0],
+      id:"unsafe-svg",
+      vectorDataUrl:svgData(`<svg viewBox="0 0 10 10"><script>alert(1)</script><rect width="10" height="10"/></svg>`)
+    }]
+  }
+};
+const unsafeQualification=qualifyProductionArtwork({snapshot:unsafeSvgSnapshot});
+assert.equal(unsafeQualification.report.ok,false);
+assert.equal(unsafeQualification.report.customElements.items[0].reason,"PRODUCTION_SVG_NOT_QUALIFIED");
+assert.equal(unsafeQualification.report.customElements.items[0].errorDetail.parserCode,"SVG_UNSAFE_OR_UNSUPPORTED_FEATURE");
 assert.throws(
-  ()=>renderEmbeddedArtworkPdf({snapshot:uploadedSnapshot,fontBytes:makeSyntheticTrueType(),qrEcc:"M",mode:"production"}),
-  (e)=>e?.code==="PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED"&&e?.detail?.[0]?.reason==="UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED"
+  ()=>renderEmbeddedArtworkPdf({snapshot:unsafeSvgSnapshot,fontBytes:makeSyntheticTrueType(),qrEcc:"M",mode:"production"}),
+  (e)=>e?.code==="PRODUCTION_CUSTOM_ELEMENTS_NOT_QUALIFIED"
 );
 
-const uploadedQualification=qualifyProductionArtwork({snapshot:uploadedSnapshot});
-assert.equal(uploadedQualification.report.ok,false);
-assert.equal(uploadedQualification.report.customElements.unqualified,1);
-assert.equal(uploadedQualification.report.customElements.items[0].reason,"UPLOADED_GRAPHIC_NOT_PRODUCTION_QUALIFIED");
-assert.equal(uploadedQualification.report.rendererVersion,"pdfx4-embedded-truetype-2.1.0");
+const lowDpiRasterSnapshot={
+  ...customSnapshot,
+  artwork:{
+    ...customSnapshot.artwork,
+    elements:[{
+      id:"low-raster",type:"image",name:"Raster Logo",visible:true,
+      x:260,y:1060,w:60,h:30,rotation:0,locked:false,
+      panelId:"TOP_FACE",constrainToPanel:true,safeAreaExempt:false,
+      sourceType:"uploaded-raster",sourceMimeType:"image/jpeg",mimeType:"image/jpeg",
+      dataUrl:"data:image/jpeg;base64,AA==",pixelWidth:100,pixelHeight:50
+    }]
+  }
+};
+const lowRasterQualification=qualifyProductionArtwork({snapshot:lowDpiRasterSnapshot});
+assert.equal(lowRasterQualification.report.ok,false);
+assert.equal(lowRasterQualification.report.customElements.items[0].reason,"RASTER_GRAPHIC_BELOW_MINIMUM_PPI");
+
 
 const preparedText=prepareProductionCustomElements(customRendered.artwork,[{
   id:"factory-real",name:"Factory Real",crn:"3203960FM4",country:"China"
