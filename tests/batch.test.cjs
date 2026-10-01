@@ -32,4 +32,47 @@ assert.match(csv,/row,sku,cell,field,error/);
 assert.match(csv,/SKU-002/);
 assert.equal(B.resolveFactory("3203960FM4",D.factories).id,"ningbo-a");
 assert.equal(B.normalizeCode("1.2345E+5"),"123450");
+
+const controlledReview=B.buildReview([records[0],{
+  ...records[0],
+  _row:4,
+  sku:"SKU-004",
+  contractNo:"HT4",
+  barcode:"XYZ789",
+  qr:"https://example.com/4"
+}],[],D,{
+  defaults:D.defaultArtwork,
+  factories:D.factories,
+  codes:C,
+  controlledShippingMark:{enabled:true,panelId:"TOP_FACE",version:"1.1.0"}
+});
+assert.equal(controlledReview.length,2);
+assert.equal(controlledReview[0].status,"PASS");
+assert.equal(controlledReview[1].status,"PASS");
+for(const row of controlledReview){
+  assert.equal(row.controlledPreset.type,"SHIPPING_MARK_STANDARD");
+  assert.equal(row.controlledPreset.version,"1.1.0");
+  assert.equal(row.controlledPreset.panelId,"TOP_FACE");
+  assert.equal(row.artwork.elements.length,6);
+  assert.equal(D.validateShippingMarkBlock(row.artwork.elements).ok,true);
+  assert.equal(row.artwork.safeMarginMm,D.defaultArtwork.safeMarginMm);
+}
+assert.notEqual(controlledReview[0].controlledPreset.groupId,controlledReview[1].controlledPreset.groupId);
+assert.notEqual(controlledReview[0].artwork.elements[0].id,controlledReview[1].artwork.elements[0].id);
+assert.equal(D.resolvedElementText(controlledReview[0].artwork.elements[0],controlledReview[0].artwork,D.factories),"ITEM NO. SKU-001");
+assert.equal(D.resolvedElementText(controlledReview[1].artwork.elements[0],controlledReview[1].artwork,D.factories),"ITEM NO. SKU-004");
+assert.equal(D.resolvedElementText(controlledReview[1].artwork.elements[1],controlledReview[1].artwork,D.factories),"CONTRACT NO. HT4");
+
+const remoteFactories=[{id:"remote-a",name:"Remote Batch Factory",crn:"REMOTE-CRN",country:"Mexico"}];
+const remoteRecord={...records[0],_row:5,factory:"Remote Batch Factory"};
+const remoteReview=B.buildReview([remoteRecord],[],D,{
+  defaults:D.defaultArtwork,
+  factories:remoteFactories,
+  codes:C,
+  controlledShippingMark:{enabled:true,panelId:"TOP_FACE",version:"1.1.0"}
+});
+assert.equal(remoteReview[0].status,"PASS");
+assert.equal(remoteReview[0].artwork.factoryId,"remote-a");
+assert.equal(D.resolvedElementText(remoteReview[0].artwork.elements[4],remoteReview[0].artwork,remoteFactories),"CRN REMOTE-CRN");
+assert.equal(D.resolvedElementText(remoteReview[0].artwork.elements[5],remoteReview[0].artwork,remoteFactories),"Made in Mexico");
 console.log("Batch tests passed.");
