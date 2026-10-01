@@ -527,7 +527,7 @@
       <button class="tool ${state.showDieline?"active":""}" data-preview="dieline">Dieline</button>
       <button class="tool ${state.showSafe?"active":""}" data-preview="safe">Safe Zone</button>
       <button class="tool ${state.showPanels?"active":""}" data-preview="panels">Panel Labels</button>
-      <span class="spacer"></span><span class="subtle mono">Single geometry source · mm</span>
+      <span class="spacer"></span><span class="subtle mono">↑↓←→ 1 mm · Shift 5 mm · Alt 0.1 mm · Ctrl/Cmd+D · Delete</span>
     </div>`;
   }
 
@@ -1495,7 +1495,7 @@
       if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)){
         event.preventDefault();
         if(!event.repeat) pushArtworkHistory();
-        const step=event.altKey?.1:(event.shiftKey?5:1);
+        const step=event.altKey?0.1:(event.shiftKey?5:1);
         if(event.key==="ArrowLeft") element.x=Number(element.x||0)-step;
         if(event.key==="ArrowRight") element.x=Number(element.x||0)+step;
         if(event.key==="ArrowUp") element.y=Number(element.y||0)-step;
