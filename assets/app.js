@@ -668,7 +668,8 @@
         <span class="element-type">${label}</span>
         <span class="element-name">${esc(e.name||e.type)}</span>
         <span class="mono subtle">${esc(e.panelId||"—")}</span>
-        ${e.groupId?'<span class="badge blue">GROUP</span>':""}
+        ${e.blockType==="SHIPPING_MARK_STANDARD"?'<span class="badge green">SHIP BLOCK</span>':e.groupId?'<span class="badge blue">GROUP</span>':""}
+        ${e.vectorDataUrl?'<span class="badge blue">SVG</span>':""}
         ${e.visible===false?'<span class="badge gray">HIDE</span>':e.locked?'<span class="badge amber">LOCK</span>':""}
       </button>`;
     }).join("");
@@ -710,6 +711,10 @@
     const selectedTextFit=selected?.type==="text"
       ? D.textFitMetrics(selected,D.resolvedElementText(selected,state.artwork,state.factories))
       : null;
+    const selectedImageQuality=selected&&["image","qr-image","symbol-image"].includes(selected.type)
+      ? D.effectiveImageDpi(selected)
+      : null;
+    const selectedProductionQualification=selected?D.productionElementQualification(selected):null;
     const props=selected?`
       <div class="element-properties">
         <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
@@ -730,6 +735,10 @@
             <div class="field"><label>Align</label><select class="select" data-element-prop="textAlign"><option value="left" ${selected.textAlign==="left"?"selected":""}>Left</option><option value="center" ${selected.textAlign==="center"?"selected":""}>Center</option><option value="right" ${selected.textAlign==="right"?"selected":""}>Right</option></select></div>
           </div>
           <div class="row2">
+            <label class="toggle-line"><input type="checkbox" data-element-wrap ${selected.wrapText?"checked":""}/> Auto Wrap 自动换行</label>
+            <div class="field"><label>Line Height</label><input class="input mono" type="number" min="0.8" max="3" step="0.05" data-element-prop="lineHeight" value="${esc(Number(selected.lineHeight||1.2))}"/></div>
+          </div>
+          <div class="row2">
             <label class="toggle-line"><input type="checkbox" data-element-autofit ${selected.autoFitText?"checked":""}/> Auto Fit 自动缩小</label>
             <div class="field"><label>Minimum pt</label><input class="input mono" type="number" min="1" step="0.25" data-element-prop="minFontSizePt" value="${esc(Number(selected.minFontSizePt||7))}"/></div>
           </div>
@@ -737,7 +746,7 @@
           <div class="notice ${selectedTextFit?.fits?"success":"warn"}">
             <strong>Text Box Check</strong><br>
             ${selectedTextFit?.fits
-              ? `预计文字 ${D.round(selectedTextFit.widthMm,1)}×${D.round(selectedTextFit.heightMm,1)} mm，可放入 ${D.round(selectedTextFit.boxWidthMm,1)}×${D.round(selectedTextFit.boxHeightMm,1)} mm。`
+              ? `预计 ${selectedTextFit.lineCount} 行 · ${D.round(selectedTextFit.widthMm,1)}×${D.round(selectedTextFit.heightMm,1)} mm，可放入 ${D.round(selectedTextFit.boxWidthMm,1)}×${D.round(selectedTextFit.boxHeightMm,1)} mm。`
               : `文字预计需要 ${D.round(selectedTextFit?.widthMm||0,1)}×${D.round(selectedTextFit?.heightMm||0,1)} mm，当前文本框 ${D.round(selectedTextFit?.boxWidthMm||0,1)}×${D.round(selectedTextFit?.boxHeightMm||0,1)} mm；Preflight 会 BLOCK。`}
           </div>`:""}
         ${selected.type==="qr-generated"?`
@@ -810,6 +819,20 @@
           <div class="field"><label>H mm</label><input class="input mono" type="number" min="5" step="1" data-element-prop="h" value="${esc(selected.h)}" ${selected.type==="barcode"?"readonly":""}/></div>
           <div class="field"><label>°</label><input class="input mono" type="number" step="1" data-element-prop="rotation" value="${esc(selected.rotation||0)}"/></div>
         </div>
+        ${selectedImageQuality?`
+          <div class="notice ${selectedImageQuality.isVector?"warn":selectedImageQuality.minDpi>=300?"success":selectedImageQuality.minDpi>=150?"warn":"error"}">
+            <strong>${selectedImageQuality.isVector?"SVG Vector Source":"Raster Print Quality"}</strong><br>
+            ${selectedImageQuality.isVector
+              ? "清理后的 SVG 源已保留；浏览器预览保持矢量。当前 Proof PDF 使用 JPEG fallback，正式 Production 仍阻止上传型图形。"
+              : `${D.round(selectedImageQuality.minDpi||0)} PPI @ ${D.round(Number(selected.w||0),1)}×${D.round(Number(selected.h||0),1)} mm · 300+ PASS / 150–299 WARN / <150 BLOCK`}
+          </div>
+        `:""}
+        <div class="notice ${selectedProductionQualification?.qualified?"success":"warn"}">
+          <strong>Production Element</strong><br>
+          ${selectedProductionQualification?.qualified
+            ? `Qualified renderer path: ${esc(selectedProductionQualification.mode)}（仍需整体 Preflight / 审批 / PDF/X gates）`
+            : `Blocked: ${esc(selectedProductionQualification?.reason||"NOT_QUALIFIED")}`}
+        </div>
         <div class="element-action-grid">
           <button class="btn small" data-action="duplicate-element">Duplicate</button>
           <button class="btn small" data-action="layer-front">To Front</button>
@@ -829,6 +852,7 @@
         <input id="art-qr-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <input id="art-symbol-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
         <button class="btn small" data-action="add-text-element" ${locked?"disabled":""}>＋ 文字</button>
+        <button class="btn small" data-action="add-shipping-mark-block" ${locked?"disabled":""}>＋ 标准 Shipping Mark</button>
         <button class="btn small" data-action="add-barcode-element" ${locked?"disabled":""}>＋ 条码</button>
         <button class="btn small" data-action="upload-image-trigger" ${locked?"disabled":""}>＋ 图片 / Logo</button>
         <button class="btn small" data-action="upload-qr-trigger" ${locked?"disabled":""}>＋ 上传二维码</button>
@@ -1908,6 +1932,51 @@
     persistLocalDraft();render();toast("包装图标已添加（Review Library）","success");
   }
 
+  function addShippingMarkBlock(){
+    if(!localArtworkEditable()) return;
+    const selected=selectedArtworkElement();
+    const panel=panelById(selected?.panelId)||panelById("TOP_FACE")||geometry().panels[0];
+    if(!panel){toast("没有可用纸箱面板。","error");return;}
+    const configuredSafe=Math.max(0,Number(state.artwork.safeMarginMm??22));
+    const inset=Math.max(4,Math.min(configuredSafe,panel.w*.18,panel.h*.18));
+    const availableW=panel.w-inset*2,availableH=panel.h-inset*2;
+    const rows=[
+      ["shipping.skuLine","Shipping · ITEM NO.",13],
+      ["shipping.contractLine","Shipping · CONTRACT NO.",10.5],
+      ["shipping.weightLine","Shipping · N.W. / G.W.",10.5],
+      ["shipping.packageLine","Shipping · PACKAGE MEAS",10.5],
+      ["shipping.crnLine","Shipping · CRN",10.5],
+      ["shipping.originLine","Shipping · ORIGIN",10.5]
+    ];
+    const rowH=8.5,gap=1.5,totalH=rows.length*rowH+(rows.length-1)*gap;
+    if(availableW<80||availableH<totalH){
+      toast(`${panel.id} 可用安全区太小，无法放入标准 Shipping Mark Block。`,"error");
+      return;
+    }
+    const blockW=Math.min(280,availableW);
+    const x=panel.x+inset+(availableW-blockW)/2;
+    const y=panel.y+inset;
+    const groupId=newGroupId();
+    const elements=rows.map(([bindingKey,name,fontSizePt],index)=>({
+      id:newElementId(),type:"text",name,
+      x,y:y+index*(rowH+gap),w:blockW,h:rowH,rotation:0,locked:false,visible:true,
+      panelId:panel.id,constrainToPanel:true,safeAreaExempt:false,groupId,
+      text:"",bindingKey,fontSizePt,fontWeight:index===0?"bold":"normal",textAlign:"left",
+      wrapText:false,lineHeight:1.15,autoFitText:true,minFontSizePt:7,
+      symbology:"",humanReadable:false,symbolKey:"",
+      payload:"",ecc:"M",sourceType:"controlled-shipping-block",mimeType:"",
+      dataUrl:"",pixelWidth:0,pixelHeight:0,
+      blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.0.0"
+    }));
+    pushArtworkHistory();
+    artworkElements().push(...elements);
+    state.selectedElementIds=elements.map(e=>e.id);
+    state.selectedElementId=elements.at(-1)?.id||null;
+    refreshAutoFitTextElements();
+    persistLocalDraft();render();
+    toast(`标准 Shipping Mark Block 1.0.0 已添加到 ${panel.id}`,"success");
+  }
+
   function addBoundTextElement(){
     if(!localArtworkEditable()) return;
     const bindingKey=String(document.getElementById("binding-preset-select")?.value||"product.sku");
@@ -2258,14 +2327,14 @@
         if(key==="panelId"){
           placeElementInPanel(e,el.value);
         }else{
-          e[key]=["x","y","w","h","rotation","fontSizePt","minFontSizePt","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
+          e[key]=["x","y","w","h","rotation","fontSizePt","minFontSizePt","lineHeight","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)?Number(el.value):el.value;
           if(key==="symbology") ensureBarcodePhysicalSettings(e,true);
           if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
           if(key==="fontSizePt") e[key]=Math.max(5,Number(e[key]||5));
           if(e.type==="barcode"&&["payload","bindingKey","symbology","moduleMm","barHeightMm","quietModules","wideRatio","bearerBarThicknessMm"].includes(key)) syncBarcodeElementSize(e);
           else {
             clampElementToBounds(e);
-            if(e.type==="text"&&e.autoFitText&&["text","bindingKey","w","h","fontWeight","minFontSizePt"].includes(key)) fitTextElementInPlace(e);
+            if(e.type==="text"&&e.autoFitText&&["text","bindingKey","w","h","fontWeight","minFontSizePt","lineHeight"].includes(key)) fitTextElementInPlace(e);
           }
         }
         persistLocalDraft();
@@ -2308,6 +2377,14 @@
       const e=selectedArtworkElement();if(!e||!localArtworkEditable())return;
       pushArtworkHistory();
       e.safeAreaExempt=Boolean(safeExempt.checked);persistLocalDraft();render();
+    };
+    const wrapText=document.querySelector("[data-element-wrap]");
+    if(wrapText) wrapText.onchange=()=>{
+      const e=selectedArtworkElement();if(!e||e.type!=="text"||!localArtworkEditable())return;
+      pushArtworkHistory();
+      e.wrapText=Boolean(wrapText.checked);
+      if(e.autoFitText) fitTextElementInPlace(e);
+      persistLocalDraft();render();
     };
     const autoFit=document.querySelector("[data-element-autofit]");
     if(autoFit) autoFit.onchange=()=>{
@@ -2489,6 +2566,7 @@
     if(action==="upload-symbol-trigger"){document.getElementById("art-symbol-file")?.click();return;}
     if(action==="verify-uploaded-qr") return verifySelectedQrImage();
     if(action==="add-text-element") return addTextElement();
+    if(action==="add-shipping-mark-block") return addShippingMarkBlock();
     if(action==="add-bound-text-element") return addBoundTextElement();
     if(action==="add-barcode-element") return addBarcodeElement();
     if(action==="normalize-sscc") return normalizeSelectedSscc();
