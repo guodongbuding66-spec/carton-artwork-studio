@@ -380,4 +380,31 @@ test("rotated safe-area crossing blocks using visual bounds", () => {
   assert.ok(assets.some(x=>x.id==="asset-safe-area-rotated-safe"&&x.status==="error"&&x.blocking));
 });
 
+test("rotation-aware resize solver stops at visual container bounds", () => {
+  const bounds={x:0,y:0,w:200,h:200};
+  const element={x:80,y:80,w:40,h:40,rotation:45};
+  assert.equal(D.visualBoundsFitContainer(element,bounds),true);
+
+  const grown=D.constrainElementResize(element,bounds,180,180,5);
+  assert.equal(grown.limited,true);
+  assert.ok(grown.w>40&&grown.w<180);
+  assert.ok(grown.h>40&&grown.h<180);
+  assert.equal(D.visualBoundsFitContainer({...element,w:grown.w,h:grown.h},bounds),true);
+
+  const smaller=D.constrainElementResize(element,bounds,20,20,5);
+  assert.equal(smaller.limited,false);
+  assert.equal(smaller.w,20);
+  assert.equal(smaller.h,20);
+  assert.equal(D.visualBoundsFitContainer({...element,w:20,h:20},bounds),true);
+});
+
+test("resize solver preserves current size if starting visual bounds are already invalid", () => {
+  const bounds={x:0,y:0,w:100,h:100};
+  const element={x:90,y:90,w:40,h:40,rotation:45};
+  const result=D.constrainElementResize(element,bounds,80,80,5);
+  assert.equal(result.limited,true);
+  assert.equal(result.w,40);
+  assert.equal(result.h,40);
+});
+
 console.log("Domain tests passed.");
