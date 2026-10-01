@@ -39,6 +39,7 @@ export function normalizePromotionEvidence(type, metadata={}, evidenceSha256="")
   const m=parseEvidenceMetadata(metadata);
   return {
     evidenceType:t,
+    policyVersion:String(m.policyVersion||m.policy_version||PDFX_PRODUCTION_PROMOTION_POLICY.version),
     status:String(m.result||m.status||"").toUpperCase(),
     profile:String(m.profile||PDFX_PRODUCTION_PROMOTION_POLICY.profile),
     artifactSha256:String(m.artifactSha256||m.artifact_sha256||"").toLowerCase(),
@@ -87,6 +88,7 @@ export function evidenceRowToPolicyInput(row={}) {
     {
       ...metadata,
       result:metadata.result||metadata.status||"PASS",
+      policyVersion:row.policyVersion??row.policy_version??metadata.policyVersion,
       profile:row.profile||metadata.profile,
       artifactSha256:row.artifactSha256??row.artifact_sha256??metadata.artifactSha256,
       validator:row.validatorName??row.validator_name??metadata.validator,
@@ -102,8 +104,8 @@ export function evidenceRowToPolicyInput(row={}) {
       suiteVersion:row.suiteVersion??row.suite_version??metadata.suiteVersion,
       conformanceLevel:row.conformanceLevel??row.conformance_level??metadata.conformanceLevel,
       testedAt:row.testedAt??row.tested_at??metadata.testedAt,
-      actualProductionWorkflow:Boolean(row.actualProductionWorkflow??row.actual_production_workflow??metadata.actualProductionWorkflow),
-      noPdfRepair:Boolean(row.noPdfRepair??row.no_pdf_repair??metadata.noPdfRepair),
+      actualProductionWorkflow:bool(row.actualProductionWorkflow??row.actual_production_workflow??metadata.actualProductionWorkflow),
+      noPdfRepair:bool(row.noPdfRepair??row.no_pdf_repair??metadata.noPdfRepair),
       evidenceSha256:row.evidenceSha256??row.evidence_sha256
     },
     row.evidenceSha256??row.evidence_sha256??""
