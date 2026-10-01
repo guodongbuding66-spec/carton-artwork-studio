@@ -15,8 +15,8 @@ Required checks:
 - D1 binding is present
 - D1 schema latest migration = `0009_pdfx_promotion_evidence.sql`
 - required D1 tables are present
-- R2 binding is present
-- R2 write / read / delete deep probe has passed within 24 hours
+- Artifact Store binding is present (KV or R2)
+- Artifact Store write / read / delete deep probe has passed within 24 hours
 - static Assets binding is present
 - BOOTSTRAP_ADMIN_EMAIL has been removed
 - at least one Approved Template Version exists
@@ -49,7 +49,9 @@ PRODUCTION_READY
 
 Policy JSON cannot claim a renderer feature that does not exist.
 
-Production also requires at least one approved FONT asset and one approved ICC_PROFILE asset. These asset approvals still do not enable renderer capability by themselves.
+Production also requires at least one approved FONT asset and one approved ICC_PROFILE asset.
+
+For v2 staging, the Artifact Store may be Workers KV. **Production requires R2 explicitly.** A KV-backed environment can reach `STAGING_READY` but cannot reach `PRODUCTION_READY`. These asset approvals still do not enable renderer capability by themselves.
 
 At v1.8 the production renderer deliberately reports:
 
@@ -62,9 +64,9 @@ At v1.8 the production renderer deliberately reports:
 
 Production therefore remains blocked by PDF/X conformance until an independent validation / print-acceptance gate is shipped.
 
-## R2 deep probe
+## Artifact Store deep probe
 
-Admin can run **Run R2 Deep Probe**.
+Admin can run **Run Artifact Store Probe**.
 
 The Worker:
 
@@ -94,7 +96,7 @@ After normal D1 users and roles are created:
 1. remove the GitHub / Wrangler bootstrap variable
 2. redeploy staging
 3. sign in as a normal Access + D1 Admin
-4. run the R2 deep probe again
+4. run the Artifact Store deep probe again
 
 Staging remains blocked while bootstrap override is configured.
 
@@ -108,7 +110,7 @@ Variables:
 
 ```text
 CLOUDFLARE_D1_DATABASE_ID
-CLOUDFLARE_R2_BUCKET_NAME
+CLOUDFLARE_KV_NAMESPACE_ID
 CLOUDFLARE_BOOTSTRAP_ADMIN_EMAIL
 CLOUDFLARE_STAGING_URL
 ```
@@ -129,7 +131,7 @@ The post-deploy smoke test verifies:
 
 - service identity
 - D1 binding
-- R2 binding
+- Artifact Store binding
 - Assets binding
 - trusted PDF/X validator URL + Worker bearer secret are configured
 - AUTH_BYPASS is disabled
@@ -196,3 +198,28 @@ Evidence bytes are stored in private R2 and their SHA-256 is calculated by the W
 System Readiness contains a separate `PDFX_PROMOTION_EVIDENCE` production gate. It does not affect `STAGING_READY`; it prevents `PRODUCTION_READY` until the complete qualification package passes.
 
 The staging workflow installs `CLOUDFLARE_PDFX_VALIDATOR_TOKEN` into the Worker as the `PDFX_VALIDATOR_TOKEN` secret after deploy and before post-deploy smoke.
+
+
+## Staging KV artifact store
+
+To avoid requiring R2 billing activation during engineering staging, the staging Worker may bind:
+
+```text
+ARTWORK_KV → Workers KV namespace
+```
+
+The Worker wraps KV behind the same Artifact Store operations used by the existing code:
+
+```text
+put / get / head / delete
+```
+
+Current staging namespace:
+
+```text
+carton-artwork-studio-staging-artifacts
+```
+
+KV is **staging-only**. System Readiness includes a separate Production gate requiring `artifactStoreKind === "R2"`.
+
+The KV compatibility layer enforces a 24 MiB value ceiling, below the Workers KV 25 MiB platform maximum.
