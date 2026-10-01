@@ -141,7 +141,12 @@
           mimeType:e.mimeType||"",
           dataUrl:e.dataUrl||"",
           pixelWidth:Number(e.pixelWidth||0),
-          pixelHeight:Number(e.pixelHeight||0)
+          pixelHeight:Number(e.pixelHeight||0),
+          assetRole:String(e.assetRole||""),
+          expectedPayload:String(e.expectedPayload||""),
+          decodedValue:String(e.decodedValue||""),
+          decodeStatus:String(e.decodeStatus||""),
+          verifiedAt:String(e.verifiedAt||"")
         })) : []
       }
     };
@@ -527,15 +532,42 @@
         }
       }
       if(element.type==="qr-image"){
+        const decoded=String(element.decodedValue||"").trim();
+        const expected=String(element.expectedPayload||"").trim();
+        const decodeStatus=String(element.decodeStatus||"").toUpperCase();
         assetChecks.push(check(
           `qr-upload-${element.id||name}`,
-          "Uploaded QR image verification",
+          "Uploaded QR digital decode",
+          decoded&&decodeStatus==="PASS"?"pass":"warning",
+          decoded&&decodeStatus==="PASS"
+            ? `Decoded payload: ${decoded}`
+            : decodeStatus==="UNAVAILABLE"
+              ? "Browser BarcodeDetector is unavailable; uploaded QR content remains digitally unverified."
+              : "Uploaded QR has not passed browser-side digital decode. Generated QR is preferred for controlled production.",
+          "Assets"
+        ));
+        if(expected){
+          const matches=decoded&&decoded===expected;
+          assetChecks.push(check(
+            `qr-upload-match-${element.id||name}`,
+            "Uploaded QR expected payload",
+            matches?"pass":"error",
+            matches?"Decoded QR matches the expected payload.":decoded?`Expected "${expected}" but decoded "${decoded}".`:"Expected payload is set but no decoded value is available.",
+            "Assets",
+            true
+          ));
+        }
+      }
+      if(element.type==="symbol-image"){
+        assetChecks.push(check(
+          `symbol-upload-${element.id||name}`,
+          `${name} custom symbol asset`,
           "warning",
-          "Uploaded QR artwork is treated as an image reference. Its encoded content is not decoded or verified by the current preflight; generated QR is preferred for controlled production.",
+          "Uploaded custom symbol is a review asset. Production must bind it to an approved customer/factory Symbol Master.",
           "Assets"
         ));
       }
-      if((element.type==="image"||element.type==="qr-image")&&Number(element.pixelWidth)>0&&Number(element.pixelHeight)>0&&w>0&&h>0){
+      if((element.type==="image"||element.type==="qr-image"||element.type==="symbol-image")&&Number(element.pixelWidth)>0&&Number(element.pixelHeight)>0&&w>0&&h>0){
         const ppi=Math.min(Number(element.pixelWidth)/(w/25.4),Number(element.pixelHeight)/(h/25.4));
         assetChecks.push(check(
           `asset-resolution-${element.id||name}`,
@@ -639,7 +671,12 @@
         mimeType:String(e.mimeType||""),
         dataUrl:String(e.dataUrl||""),
         pixelWidth:Number(e.pixelWidth||0),
-        pixelHeight:Number(e.pixelHeight||0)
+        pixelHeight:Number(e.pixelHeight||0),
+        assetRole:String(e.assetRole||""),
+        expectedPayload:String(e.expectedPayload||""),
+        decodedValue:String(e.decodedValue||""),
+        decodeStatus:String(e.decodeStatus||""),
+        verifiedAt:String(e.verifiedAt||"")
       })) : []
     };
   }

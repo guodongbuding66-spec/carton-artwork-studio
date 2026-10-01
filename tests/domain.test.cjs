@@ -212,4 +212,36 @@ test("GS1-128 barcode metadata passes domain symbology gate", () => {
   assert.ok(assets.some(x=>x.id==="barcode-type-gs1"&&x.status==="pass"));
 });
 
+test("uploaded QR decode evidence round-trips and expected mismatch blocks", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const base={
+    id:"qr-uploaded",type:"qr-image",name:"Customer QR",x:p.x+20,y:p.y+20,w:45,h:45,
+    rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    dataUrl:"data:image/jpeg;base64,AA==",mimeType:"image/jpeg",pixelWidth:600,pixelHeight:600,
+    expectedPayload:"EXPECTED",decodedValue:"ACTUAL",decodeStatus:"PASS",verifiedAt:"2026-10-01T00:00:00.000Z"
+  };
+  const a={...D.defaultArtwork,elements:[base]};
+  const snapshot=D.canonicalData(a);
+  assert.equal(snapshot.artwork.elements[0].decodedValue,"ACTUAL");
+  assert.equal(snapshot.artwork.elements[0].expectedPayload,"EXPECTED");
+  const restored=D.artworkFromCanonical(snapshot);
+  assert.equal(restored.elements[0].decodeStatus,"PASS");
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="qr-upload-qr-uploaded"&&x.status==="pass"));
+  assert.ok(assets.some(x=>x.id==="qr-upload-match-qr-uploaded"&&x.status==="error"&&x.blocking));
+});
+
+test("custom uploaded symbol is review-only in preflight", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const a={...D.defaultArtwork,elements:[{
+    id:"sym-img",type:"symbol-image",name:"Customer Handling Icon",x:p.x+20,y:p.y+20,w:45,h:45,
+    rotation:0,locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    dataUrl:"data:image/jpeg;base64,AA==",mimeType:"image/jpeg",pixelWidth:600,pixelHeight:600,assetRole:"symbol-review"
+  }]};
+  const assets=D.runPreflight(a).Assets;
+  assert.ok(assets.some(x=>x.id==="symbol-upload-sym-img"&&x.status==="warning"));
+});
+
 console.log("Domain tests passed.");

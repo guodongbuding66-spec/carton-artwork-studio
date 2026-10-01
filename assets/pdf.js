@@ -372,7 +372,7 @@
           ops.push(rectOp(x,y,cell,cell,true));
         }
         ops.push("Q");
-      } else if((element.type==="image"||element.type==="qr-image")&&element.pdfName) {
+      } else if((element.type==="image"||element.type==="qr-image"||element.type==="symbol-image")&&element.pdfName) {
         ops.push("q");
         const a=m.co*m.w,b=m.si*m.w,c2=-m.si*m.h,d=m.co*m.h;
         const e=m.e,f2=m.f;
@@ -671,7 +671,7 @@
     const imageObjects=[];
     let imageIndex=0;
     for(const element of Array.isArray(customElements)?customElements:[]) {
-      if((element.type==="image"||element.type==="qr-image")&&element.dataUrl) {
+      if((element.type==="image"||element.type==="qr-image"||element.type==="symbol-image")&&element.dataUrl) {
         const decoded=dataUrlBytes(element.dataUrl);
         if(decoded?.mimeType==="image/jpeg"&&decoded.bytes.length) {
           imageIndex+=1;

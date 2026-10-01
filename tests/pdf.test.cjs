@@ -83,4 +83,14 @@ const expandedSymbolProof=P.createPdfBytes({
 const expandedSymbolText=Buffer.from(expandedSymbolProof).toString("latin1");
 assert.ok((expandedSymbolText.match(/ m .* l S/g)||[]).length>=8,"Expanded handling symbols should emit vector line operations");
 
+const customSymbolImageProof=P.createPdfBytes({
+  artwork:a,geometry:g,computed:comp,codeModel:code,qrMatrix:qr,mode:"proof",
+  customElements:[
+    {id:"symbol-img",type:"symbol-image",x:300,y:900,w:48,h:48,rotation:0,visible:true,dataUrl:tinyJpeg,pixelWidth:1,pixelHeight:1}
+  ]
+});
+const customSymbolImageText=Buffer.from(customSymbolImageProof).toString("latin1");
+assert.ok(customSymbolImageText.includes("/Subtype /Image"),"Custom symbol review image should be embedded in proof PDF");
+assert.ok(customSymbolImageText.includes("/Im1 Do"),"Custom symbol image should be drawn in proof PDF");
+
 console.log("PDF tests passed.");
