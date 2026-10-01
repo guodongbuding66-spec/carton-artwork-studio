@@ -49,7 +49,8 @@ const required=[
   "preflight_runs","exports","audit_logs",
   "mapping_profiles","import_jobs","import_rows",
   "users","user_roles","security_events",
-  "reference_records","production_policies","production_policy_approvals","system_readiness_runs","production_assets","production_asset_approvals","pdfx_validation_runs"
+  "reference_records","production_policies","production_policy_approvals","system_readiness_runs","production_assets","production_asset_approvals","pdfx_validation_runs",
+  "pdfx_promotion_evidence","pdfx_promotion_evidence_approvals"
 ];
 
 const tableRows=rows(query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"));
@@ -58,7 +59,7 @@ const missing=required.filter((name)=>!names.has(name));
 if(missing.length) throw new Error("Missing D1 tables after migrations: "+missing.join(", "));
 
 const migrations=rows(query("SELECT name FROM d1_migrations ORDER BY id;"));
-if(migrations.at(-1)?.name!=="0008_pdfx_validation_runs.sql") throw new Error(`Latest migration must be 0008_pdfx_validation_runs.sql, got ${migrations.at(-1)?.name||"none"}.`);
+if(migrations.at(-1)?.name!=="0009_pdfx_promotion_evidence.sql") throw new Error(`Latest migration must be 0009_pdfx_promotion_evidence.sql, got ${migrations.at(-1)?.name||"none"}.`);
 
 const policies=rows(query("SELECT code,status FROM production_policies ORDER BY code;"));
 if(policies.length!==4) throw new Error(`Expected 4 production policy seeds, got ${policies.length}.`);
