@@ -2091,29 +2091,22 @@
     const panel=panelById(selected?.panelId)||panelById("TOP_FACE")||geometry().panels[0];
     if(!panel){toast("没有可用纸箱面板。","error");return;}
     const def=D.controlledBlockDefinition("SHIPPING_MARK_STANDARD");
-    const layout=D.shippingMarkBlockLayout(state.artwork,panel,state.factories,{version:def?.version||"1.1.0"});
-    if(!layout.ok){
-      toast(`${panel.id} 无法放入 Shipping Mark 1.1.0：${layout.reason}`,"error");
+    const built=D.createShippingMarkBlockElements(state.artwork,panel,state.factories,{
+      version:def?.version||"1.1.0",
+      groupId:newGroupId(),
+      locked:true,
+      idFactory:()=>newElementId()
+    });
+    if(!built.ok){
+      toast(`${panel.id} 无法放入 Shipping Mark ${def?.version||"1.1.0"}：${built.reason}`,"error");
       return;
     }
-    const groupId=newGroupId();
-    const elements=layout.slots.map(slot=>({
-      id:newElementId(),type:"text",name:slot.name,
-      x:slot.x,y:slot.y,w:slot.w,h:slot.h,rotation:0,locked:true,visible:true,
-      panelId:panel.id,constrainToPanel:true,safeAreaExempt:false,groupId,
-      text:"",bindingKey:slot.bindingKey,fontSizePt:slot.fontSizePt,fontWeight:"normal",textAlign:"left",
-      wrapText:true,lineHeight:slot.lineHeight,autoFitText:false,minFontSizePt:7,
-      symbology:"",humanReadable:false,symbolKey:"",
-      payload:"",ecc:"M",sourceType:"controlled-shipping-block",mimeType:"",
-      dataUrl:"",pixelWidth:0,pixelHeight:0,
-      blockType:"SHIPPING_MARK_STANDARD",blockVersion:"1.1.0",blockSlot:slot.id
-    }));
     pushArtworkHistory();
-    artworkElements().push(...elements);
-    state.selectedElementIds=elements.map(e=>e.id);
-    state.selectedElementId=elements.at(-1)?.id||null;
+    artworkElements().push(...built.elements);
+    state.selectedElementIds=built.elements.map(e=>e.id);
+    state.selectedElementId=built.elements.at(-1)?.id||null;
     persistLocalDraft();render();
-    toast(`标准 Shipping Mark Block 1.1.0 已添加到 ${panel.id} · ${D.round(layout.totalH,1)} mm`,"success");
+    toast(`标准 Shipping Mark Block ${built.version} 已添加到 ${panel.id} · ${D.round(built.totalH,1)} mm`,"success");
   }
 
   function addBoundTextElement(){
