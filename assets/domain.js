@@ -34,6 +34,7 @@
     templateVersion: "2026.05.20",
     templateName: "美线侧封箱",
     market: "US",
+    safeMarginMm: 22,
     elements: []
   };
 
@@ -114,6 +115,7 @@
       artwork: {
         revision: a.revision,
         status: a.status,
+        safeMarginMm: Number(a.safeMarginMm ?? 22),
         elements: Array.isArray(a.elements) ? a.elements.map((e)=>({
           id:e.id,
           type:e.type,
@@ -152,7 +154,15 @@
           expectedPayload:String(e.expectedPayload||""),
           decodedValue:String(e.decodedValue||""),
           decodeStatus:String(e.decodeStatus||""),
-          verifiedAt:String(e.verifiedAt||"")
+          verifiedAt:String(e.verifiedAt||""),
+        groupId:String(e.groupId||""),
+        safeAreaExempt:Boolean(e.safeAreaExempt),
+        autoFitText:Boolean(e.autoFitText),
+        minFontSizePt:Number(e.minFontSizePt||7),
+          groupId:String(e.groupId||""),
+          safeAreaExempt:Boolean(e.safeAreaExempt),
+          autoFitText:Boolean(e.autoFitText),
+          minFontSizePt:Number(e.minFontSizePt||7)
         })) : []
       }
     };
@@ -296,6 +306,62 @@
       : { w: 250, h: 80 };
   }
 
+  function glyphWidthFactor(ch) {
+    if(ch===" "||ch==="\t") return 0.33;
+    const code=ch.codePointAt(0)||0;
+    if(code>255) return 1.0;
+    if(/[A-Z]/.test(ch)) return 0.62;
+    if(/[a-z]/.test(ch)) return 0.54;
+    if(/[0-9]/.test(ch)) return 0.56;
+    if(/[.,:;!'"`|]/.test(ch)) return 0.30;
+    return 0.58;
+  }
+
+  function estimateTextBox(text, fontSizePt=12, fontWeight="normal") {
+    const fontMm=Math.max(0,Number(fontSizePt||0))/PT_PER_MM;
+    const weightFactor=String(fontWeight||"normal")==="bold"?1.05:1;
+    const lines=String(text??"").split(/\r?\n/);
+    const widths=lines.map((line)=>[...line].reduce((sum,ch)=>sum+glyphWidthFactor(ch),0)*fontMm*weightFactor);
+    return {
+      widthMm: widths.length?Math.max(...widths):0,
+      heightMm: Math.max(1,lines.length)*fontMm*1.2,
+      lineCount: Math.max(1,lines.length),
+      fontSizePt:Number(fontSizePt||0)
+    };
+  }
+
+  function textFitMetrics(element, text) {
+    const metrics=estimateTextBox(text,element?.fontSizePt||12,element?.fontWeight||"normal");
+    const boxW=Math.max(0,Number(element?.w||0));
+    const boxH=Math.max(0,Number(element?.h||0));
+    const fits=metrics.widthMm<=boxW+0.01&&metrics.heightMm<=boxH+0.01;
+    return {
+      ...metrics,
+      boxWidthMm:boxW,
+      boxHeightMm:boxH,
+      fits,
+      widthOverflowMm:Math.max(0,metrics.widthMm-boxW),
+      heightOverflowMm:Math.max(0,metrics.heightMm-boxH)
+    };
+  }
+
+  function fitTextToBox(element, text, options={}) {
+    const minPt=Math.max(1,Number(options.minPt??element?.minFontSizePt??7));
+    const maxPt=Math.max(minPt,Number(options.maxPt??element?.fontSizePt??12));
+    const atMax=textFitMetrics({...element,fontSizePt:maxPt},text);
+    if(atMax.fits) return {fits:true,fontSizePt:maxPt,metrics:atMax};
+    let lo=minPt,hi=maxPt,best=null;
+    for(let i=0;i<28;i+=1){
+      const mid=(lo+hi)/2;
+      const metrics=textFitMetrics({...element,fontSizePt:mid},text);
+      if(metrics.fits){best={fits:true,fontSizePt:mid,metrics};lo=mid;}
+      else hi=mid;
+    }
+    if(best) return {...best,fontSizePt:round(best.fontSizePt,2)};
+    const minMetrics=textFitMetrics({...element,fontSizePt:minPt},text);
+    return {fits:false,fontSizePt:minPt,metrics:minMetrics};
+  }
+
   function check(id, title, status, detail, category, blocking = false) {
     return { id, title, status, detail, category, blocking };
   }
@@ -364,12 +430,17 @@
     ));
 
     const codeSize = codeBlockDimensions(a.codeBlockProfile);
-    const safeMargin = Math.max(15, Math.min(30, g.H * 0.1));
-    const availableW = Math.max(0, g.L - safeMargin * 2);
-    const availableH = Math.max(0, g.W - safeMargin * 2);
+    const safeMargin = Number(a.safeMarginMm ?? 22);
+    const safeMarginValid=Number.isFinite(safeMargin)&&safeMargin>=0&&safeMargin<=100;
+    const effectiveSafeMargin=safeMarginValid?safeMargin:22;
+    const availableW = Math.max(0, g.L - effectiveSafeMargin * 2);
+    const availableH = Math.max(0, g.W - effectiveSafeMargin * 2);
     const codeFits = codeSize.w <= availableW && codeSize.h <= availableH;
 
     const layout = [
+      check("safe-margin-config","Safe margin configuration",safeMarginValid?"pass":"error",
+        safeMarginValid?`${round(safeMargin,2)} mm panel inset.`:"Safe margin must be between 0 and 100 mm.",
+        "Layout",true),
       check("geometry", "Geometry derived from package dimensions", "pass",
         `${round(g.L)}×${round(g.W)}×${round(g.H)} mm canonical carton model.`, "Layout"),
       check("safe", "CodeBlock within safe area", codeFits ? "pass" : "error",
@@ -452,6 +523,22 @@
           "Assets",
           true
         ));
+        if(!element.safeAreaExempt&&safeMarginValid){
+          const usableW=panel.w-safeMargin*2,usableH=panel.h-safeMargin*2;
+          const inSafe=usableW>=0&&usableH>=0&&
+            x>=panel.x+safeMargin&&y>=panel.y+safeMargin&&
+            (x+w)<=panel.x+panel.w-safeMargin&&(y+h)<=panel.y+panel.h-safeMargin;
+          assetChecks.push(check(
+            `asset-safe-area-${element.id||name}`,
+            `${name} inside ${panel.id} safe area`,
+            inSafe?"pass":"error",
+            inSafe
+              ? `Element clears the configured ${round(safeMargin,2)} mm safe margin.`
+              : `Element enters the configured ${round(safeMargin,2)} mm panel safety inset. Mark an explicit safe-area exemption only for intentional edge/bleed artwork.`,
+            "Assets",
+            true
+          ));
+        }
       }
       if(element.type==="text"){
         const binding=String(element.bindingKey||"");
@@ -479,9 +566,20 @@
         assetChecks.push(check(
           `text-size-${element.id||name}`,
           `${name} font size`,
-          size>=7?"pass":"warning",
-          `${round(size,1)} pt. Internal review threshold is 7 pt.`,
+          size>=Number(element.minFontSizePt||7)?"pass":"warning",
+          `${round(size,1)} pt. Minimum configured size is ${round(Number(element.minFontSizePt||7),1)} pt.`,
           "Assets"
+        ));
+        const fit=textFitMetrics(element,text);
+        assetChecks.push(check(
+          `text-overflow-${element.id||name}`,
+          `${name} text fits its box`,
+          fit.fits?"pass":"error",
+          fit.fits
+            ? `Estimated text ${round(fit.widthMm,1)}×${round(fit.heightMm,1)} mm fits ${round(fit.boxWidthMm,1)}×${round(fit.boxHeightMm,1)} mm.`
+            : `Estimated text requires ${round(fit.widthMm,1)}×${round(fit.heightMm,1)} mm but box is ${round(fit.boxWidthMm,1)}×${round(fit.boxHeightMm,1)} mm.`,
+          "Assets",
+          !fit.fits
         ));
       }
       if(element.type==="barcode"){
@@ -728,6 +826,7 @@
       templateVersion: tpl.version ?? defaultArtwork.templateVersion,
       revision: metadata.revision ?? aw.revision ?? defaultArtwork.revision,
       status: String(metadata.status ?? aw.status ?? defaultArtwork.status).toLowerCase(),
+      safeMarginMm: Number(aw.safeMarginMm ?? defaultArtwork.safeMarginMm),
       elements: Array.isArray(aw.elements) ? aw.elements.map((e)=>({
         id:String(e.id||""),
         type:String(e.type||"image"),
@@ -806,6 +905,9 @@
     sideSealGeometry,
     calibrationMetrics,
     codeBlockDimensions,
+    estimateTextBox,
+    textFitMetrics,
+    fitTextToBox,
     runPreflight,
     preflightSummary,
     stableStringify,
