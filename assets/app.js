@@ -1688,8 +1688,10 @@
         const name=String(attr.name||"").toLowerCase();
         const value=String(attr.value||"").trim();
         if(name.startsWith("on")) node.removeAttribute(attr.name);
-        if((name==="href"||name==="xlink:href")&&value&&!value.startsWith("#")&&!value.startsWith("data:image/")){
-          node.removeAttribute(attr.name);
+        if(name==="href"||name==="xlink:href"){
+          const local=value.startsWith("#");
+          const safeEmbedded=/^data:image\/(?:png|jpeg|jpg|webp|gif);base64,/i.test(value);
+          if(value&&!local&&!safeEmbedded) node.removeAttribute(attr.name);
         }
         if(name==="style"&&/url\s*\(\s*['"]?(?:https?:|\/\/|data:text\/html)/i.test(value)){
           node.removeAttribute(attr.name);
@@ -1699,11 +1701,12 @@
     return new XMLSerializer().serializeToString(doc.documentElement);
   }
 
-  async function rasterizeArtworkSource(sourceUrl,maxPx=2400){
+  async function rasterizeArtworkSource(sourceUrl,maxPx=2400,allowUpscale=false){
     const img=await loadImageElement(sourceUrl);
     const sourceWidth=Math.max(1,Number(img.naturalWidth||img.width||1));
     const sourceHeight=Math.max(1,Number(img.naturalHeight||img.height||1));
-    const scale=Math.min(1,maxPx/Math.max(sourceWidth,sourceHeight));
+    const rawScale=maxPx/Math.max(sourceWidth,sourceHeight);
+    const scale=allowUpscale?Math.min(12,Math.max(1,rawScale)):Math.min(1,rawScale);
     const width=Math.max(1,Math.round(sourceWidth*scale));
     const height=Math.max(1,Math.round(sourceHeight*scale));
     const canvas=document.createElement("canvas");
@@ -1731,7 +1734,7 @@
       if(file.size>2*1024*1024) throw new Error("SVG 超过 2 MB，请精简路径和元数据。");
       const sanitized=sanitizeSvgText(await file.text());
       const vectorDataUrl=await fileToDataUrl(new Blob([sanitized],{type:"image/svg+xml"}));
-      const fallback=await rasterizeArtworkSource(vectorDataUrl,2400);
+      const fallback=await rasterizeArtworkSource(vectorDataUrl,2400,true);
       return {
         ...fallback,
         sourceMimeType:"image/svg+xml",
