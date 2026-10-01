@@ -1286,41 +1286,120 @@
     const linkedDrafts=state.batchReview.filter(r=>r.status==="PASS"&&r.draftArtworkId).length;
     const failedServerPf=state.batchReview.filter(r=>r.serverPreflightStatus==="ERROR").length;
     const reviewReady=state.batchReview.filter(r=>["IN_REVIEW","APPROVED"].includes(String(r.artworkStatus||"").toUpperCase())).length;
+    const activeStep=Math.min(steps.length-1,Math.max(0,Number(state.batchStep||0)));
+    const completion=steps.length>1?Math.round((activeStep/(steps.length-1))*100):0;
+
+    const statCards=state.batchSource?[
+      ["Total",stats.total,"neutral"],
+      ["Local pass",stats.passed,"pass"],
+      ["Failed",stats.failed,"error"],
+      ["Drafts",linkedDrafts,"neutral"],
+      ["Review ready",reviewReady,"pass"],
+      ["Mapping",mapping.length,"neutral"]
+    ]:[];
+
     return `
-      <div class="stepper">${steps.map((x,i)=>`<div class="step ${i<state.batchStep?"done":i===state.batchStep?"active":""}">${i+1}. ${x}</div>`).join("")}</div>
-      <section class="card"><div class="card-head"><h3>Packing List Import</h3><span class="subtle">.xlsx / .csv</span><span class="spacer"></span><span class="badge blue">US Packing List Default</span><span class="badge green">Shipping Mark 1.1 · TOP_FACE</span></div><div class="card-body">
-        ${!cloudBatchWritable()?'<div class="notice warn" style="margin-bottom:10px"><strong>本地批量模式</strong>：文件解析、Dry Run、错误下载和 Proof ZIP 生成均可直接使用；只有保存 Mapping / Import Job 到 D1 需要登录权限。</div>':""}
-        <label class="dropzone" id="batch-dropzone"><input id="batch-file" type="file" accept=".xlsx,.csv" hidden/><strong>拖入 Packing List 或点击选择</strong><div class="subtle" style="margin-top:6px">Header Detection · Alias · Fill Down · TOTAL Stop · Cell-level errors · Controlled Shipping Mark per row</div>${state.batchSource?`<div style="margin-top:9px" class="badge green">${esc(state.batchSource)}</div>`:""}</label>
-        <div class="toolbar" style="margin-top:10px"><button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button><button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Download Error Rows</button><button class="btn" data-action="save-mapping" ${mapping.length&&cloudBatchWritable()?"":"disabled"}>Save Mapping Profile</button><button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Passed Proofs"}</button><button class="btn primary" data-action="batch-create-drafts" ${pendingDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchDraftBusy?"":"disabled"}>${state.batchDraftBusy?"Creating Drafts…":`Create Remaining Drafts (${pendingDrafts})`}</button></div>
-        <div class="toolbar" style="margin-top:8px">
-          <button class="btn" data-action="batch-server-preflight" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>${state.batchProcessBusy?"Processing…":"Server Preflight"}</button>
-          <button class="btn success" data-action="batch-preflight-submit" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Preflight + Submit Passed</button>
-          <button class="btn" data-action="batch-retry-failed" ${failedServerPf&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Retry Failed (${failedServerPf})</button>
-          <span class="subtle">每次最多处理 100 个 Draft；服务端直接读取 D1 Canonical Snapshot，不信任浏览器 PASS。</span>
+      <section class="page-hero batch-hero">
+        <div class="page-hero-copy">
+          <div class="page-eyebrow">Controlled batch workflow</div>
+          <h1>Packing List → Artwork</h1>
+          <p>从 Excel / CSV 解析、映射、校验到 Draft、权威 Preflight 和提交审核，每一步保留可追溯状态。</p>
         </div>
-        ${state.batchDraftResult?`<div class="notice ${state.batchDraftResult.failed?.length?"warn":"success"}" style="margin-top:10px"><strong>Batch Draft Promotion</strong><br>Created ${state.batchDraftResult.created?.length||0} · Skipped ${state.batchDraftResult.skipped?.length||0} · Failed ${state.batchDraftResult.failed?.length||0} · Linked ${state.batchDraftResult.counts?.linked||0}/${state.batchDraftResult.counts?.passed||0}</div>`:""}
-        ${state.batchProcessResult?`<div class="notice ${state.batchProcessResult.failed?.length||state.batchProcessResult.skipped?.length?"warn":"success"}" style="margin-top:10px"><strong>Server Batch Processing · ${esc(state.batchProcessResult.mode||"")}</strong><br>Processed ${state.batchProcessResult.processed||0} · PF Pass ${state.batchProcessResult.passed?.length||0} · PF Fail ${state.batchProcessResult.failed?.length||0} · Submitted ${state.batchProcessResult.submitted?.length||0} · Skipped ${state.batchProcessResult.skipped?.length||0} · Review Ready ${state.batchProcessResult.counts?.reviewReady||0}/${state.batchProcessResult.counts?.linked||0} · Remaining ${state.batchProcessResult.remainingEligible||0}</div>`:""}
-      </div></section>
-      ${state.batchSource?`<div class="kpis" style="margin-top:12px;grid-template-columns:repeat(6,1fr)"><div class="kpi"><div class="kpi-label">TOTAL</div><div class="kpi-value">${stats.total}</div></div><div class="kpi"><div class="kpi-label">LOCAL PASS</div><div class="kpi-value" style="color:#16835d">${stats.passed}</div></div><div class="kpi"><div class="kpi-label">FAILED</div><div class="kpi-value" style="color:#bc2f3b">${stats.failed}</div></div><div class="kpi"><div class="kpi-label">DRAFTS</div><div class="kpi-value">${linkedDrafts}</div></div><div class="kpi"><div class="kpi-label">REVIEW READY</div><div class="kpi-value" style="color:#16835d">${reviewReady}</div></div><div class="kpi"><div class="kpi-label">MAPPING</div><div class="kpi-value">${mapping.length}</div><div class="kpi-foot">fields</div></div></div>`:""}
-      ${mapping.length?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Detected Mapping</h3><span class="subtle">自动表头映射，可保存为 Mapping Profile（D1 schema 已预留）</span></div>${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}</section>`:""}
-      ${state.apiOnline&&state.identity?`<section class="card" style="margin-top:12px"><div class="card-head"><h3>Import Job History</h3><span class="subtle">D1 · 可跨刷新恢复</span><span class="spacer"></span><button class="btn small" data-action="refresh-batch-jobs" ${state.batchJobLoading?"disabled":""}>${state.batchJobLoading?"Loading…":"Refresh"}</button></div>${state.batchJobs.length?table(["Source","Status","Rows","Passed","Failed","Updated",""],state.batchJobs.slice(0,20).map(j=>[
-        esc(j.sourceName||"—"),
-        `<span class="badge ${j.status==="SUBMITTED_FOR_REVIEW"?"green":j.status==="PREFLIGHTED"||j.status==="DRAFTS_CREATED"?"blue":j.status==="PARTIAL_SUBMIT"?"amber":j.status==="REVIEWED"?"blue":"amber"}">${esc(j.status||"—")}</span>`,
-        Number(j.totalRows||0),
-        Number(j.passedRows||0),
-        Number(j.failedRows||0),
-        esc(j.updatedAt||j.createdAt||"—"),
-        `<button class="btn small" data-open-import-job="${esc(j.id)}">Resume</button>`
-      ]),true):'<div class="card-body"><div class="notice">暂无已同步 Import Job。</div></div>'}</section>`:""}
-      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Import Review</h3><span class="subtle">Local + Server Preflight · 最多显示前 100 行</span></div>${review.length?table(["Row","SKU","Local","Draft","Server PF","Artwork","Issue"],review.map(r=>[
-        r.row,
-        r.sku,
-        `<span class="badge ${r.status==="PASS"?"green":"red"}">${r.status}</span>`,
-        r.draftArtworkId?`<span class="badge green mono">${esc(r.draftArtworkNo||r.draftArtworkId.slice(0,8))}</span>`:"—",
-        r.serverPreflightStatus?`<span class="badge ${r.serverPreflightStatus==="PASS"?"green":"red"}">${esc(r.serverPreflightStatus)}</span>`:"—",
-        r.artworkStatus?`<span class="badge ${["IN_REVIEW","APPROVED"].includes(String(r.artworkStatus).toUpperCase())?"green":String(r.artworkStatus).toUpperCase()==="DRAFT"?"blue":"amber"}">${esc(r.artworkStatus)}</span>`:"—",
-        r.batchProcessError?`${esc(r.batchProcessError)}`:`${r.issue}`
-      ]),true):`<div class="card-body"><div class="notice">尚未载入文件。导入后系统会先做 Excel 解析，再将每一行转换为 Canonical Artwork Data 并运行阻断检查。</div></div>`}</section>`;
+        <div class="batch-hero-progress">
+          <div><span>Workflow progress</span><strong>${completion}%</strong></div>
+          <div class="batch-hero-progressbar"><i style="width:${completion}%"></i></div>
+          <small>${state.batchSource?esc(state.batchSource):"No source file selected"}</small>
+        </div>
+      </section>
+
+      <div class="stepper batch-stepper">${steps.map((x,i)=>`<div class="step ${i<activeStep?"done":i===activeStep?"active":""}"><span>${i+1}</span><strong>${x}</strong></div>`).join("")}</div>
+
+      <section class="card batch-stage-card">
+        <div class="card-head card-head-roomy">
+          <div><div class="page-eyebrow">Source intake</div><h3>Packing List Import</h3></div>
+          <span class="spacer"></span>
+          <span class="badge blue">US Packing List Default</span>
+          <span class="badge green">Shipping Mark 1.1 · TOP_FACE</span>
+        </div>
+        <div class="card-body">
+          ${!cloudBatchWritable()?'<div class="notice warn batch-local-note"><strong>本地批量模式</strong><span>文件解析、Dry Run、错误下载和 Proof ZIP 可直接使用；保存 Mapping / Import Job 到 D1 需要登录权限。</span></div>':""}
+
+          <div class="batch-intake-grid">
+            <label class="dropzone batch-dropzone" id="batch-dropzone">
+              <input id="batch-file" type="file" accept=".xlsx,.csv" hidden/>
+              <span class="batch-drop-icon">⇧</span>
+              <strong>拖入 Packing List 或点击选择</strong>
+              <div class="subtle">.xlsx / .csv · Header Detection · Alias · Fill Down · TOTAL Stop</div>
+              <div class="batch-drop-meta">Cell-level errors · Controlled Shipping Mark per row</div>
+              ${state.batchSource?`<div class="batch-source-pill"><i></i><span>${esc(state.batchSource)}</span></div>`:""}
+            </label>
+
+            <div class="batch-actions-panel">
+              <div class="batch-action-group">
+                <div class="batch-action-head"><span>01</span><div><strong>Local preparation</strong><small>Parse, validate and produce proofs</small></div></div>
+                <div class="batch-action-buttons">
+                  <button class="btn primary" data-action="dry-run" ${state.batchRecords.length?"":"disabled"}>Dry Run</button>
+                  <button class="btn" data-action="download-errors" ${stats.failed?"":"disabled"}>Error Rows</button>
+                  <button class="btn" data-action="save-mapping" ${mapping.length&&cloudBatchWritable()?"":"disabled"}>Save Mapping</button>
+                  <button class="btn success" data-action="batch-generate" ${stats.passed&&!state.batchGenerating?"":"disabled"}>${state.batchGenerating?"Generating…":"Generate Proofs"}</button>
+                </div>
+              </div>
+
+              <div class="batch-action-group">
+                <div class="batch-action-head"><span>02</span><div><strong>Server promotion</strong><small>D1 canonical snapshot remains authoritative</small></div></div>
+                <div class="batch-action-buttons">
+                  <button class="btn primary" data-action="batch-create-drafts" ${pendingDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchDraftBusy?"":"disabled"}>${state.batchDraftBusy?"Creating…":`Create Drafts (${pendingDrafts})`}</button>
+                  <button class="btn" data-action="batch-server-preflight" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>${state.batchProcessBusy?"Processing…":"Server Preflight"}</button>
+                  <button class="btn success" data-action="batch-preflight-submit" ${linkedDrafts&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Preflight + Submit</button>
+                  <button class="btn" data-action="batch-retry-failed" ${failedServerPf&&state.remoteImportJobId&&cloudBatchWritable()&&cloudArtworkWritable()&&!state.batchProcessBusy?"":"disabled"}>Retry Failed (${failedServerPf})</button>
+                </div>
+                <div class="batch-action-foot">每次最多处理 100 个 Draft；服务端重新读取 D1 Canonical Snapshot，不信任浏览器 PASS。</div>
+              </div>
+            </div>
+          </div>
+
+          ${state.batchDraftResult?`<div class="notice ${state.batchDraftResult.failed?.length?"warn":"success"} batch-result-note"><strong>Batch Draft Promotion</strong><span>Created ${state.batchDraftResult.created?.length||0} · Skipped ${state.batchDraftResult.skipped?.length||0} · Failed ${state.batchDraftResult.failed?.length||0} · Linked ${state.batchDraftResult.counts?.linked||0}/${state.batchDraftResult.counts?.passed||0}</span></div>`:""}
+          ${state.batchProcessResult?`<div class="notice ${state.batchProcessResult.failed?.length||state.batchProcessResult.skipped?.length?"warn":"success"} batch-result-note"><strong>Server Batch Processing · ${esc(state.batchProcessResult.mode||"")}</strong><span>Processed ${state.batchProcessResult.processed||0} · PF Pass ${state.batchProcessResult.passed?.length||0} · PF Fail ${state.batchProcessResult.failed?.length||0} · Submitted ${state.batchProcessResult.submitted?.length||0} · Skipped ${state.batchProcessResult.skipped?.length||0} · Review Ready ${state.batchProcessResult.counts?.reviewReady||0}/${state.batchProcessResult.counts?.linked||0} · Remaining ${state.batchProcessResult.remainingEligible||0}</span></div>`:""}
+        </div>
+      </section>
+
+      ${statCards.length?`<div class="batch-stats">${statCards.map(([label,value,tone])=>`<div class="batch-stat is-${tone}"><span>${label}</span><strong>${value}</strong>${label==="Mapping"?'<small>fields</small>':""}</div>`).join("")}</div>`:""}
+
+      <div class="batch-data-grid">
+        <div class="batch-data-main">
+          ${mapping.length?`<section class="card">
+            <div class="card-head"><div><div class="page-eyebrow">Detected schema</div><h3>Detected Mapping</h3></div><span class="spacer"></span><span class="subtle">可保存为 Mapping Profile</span></div>
+            ${table(["Canonical Field","Excel Column"],mapping.map(([field,col])=>[field,`${X.columnLabel(col)} · column ${Number(col)+1}`]))}
+          </section>`:""}
+
+          <section class="card batch-review-card">
+            <div class="card-head"><div><div class="page-eyebrow">Row-level evidence</div><h3>Import Review</h3></div><span class="spacer"></span><span class="subtle">Local + Server Preflight · 最多前 100 行</span></div>
+            ${review.length?table(["Row","SKU","Local","Draft","Server PF","Artwork","Issue"],review.map(r=>[
+              r.row,
+              r.sku,
+              `<span class="badge ${r.status==="PASS"?"green":"red"}">${r.status}</span>`,
+              r.draftArtworkId?`<span class="badge green mono">${esc(r.draftArtworkNo||r.draftArtworkId.slice(0,8))}</span>`:"—",
+              r.serverPreflightStatus?`<span class="badge ${r.serverPreflightStatus==="PASS"?"green":"red"}">${esc(r.serverPreflightStatus)}</span>`:"—",
+              r.artworkStatus?`<span class="badge ${["IN_REVIEW","APPROVED"].includes(String(r.artworkStatus).toUpperCase())?"green":String(r.artworkStatus).toUpperCase()==="DRAFT"?"blue":"amber"}">${esc(r.artworkStatus)}</span>`:"—",
+              r.batchProcessError?`${esc(r.batchProcessError)}`:`${r.issue}`
+            ]),true):`<div class="card-body"><div class="empty-state"><strong>No rows loaded</strong><span>载入文件后系统会解析 Canonical Artwork Data 并运行阻断检查。</span></div></div>`}
+          </section>
+        </div>
+
+        ${state.apiOnline&&state.identity?`<aside class="batch-history-column">
+          <section class="card batch-history-card">
+            <div class="card-head"><div><div class="page-eyebrow">Persistent jobs</div><h3>Import Job History</h3></div><span class="spacer"></span><button class="btn small" data-action="refresh-batch-jobs" ${state.batchJobLoading?"disabled":""}>${state.batchJobLoading?"Loading…":"Refresh"}</button></div>
+            ${state.batchJobs.length?table(["Source","Status","Rows","Updated",""],state.batchJobs.slice(0,20).map(j=>[
+              esc(j.sourceName||"—"),
+              `<span class="badge ${j.status==="SUBMITTED_FOR_REVIEW"?"green":j.status==="PREFLIGHTED"||j.status==="DRAFTS_CREATED"?"blue":j.status==="PARTIAL_SUBMIT"?"amber":j.status==="REVIEWED"?"blue":"amber"}">${esc(j.status||"—")}</span>`,
+              `${Number(j.passedRows||0)}/${Number(j.totalRows||0)}`,
+              esc(j.updatedAt||j.createdAt||"—"),
+              `<button class="btn small" data-open-import-job="${esc(j.id)}">Resume</button>`
+            ]),true):'<div class="card-body"><div class="empty-state batch-empty-history"><strong>No synced jobs</strong><span>暂无已同步 Import Job。</span></div></div>'}
+          </section>
+        </aside>`:""}
+      </div>
+    `;
   }
 
   function reviewerSelected(){
