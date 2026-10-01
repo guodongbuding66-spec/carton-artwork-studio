@@ -33,7 +33,8 @@
     templateCode: "US_SIDE_SEAL",
     templateVersion: "2026.05.20",
     templateName: "美线侧封箱",
-    market: "US"
+    market: "US",
+    elements: []
   };
 
   const sourceCalibration = {
@@ -112,7 +113,25 @@
       },
       artwork: {
         revision: a.revision,
-        status: a.status
+        status: a.status,
+        elements: Array.isArray(a.elements) ? a.elements.map((e)=>({
+          id:e.id,
+          type:e.type,
+          name:e.name||"",
+          x:Number(e.x||0),
+          y:Number(e.y||0),
+          w:Number(e.w||0),
+          h:Number(e.h||0),
+          rotation:Number(e.rotation||0),
+          locked:Boolean(e.locked),
+          payload:e.payload||"",
+          ecc:e.ecc||"M",
+          sourceType:e.sourceType||"",
+          mimeType:e.mimeType||"",
+          dataUrl:e.dataUrl||"",
+          pixelWidth:Number(e.pixelWidth||0),
+          pixelHeight:Number(e.pixelHeight||0)
+        })) : []
       }
     };
   }
@@ -308,6 +327,63 @@
         "Codes")
     ];
 
+    const customElements=Array.isArray(a.elements)?a.elements:[];
+    const assetChecks=[];
+    for(const element of customElements){
+      const name=element.name||element.type||"element";
+      const x=Number(element.x||0),y=Number(element.y||0),w=Number(element.w||0),h=Number(element.h||0);
+      const within=x>=0&&y>=0&&w>0&&h>0&&(x+w)<=g.totalWidth&&(y+h)<=g.totalHeight;
+      assetChecks.push(check(
+        `asset-bounds-${element.id||name}`,
+        `${name} within artwork bounds`,
+        within?"pass":"error",
+        within?`${round(w)}×${round(h)} mm at ${round(x)},${round(y)} mm.`:"Element extends outside the carton artwork bounds.",
+        "Assets",
+        true
+      ));
+      if(element.type==="qr-generated"){
+        const size=Math.min(w,h);
+        assetChecks.push(check(
+          `qr-generated-${element.id||name}`,
+          "Generated QR vector source",
+          String(element.payload||"").trim()?"pass":"error",
+          String(element.payload||"").trim()
+            ? `ECC ${String(element.ecc||"M").toUpperCase()} · ${round(size)} mm · vector matrix with quiet zone.`
+            : "Generated QR payload is empty.",
+          "Assets",
+          true
+        ));
+        if(size<25){
+          assetChecks.push(check(
+            `qr-size-${element.id||name}`,
+            "Custom QR physical size",
+            "warning",
+            `${round(size)} mm is below the internal 25 mm review threshold; verify scan performance on the real print process.`,
+            "Assets"
+          ));
+        }
+      }
+      if(element.type==="qr-image"){
+        assetChecks.push(check(
+          `qr-upload-${element.id||name}`,
+          "Uploaded QR image verification",
+          "warning",
+          "Uploaded QR artwork is treated as an image reference. Its encoded content is not decoded or verified by the current preflight; generated QR is preferred for controlled production.",
+          "Assets"
+        ));
+      }
+      if((element.type==="image"||element.type==="qr-image")&&Number(element.pixelWidth)>0&&Number(element.pixelHeight)>0&&w>0&&h>0){
+        const ppi=Math.min(Number(element.pixelWidth)/(w/25.4),Number(element.pixelHeight)/(h/25.4));
+        assetChecks.push(check(
+          `asset-resolution-${element.id||name}`,
+          `${name} effective raster resolution`,
+          ppi>=300?"pass":"warning",
+          `${round(ppi)} PPI at placed size ${round(w)}×${round(h)} mm. Internal review target is 300 PPI for raster print assets.`,
+          "Assets"
+        ));
+      }
+    }
+
     const print = [
       check("k-only", "K-only print profile", "pass",
         "US_SIDE_SEAL_K_ONLY_V1 · single black production profile.", "Print"),
@@ -317,7 +393,7 @@
         "Local preview uses system sans / PDF core font. Authoritative Production PDF uses the server-side pinned approved TrueType asset when FONT_POLICY is ready; outlining remains unsupported.", "Print")
     ];
 
-    return { Data: data, Layout: layout, Codes: codes, Print: print };
+    return { Data: data, Layout: layout, Codes: codes, Assets: assetChecks, Print: print };
   }
 
   function preflightSummary(groups) {
@@ -372,7 +448,25 @@
       templateCode: tpl.code ?? metadata.templateCode ?? defaultArtwork.templateCode,
       templateVersion: tpl.version ?? defaultArtwork.templateVersion,
       revision: metadata.revision ?? aw.revision ?? defaultArtwork.revision,
-      status: String(metadata.status ?? aw.status ?? defaultArtwork.status).toLowerCase()
+      status: String(metadata.status ?? aw.status ?? defaultArtwork.status).toLowerCase(),
+      elements: Array.isArray(aw.elements) ? aw.elements.map((e)=>({
+        id:String(e.id||""),
+        type:String(e.type||"image"),
+        name:String(e.name||""),
+        x:Number(e.x||0),
+        y:Number(e.y||0),
+        w:Number(e.w||0),
+        h:Number(e.h||0),
+        rotation:Number(e.rotation||0),
+        locked:Boolean(e.locked),
+        payload:String(e.payload||""),
+        ecc:["L","M","Q","H"].includes(String(e.ecc||"M").toUpperCase())?String(e.ecc||"M").toUpperCase():"M",
+        sourceType:String(e.sourceType||""),
+        mimeType:String(e.mimeType||""),
+        dataUrl:String(e.dataUrl||""),
+        pixelWidth:Number(e.pixelWidth||0),
+        pixelHeight:Number(e.pixelHeight||0)
+      })) : []
     };
   }
 

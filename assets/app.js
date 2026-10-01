@@ -69,7 +69,8 @@
     pdfxValidationRuns: [],
     pdfxPromotionReadiness: null,
     pdfxPromotionEvidence: [],
-    promotionEvidenceBusy: false
+    promotionEvidenceBusy: false,
+    selectedElementId: null
   };
 
   const navItems = [
@@ -122,7 +123,29 @@
   function cloudArtworkWritable(){return state.apiOnline&&permitted("artworkWrite");}
   function cloudBatchWritable(){return state.apiOnline&&permitted("batchWrite");}
   function persistLocalDraft(){
-    try{localStorage.setItem("cas:draft",JSON.stringify(state.artwork));}catch{}
+    try{localStorage.setItem("cas:draft",JSON.stringify(state.artwork));return true;}
+    catch{return false;}
+  }
+  function artworkElements(){
+    if(!Array.isArray(state.artwork.elements)) state.artwork.elements=[];
+    return state.artwork.elements;
+  }
+  function selectedArtworkElement(){
+    return artworkElements().find((e)=>e.id===state.selectedElementId)||null;
+  }
+  function newElementId(){
+    return "el-"+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36));
+  }
+  function elementTransform(e){
+    return `translate(${Number(e.x||0).toFixed(3)} ${Number(e.y||0).toFixed(3)}) rotate(${Number(e.rotation||0).toFixed(2)} ${(Number(e.w||0)/2).toFixed(3)} ${(Number(e.h||0)/2).toFixed(3)})`;
+  }
+  function defaultElementPlacement(w=50,h=50){
+    const g=geometry();
+    const panel=g.panels.find((p)=>p.id==="TOP_FACE")||g.panels[0];
+    return {
+      x:Math.max(0,panel.x+(panel.w-w)/2),
+      y:Math.max(0,panel.y+(panel.h-h)/2)
+    };
   }
   function blockingCommentsResolved(){return !state.comments.some(x=>x.blocking&&!x.resolved);}
   function productionPolicy(code){return state.productionPolicies.find(x=>x.code===code)||null;}
@@ -259,12 +282,63 @@
         ${field("Country of Origin","derived",`<input class="input" readonly value="${esc(f?.country||"")}" />`)}
       `)}
       ${formSection("Codes 代码", `
-        ${field("Barcode","Code 128-B PoC",input("barcode",a.barcode))}
-        ${field("QR payload","Encoder gate pending",input("qr",a.qr))}
+        ${field("Barcode","Current template Code 128-B",input("barcode",a.barcode))}
+        ${field("QR payload","Locked template CodeBlock",input("qr",a.qr))}
         ${field("CodeBlock Profile","locked component",`<select class="select" data-art="codeBlockProfile" ${isArtworkLocked()?"disabled":""}><option value="250x80" ${a.codeBlockProfile==="250x80"?"selected":""}>250 × 80 mm</option><option value="200x64" ${a.codeBlockProfile==="200x64"?"selected":""}>200 × 64 mm</option></select>`)}
-        <div class="notice">🔒 Barcode + QR 为锁定组合组件。Business Mode 禁止拆分和单独移动。</div>
+        <div class="notice">模板自带 Barcode + QR 仍作为锁定 CodeBlock。下面“元素”区可额外上传 Logo/图片、上传二维码，或生成独立矢量 QR。</div>
       `)}
+      ${renderElementEditor()}
     `;
+  }
+
+  function renderElementEditor(){
+    const elements=artworkElements();
+    const selected=selectedArtworkElement();
+    const locked=isArtworkLocked();
+    const rows=elements.map((e)=>`
+      <button type="button" class="element-row ${state.selectedElementId===e.id?"active":""}" data-select-element="${esc(e.id)}">
+        <span class="element-type">${e.type==="qr-generated"?"QR":e.type==="qr-image"?"QR IMG":"IMG"}</span>
+        <span class="element-name">${esc(e.name||e.type)}</span>
+        <span class="mono subtle">${Number(e.w||0).toFixed(0)}×${Number(e.h||0).toFixed(0)} mm</span>
+        ${e.locked?'<span class="badge amber">LOCK</span>':""}
+      </button>`).join("");
+    const props=selected?`
+      <div class="element-properties">
+        <div class="field"><label>Name</label><input class="input" data-element-prop="name" value="${esc(selected.name||"")}"/></div>
+        <div class="row2">
+          <div class="field"><label>X mm</label><input class="input mono" type="number" step="1" data-element-prop="x" value="${esc(selected.x)}"/></div>
+          <div class="field"><label>Y mm</label><input class="input mono" type="number" step="1" data-element-prop="y" value="${esc(selected.y)}"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>W mm</label><input class="input mono" type="number" min="5" step="1" data-element-prop="w" value="${esc(selected.w)}"/></div>
+          <div class="field"><label>H mm</label><input class="input mono" type="number" min="5" step="1" data-element-prop="h" value="${esc(selected.h)}"/></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Rotation</label><input class="input mono" type="number" step="1" data-element-prop="rotation" value="${esc(selected.rotation||0)}"/></div>
+          <div class="field"><label>Lock</label><label class="toggle-line"><input type="checkbox" data-element-lock ${selected.locked?"checked":""}/> Lock position</label></div>
+        </div>
+        ${selected.type==="qr-generated"?`
+          <div class="field"><label>QR payload</label><textarea class="input" rows="3" data-element-prop="payload">${esc(selected.payload||"")}</textarea></div>
+          <div class="field"><label>Error correction</label><select class="select" data-element-prop="ecc">${["L","M","Q","H"].map(x=>`<option ${selected.ecc===x?"selected":""}>${x}</option>`).join("")}</select></div>
+        `:""}
+        <div class="toolbar" style="justify-content:flex-end"><button class="btn danger small" data-action="delete-element" ${locked?"disabled":""}>Delete Element</button></div>
+      </div>`:'<div class="notice">选择画布上的元素或列表项后，可精确设置毫米位置、尺寸和旋转。</div>' ;
+    return formSection("Elements 元素",`
+      <div class="notice" style="margin-bottom:10px"><strong>真实唛头元素</strong>：Logo / 产品图 / 包装图标 / QR 可作为独立对象放到纸箱版面。生产前需通过边界、分辨率和扫码检查。</div>
+      <div class="toolbar element-tools">
+        <input id="art-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
+        <input id="art-qr-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden/>
+        <button class="btn small" data-action="upload-image-trigger" ${locked?"disabled":""}>＋ 图片 / Logo</button>
+        <button class="btn small" data-action="upload-qr-trigger" ${locked?"disabled":""}>＋ 上传二维码</button>
+      </div>
+      <div class="field" style="margin-top:8px"><label>生成二维码内容</label><textarea id="custom-qr-payload" class="input" rows="2" placeholder="URL / SKU / GS1 Digital Link / 自定义内容">${esc(state.artwork.qr||"")}</textarea></div>
+      <div class="row2">
+        <div class="field"><label>ECC</label><select id="custom-qr-ecc" class="select"><option>L</option><option selected>M</option><option>Q</option><option>H</option></select></div>
+        <div class="field"><label>&nbsp;</label><button class="btn primary" style="width:100%" data-action="add-generated-qr" ${locked?"disabled":""}>生成矢量 QR</button></div>
+      </div>
+      <div class="element-list">${rows||'<div class="subtle">还没有自定义元素。</div>'}</div>
+      ${props}
+    `);
   }
 
   function formSection(t,b){return `<section class="section"><div class="section-title">${t}</div><div class="section-body">${b}</div></section>`;}
@@ -307,6 +381,29 @@
     return `<div class="comments">${composer}${list}</div>`;
   }
 
+  function renderCustomElements(artwork=state.artwork,mode="editor"){
+    const elements=Array.isArray(artwork.elements)?artwork.elements:[];
+    return elements.map((e)=>{
+      const w=Math.max(1,Number(e.w||1)),h=Math.max(1,Number(e.h||1));
+      const selected=mode==="editor"&&state.selectedElementId===e.id;
+      const border=selected?`<rect x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#e13b6b" stroke-width="2" stroke-dasharray="7 4" vector-effect="non-scaling-stroke"/>`:"";
+      let body="";
+      if((e.type==="image"||e.type==="qr-image")&&e.dataUrl){
+        body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/><image href="${esc(e.dataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`;
+      }else if(e.type==="qr-generated"){
+        try{
+          const model=C.qrMatrix(e.payload||"",e.ecc||"M");
+          const quiet=4,n=model.matrix.length,size=Math.min(w,h),cell=size/(n+quiet*2),ox=(w-size)/2,oy=(h-size)/2;
+          const modules=model.matrix.flatMap((row,rr)=>row.map((v,cc)=>v?`<rect x="${(ox+(cc+quiet)*cell).toFixed(3)}" y="${(oy+(rr+quiet)*cell).toFixed(3)}" width="${cell.toFixed(3)}" height="${cell.toFixed(3)}" fill="#000"/>`:"")).join("");
+          body=`<rect x="${ox}" y="${oy}" width="${size}" height="${size}" fill="#fff"/>${modules}`;
+        }catch{
+          body=`<rect x="0" y="0" width="${w}" height="${h}" fill="#fff" stroke="#bc2f3b"/><text x="5" y="18" font-size="10" fill="#bc2f3b">Invalid QR</text>`;
+        }
+      }
+      return `<g data-art-element="${esc(e.id)}" data-element-locked="${e.locked?"1":"0"}" transform="${elementTransform(e)}" style="cursor:${e.locked?"default":"move"}">${body}${border}</g>`;
+    }).join("");
+  }
+
   function dielineSvg(mode="editor", artwork=state.artwork, options={}) {
     const a=artwork;
     const g=D.sideSealGeometry(a);
@@ -326,6 +423,7 @@
     const qrEcc=String(options.qrEcc||approvedQrEcc()||"M").toUpperCase();
     const code=renderCodeBlock(g.H+g.L-320,g.H+g.W+g.H+g.W-118,a.codeBlockProfile,a,{qrEcc});
     const note=c.packageNote?`<text x="${bx}" y="${by+108}" font-size="12" font-family="Arial" fill="#000">${esc(c.packageNote)}</text>`:"";
+    const custom=renderCustomElements(a,mode);
     const watermark=proof?`<text x="${g.H+g.L/2}" y="${g.totalHeight/2}" text-anchor="middle" transform="rotate(-15 ${g.H+g.L/2} ${g.totalHeight/2})" font-family="Arial" font-size="46" fill="#000" opacity=".12">NOT FOR PRODUCTION</text>`:"";
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${g.totalWidth}mm" height="${g.totalHeight}mm" aria-label="US side seal carton artwork">
       <rect x="-50" y="-50" width="${g.totalWidth+100}" height="${g.totalHeight+100}" fill="#fff"/>
@@ -893,6 +991,11 @@
     if(compareOpacity) compareOpacity.oninput=()=>{state.compareOpacity=Number(compareOpacity.value);const top=document.getElementById("compare-overlay-top");if(top)top.style.opacity=String(state.compareOpacity);};
     const search=document.getElementById("global-search");
     if(search) search.onkeydown=async(e)=>{if(e.key==="Enter"){state.page="dashboard";await loadRemoteArtworks(search.value.trim());}};
+    bindArtworkElements();
+    const artImageFile=document.getElementById("art-image-file");
+    const artQrImageFile=document.getElementById("art-qr-image-file");
+    if(artImageFile) artImageFile.onchange=async()=>{const file=artImageFile.files?.[0];if(file)await addUploadedArtworkElement(file,"image");};
+    if(artQrImageFile) artQrImageFile.onchange=async()=>{const file=artQrImageFile.files?.[0];if(file)await addUploadedArtworkElement(file,"qr-image");};
     const file=document.getElementById("batch-file");
     const dropzone=document.getElementById("batch-dropzone");
     if(file) file.onchange=async()=>{ if(file.files?.[0]) await importBatch(file.files[0]); };
@@ -908,7 +1011,171 @@
     }
   }
 
+  function fileToDataUrl(file){
+    return new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(String(reader.result||""));
+      reader.onerror=()=>reject(reader.error||new Error("FILE_READ_FAILED"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageElement(src){
+    return new Promise((resolve,reject)=>{
+      const img=new Image();
+      img.onload=()=>resolve(img);
+      img.onerror=()=>reject(new Error("IMAGE_DECODE_FAILED"));
+      img.src=src;
+    });
+  }
+
+  async function normalizeArtworkImageFile(file){
+    if(!file) throw new Error("请选择图片。");
+    const allowed=["image/png","image/jpeg","image/webp","image/svg+xml"];
+    if(!allowed.includes(file.type)) throw new Error("仅支持 PNG / JPG / WebP / SVG。");
+    if(file.size>8*1024*1024) throw new Error("图片超过 8 MB，请先压缩后再上传。");
+    const raw=await fileToDataUrl(file);
+    const img=await loadImageElement(raw);
+    const maxPx=1200;
+    const scale=Math.min(1,maxPx/Math.max(img.naturalWidth||1,img.naturalHeight||1));
+    const width=Math.max(1,Math.round((img.naturalWidth||1)*scale));
+    const height=Math.max(1,Math.round((img.naturalHeight||1)*scale));
+    const canvas=document.createElement("canvas");
+    canvas.width=width;canvas.height=height;
+    const ctx=canvas.getContext("2d",{alpha:false});
+    ctx.fillStyle="#fff";ctx.fillRect(0,0,width,height);
+    ctx.drawImage(img,0,0,width,height);
+    let quality=.94;
+    let dataUrl=canvas.toDataURL("image/jpeg",quality);
+    while(dataUrl.length>900000&&quality>.72){
+      quality-=.06;
+      dataUrl=canvas.toDataURL("image/jpeg",quality);
+    }
+    if(dataUrl.length>1200000) throw new Error("图片归一化后仍然过大，请使用更简单的 Logo/图标或降低图片尺寸。");
+    return {dataUrl,mimeType:"image/jpeg",pixelWidth:width,pixelHeight:height};
+  }
+
+  async function addUploadedArtworkElement(file,type="image"){
+    if(!localArtworkEditable()){toast("当前 Revision 已锁定，不能添加元素。","error");return;}
+    try{
+      const normalized=await normalizeArtworkImageFile(file);
+      const ratio=normalized.pixelWidth/Math.max(1,normalized.pixelHeight);
+      let w=type==="qr-image"?45:Math.min(90,Math.max(35,60));
+      let h=type==="qr-image"?45:w/Math.max(.1,ratio);
+      if(h>90){h=90;w=h*ratio;}
+      const p=defaultElementPlacement(w,h);
+      const el={
+        id:newElementId(),
+        type,
+        name:type==="qr-image"?`QR image · ${file.name}`:file.name,
+        x:p.x,y:p.y,w,h,rotation:0,locked:false,
+        payload:"",
+        ecc:"M",
+        sourceType:"uploaded-raster",
+        mimeType:normalized.mimeType,
+        dataUrl:normalized.dataUrl,
+        pixelWidth:normalized.pixelWidth,
+        pixelHeight:normalized.pixelHeight
+      };
+      artworkElements().push(el);
+      state.selectedElementId=el.id;
+      const saved=persistLocalDraft();
+      render();
+      toast(saved?(type==="qr-image"?"二维码图片已添加":"图片 / Logo 已添加"):"图片已添加，但浏览器本地存储空间不足，请尽快导出或减少图片大小",saved?"success":"error");
+    }catch(e){toast(e.message||String(e),"error");}
+  }
+
+  function addGeneratedQrElement(){
+    if(!localArtworkEditable()){toast("当前 Revision 已锁定，不能添加元素。","error");return;}
+    const payload=document.getElementById("custom-qr-payload")?.value?.trim()||"";
+    const ecc=String(document.getElementById("custom-qr-ecc")?.value||"M").toUpperCase();
+    if(!payload){toast("请输入二维码内容。","error");return;}
+    try{C.qrMatrix(payload,ecc);}catch(e){toast("二维码内容无法编码："+(e.message||e),"error");return;}
+    const size=45,p=defaultElementPlacement(size,size);
+    const el={
+      id:newElementId(),type:"qr-generated",name:"Generated QR",
+      x:p.x,y:p.y,w:size,h:size,rotation:0,locked:false,
+      payload,ecc,sourceType:"generated-vector",mimeType:"",
+      dataUrl:"",pixelWidth:0,pixelHeight:0
+    };
+    artworkElements().push(el);
+    state.selectedElementId=el.id;
+    persistLocalDraft();
+    render();
+    toast("矢量二维码已添加","success");
+  }
+
+  function deleteSelectedElement(){
+    if(!localArtworkEditable()) return;
+    const index=artworkElements().findIndex((e)=>e.id===state.selectedElementId);
+    if(index<0){toast("请先选择一个元素。","error");return;}
+    artworkElements().splice(index,1);
+    state.selectedElementId=null;
+    persistLocalDraft();
+    render();
+    toast("元素已删除","success");
+  }
+
+  function bindArtworkElements(){
+    document.querySelectorAll("[data-select-element]").forEach((b)=>{
+      b.onclick=()=>{state.selectedElementId=b.dataset.selectElement;render();};
+    });
+    document.querySelectorAll("[data-element-prop]").forEach((el)=>{
+      const apply=()=>{
+        const e=selectedArtworkElement();
+        if(!e||!localArtworkEditable()) return;
+        const key=el.dataset.elementProp;
+        e[key]=["x","y","w","h","rotation"].includes(key)?Number(el.value):el.value;
+        if(key==="w"||key==="h") e[key]=Math.max(5,Number(e[key]||5));
+        persistLocalDraft();
+      };
+      el.oninput=apply;
+      el.onchange=()=>{apply();render();};
+    });
+    const lock=document.querySelector("[data-element-lock]");
+    if(lock) lock.onchange=()=>{
+      const e=selectedArtworkElement();
+      if(!e||!localArtworkEditable()) return;
+      e.locked=Boolean(lock.checked);persistLocalDraft();render();
+    };
+
+    document.querySelectorAll("[data-art-element]").forEach((group)=>{
+      group.onpointerdown=(ev)=>{
+        const id=group.dataset.artElement;
+        const element=artworkElements().find((x)=>x.id===id);
+        if(!element) return;
+        state.selectedElementId=id;
+        if(element.locked||!localArtworkEditable()){render();return;}
+        ev.preventDefault();
+        const svg=group.ownerSVGElement;
+        if(!svg?.createSVGPoint) return;
+        const point=(event)=>{
+          const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;
+          return p.matrixTransform(svg.getScreenCTM().inverse());
+        };
+        const start=point(ev),startX=Number(element.x||0),startY=Number(element.y||0);
+        try{group.setPointerCapture(ev.pointerId);}catch{}
+        group.onpointermove=(move)=>{
+          if(move.pointerId!==ev.pointerId) return;
+          const p=point(move),g=geometry();
+          element.x=Math.max(0,Math.min(g.totalWidth-Math.max(1,Number(element.w||1)),startX+(p.x-start.x)));
+          element.y=Math.max(0,Math.min(g.totalHeight-Math.max(1,Number(element.h||1)),startY+(p.y-start.y)));
+          group.setAttribute("transform",elementTransform(element));
+        };
+        const finish=()=>{
+          group.onpointermove=null;group.onpointerup=null;group.onpointercancel=null;
+          persistLocalDraft();render();
+        };
+        group.onpointerup=finish;group.onpointercancel=finish;
+      };
+    });
+  }
+
   async function handleAction(action){
+    if(action==="upload-image-trigger"){document.getElementById("art-image-file")?.click();return;}
+    if(action==="upload-qr-trigger"){document.getElementById("art-qr-image-file")?.click();return;}
+    if(action==="add-generated-qr") return addGeneratedQrElement();
+    if(action==="delete-element") return deleteSelectedElement();
     if(action==="new-local") return resetLocalArtwork();
     if(action==="save") return saveDraft();
     if(action==="preflight") return runPreflightAction();
@@ -1846,9 +2113,19 @@
     finally{state.apiBusy=false;render();}
   }
 
+  function proofPdfElements(artwork=state.artwork){
+    return (Array.isArray(artwork.elements)?artwork.elements:[]).map((e)=>{
+      if(e.type==="qr-generated"){
+        try{return {...e,matrix:C.qrMatrix(e.payload||"",e.ecc||"M").matrix};}
+        catch{return {...e,matrix:[]};}
+      }
+      return {...e};
+    });
+  }
+
   function exportProof(){
     const g=geometry(), c=computed(), code=C.code128Bars(state.artwork.barcode,{moduleMm:.42,heightMm:25}), qr=C.qrMatrix(state.artwork.qr,"M").matrix;
-    const blob=P.createPdfBlob({artwork:state.artwork,geometry:g,computed:c,codeModel:code,qrMatrix:qr,mode:"proof"});
+    const blob=P.createPdfBlob({artwork:state.artwork,geometry:g,computed:c,codeModel:code,qrMatrix:qr,customElements:proofPdfElements(state.artwork),mode:"proof"});
     downloadBlob(fileBase()+"_Proof.pdf",blob); toast("已生成 1:1 mm Vector Proof PDF（Code128 + QR 均为矢量）","success");
   }
 

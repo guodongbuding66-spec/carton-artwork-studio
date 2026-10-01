@@ -12,6 +12,12 @@ assert.doesNotMatch(app,/async function importBatch\(file\)\{\s*if\(!permitted\(
 assert.match(app,/data-action="dry-run" \$\{state\.batchRecords\.length\?"":"disabled"\}/);
 assert.match(app,/data-action="batch-generate" \$\{stats\.passed&&!state\.batchGenerating\?"":"disabled"\}/);
 assert.match(app,/dropzone\.ondrop=async\(e\)=>/);
+assert.match(app,/async function addUploadedArtworkElement\(file,type="image"\)/);
+assert.match(app,/function addGeneratedQrElement\(\)/);
+assert.match(app,/querySelectorAll\("\[data-art-element\]"\)/);
+assert.match(app,/data-action="upload-image-trigger"/);
+assert.match(app,/data-action="upload-qr-trigger"/);
+assert.match(app,/data-action="add-generated-qr"/);
 assert.match(app,/state\.artwork\[k\]=el\.type==="number"\?Number\(el\.value\):el\.value;\s*persistLocalDraft\(\);/);
 
 console.log("Local workspace usability regression tests passed.");
