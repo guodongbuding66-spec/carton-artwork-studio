@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const app=fs.readFileSync("assets/app.js","utf8");
+const domainSource=fs.readFileSync("assets/domain.js","utf8");
 
 assert.match(app,/function localArtworkEditable\(\)\{return !\["in_review","approved"\]\.includes\(state\.artwork\.status\);\}/);
 assert.match(app,/function isArtworkLocked\(\)\{return !localArtworkEditable\(\);\}/);
@@ -184,8 +185,8 @@ assert.match(app,/data-element-wrap/);
 assert.match(app,/data-element-prop="lineHeight"/);
 assert.match(app,/D\.textLayout\(e,D\.resolvedElementText/);
 assert.match(app,/function addShippingMarkBlock\(\)/);
-assert.match(app,/blockType:"SHIPPING_MARK_STANDARD"/);
-assert.match(app,/blockVersion:"1\.1\.0"/);
+assert.match(app,/D\.createShippingMarkBlockElements\(state\.artwork,panel,state\.factories/);
+assert.match(app,/version:def\?\.version\|\|"1\.1\.0"/);
 assert.match(app,/data-action="add-shipping-mark-block"/);
 assert.match(app,/D\.effectiveImageDpi\(selected\)/);
 assert.match(app,/D\.productionElementQualification\(selected\)/);
@@ -218,9 +219,17 @@ assert.match(app,/function reflowShippingMarkGroup\(groupId,options=\{\}\)/);
 assert.match(app,/D\.shippingMarkBlockLayout\(state\.artwork,panel,state\.factories/);
 assert.match(app,/function refreshControlledShippingBlocks\(\)/);
 assert.match(app,/refreshControlledShippingBlocks\(\);\s*refreshAutoFitTextElements\(\);/);
-assert.match(app,/blockSlot:slot\.id/);
-assert.match(app,/locked:true,visible:true/);
+assert.match(domainSource,/blockType:root\.type/);
+assert.match(domainSource,/blockVersion:version/);
+assert.match(domainSource,/blockSlot:slot\.id/);
+assert.match(domainSource,/const locked=options\.locked!==false/);
+assert.match(domainSource,/locked,\s*visible:true/);
 assert.match(app,/data-action="reflow-controlled-block"/);
 assert.match(app,/if\(action==="reflow-controlled-block"\) return reflowSelectedControlledBlock\(\)/);
 assert.match(app,/allowControlledOversized/);
 assert.match(app,/String\(element\.blockVersion\|\|""\)!=="1\.1\.0"/);
+
+
+assert.match(app,/controlledShippingMark:\{enabled:true,panelId:"TOP_FACE",version:"1\.1\.0"\}/);
+assert.match(app,/customElements:proofPdfElements\(art\)/);
+assert.match(app,/controlledPreset:\{type:"SHIPPING_MARK_STANDARD",version:"1\.1\.0",panelId:"TOP_FACE"\}/);

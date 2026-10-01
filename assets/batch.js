@@ -60,7 +60,52 @@
       templateCode: defaults.templateCode || "US_SIDE_SEAL",
       templateVersion: defaults.templateVersion || "2026.05.20",
       templateName: defaults.templateName || "美线侧封箱",
-      market: defaults.market || "US"
+      market: defaults.market || "US",
+      safeMarginMm: Number(defaults.safeMarginMm ?? 22),
+      elements: []
+    };
+  }
+
+  function applyControlledPreset(artwork, domain, factories = [], preset = {}) {
+    if(!preset?.enabled) return {ok:true,artwork,preset:null};
+    if(!domain?.sideSealGeometry||!domain?.createShippingMarkBlockElements){
+      return {ok:false,artwork,reason:"CONTROLLED_PRESET_DOMAIN_UNAVAILABLE"};
+    }
+    const geometry=domain.sideSealGeometry(artwork);
+    const panelId=String(preset.panelId||"TOP_FACE");
+    const panel=geometry.panels.find((p)=>p.id===panelId)||null;
+    if(!panel) return {ok:false,artwork,reason:"CONTROLLED_PRESET_PANEL_INVALID",panelId};
+
+    const version=String(preset.version||"1.1.0");
+    const rowKey=String(preset.rowKey||artwork.sku||"row").replace(/[^a-zA-Z0-9_-]+/g,"_");
+    const built=domain.createShippingMarkBlockElements(artwork,panel,factories,{
+      version,
+      groupId:`batch-shipping-${rowKey}`,
+      locked:true,
+      idFactory:(slot,index)=>`batch-${rowKey}-${String(slot.id||index).toLowerCase()}`
+    });
+    if(!built.ok){
+      return {
+        ok:false,
+        artwork,
+        reason:String(built.reason||"CONTROLLED_PRESET_LAYOUT_FAILED"),
+        panelId,
+        version,
+        detail:built
+      };
+    }
+    artwork.elements=[...(Array.isArray(artwork.elements)?artwork.elements:[]),...built.elements];
+    return {
+      ok:true,
+      artwork,
+      preset:{
+        type:"SHIPPING_MARK_STANDARD",
+        version:built.version,
+        panelId,
+        groupId:built.groupId,
+        elementCount:built.elements.length,
+        totalHeightMm:built.totalH
+      }
     };
   }
 
@@ -68,7 +113,7 @@
     return { row, cell: cell || "", field, message, severity, source };
   }
 
-  function validateArtworkRow(artwork, record, domain, optionsCodes) {
+  function validateArtworkRow(artwork, record, domain, optionsCodes, factories = []) {
     const out = [];
     const row = record._row;
     const cells = record._cells || {};
@@ -105,7 +150,7 @@
     }
 
     if (domain?.runPreflight) {
-      const groups = domain.runPreflight(artwork);
+      const groups = domain.runPreflight(artwork,factories);
       for (const check of Object.values(groups).flat()) {
         if (check.status === "error") {
           out.push(issue(row, "", check.id, check.detail || check.title, "error", "preflight"));
@@ -135,7 +180,27 @@
     }
     return (records || []).map((record) => {
       const artwork = recordToArtwork(record, options);
-      const issues = dedupeIssues([...(byRow.get(record._row) || []), ...validateArtworkRow(artwork, record, domain, options.codes)]);
+      const presetResult=applyControlledPreset(
+        artwork,
+        domain,
+        options.factories||[],
+        options.controlledShippingMark
+          ? {...options.controlledShippingMark,rowKey:`r${record._row}-${artwork.sku||"sku"}`}
+          : null
+      );
+      const presetIssues=presetResult.ok?[]:[issue(
+        record._row,
+        "",
+        "controlled-shipping-mark",
+        `Controlled Shipping Mark preset failed: ${presetResult.reason}`,
+        "error",
+        "controlled-preset"
+      )];
+      const issues = dedupeIssues([
+        ...(byRow.get(record._row) || []),
+        ...presetIssues,
+        ...validateArtworkRow(artwork, record, domain, options.codes, options.factories||[])
+      ]);
       const errors = issues.filter((i) => i.severity !== "warning");
       const warnings = issues.filter((i) => i.severity === "warning");
       return {
@@ -144,6 +209,7 @@
         status: errors.length ? "ERROR" : "PASS",
         issue: errors[0] ? `${errors[0].cell ? errors[0].cell + " · " : ""}${errors[0].message}` : (warnings[0] ? `WARNING · ${warnings[0].message}` : "—"),
         artwork,
+        controlledPreset:presetResult.preset||null,
         sourceRecord: record,
         issues,
         errors,
@@ -181,6 +247,7 @@
     normalizeCode,
     resolveFactory,
     recordToArtwork,
+    applyControlledPreset,
     validateArtworkRow,
     buildReview,
     summarize,

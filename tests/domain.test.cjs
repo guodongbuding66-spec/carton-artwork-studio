@@ -660,4 +660,25 @@ test("Shipping Mark 1.1 validator rejects slot/binding mismatch", () => {
   assert.ok(invalid.wrongSlots.length>0||invalid.duplicates.length>0);
 });
 
+test("shared Shipping Mark builder creates a complete locked 1.1 block", () => {
+  const art={...D.defaultArtwork,sku:"BATCH-001",contractNo:"PO-001"};
+  const panel=D.sideSealGeometry(art).panels.find(x=>x.id==="TOP_FACE");
+  const built=D.createShippingMarkBlockElements(art,panel,D.factories,{
+    version:"1.1.0",
+    groupId:"grp-batch",
+    locked:true,
+    idFactory:(slot)=>"slot-"+slot.id.toLowerCase()
+  });
+  assert.equal(built.ok,true);
+  assert.equal(built.version,"1.1.0");
+  assert.equal(built.elements.length,6);
+  assert.equal(new Set(built.elements.map(x=>x.groupId)).size,1);
+  assert.equal(built.elements.every(x=>x.locked),true);
+  assert.equal(built.elements.every(x=>x.blockType==="SHIPPING_MARK_STANDARD"),true);
+  assert.equal(built.elements.every(x=>x.blockVersion==="1.1.0"),true);
+  assert.equal(built.elements.map(x=>x.blockSlot).join(","),"ITEM,CONTRACT,WEIGHT,MEAS,CRN,ORIGIN");
+  const validation=D.validateShippingMarkBlock(built.elements);
+  assert.equal(validation.ok,true);
+});
+
 console.log("Domain tests passed.");
