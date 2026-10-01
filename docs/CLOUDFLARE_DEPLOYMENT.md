@@ -51,7 +51,7 @@ Use a narrowly scoped Cloudflare API token. Do not commit it.
 
 ## 3. Deploy staging
 
-The staging workflow `.github/workflows/deploy-staging.yml` can be started manually or by advancing the dedicated `staging` branch. A branch-triggered deployment is accepted only when that exact commit is already contained in `main`.
+Primary staging deployment now uses Cloudflare Workers Builds connected directly to GitHub. The GitHub Actions workflow `.github/workflows/deploy-staging.yml` is retained as a manual fallback only.
 
 1. runs `npm run check`;
 2. generates a staging Wrangler config;
@@ -61,7 +61,7 @@ The staging workflow `.github/workflows/deploy-staging.yml` can be started manua
 6. runs an Access-authenticated post-deploy smoke test for service identity, version, D1, R2, Assets, auth-bypass state, and trusted-validator configuration;
 7. uploads `staging-acceptance.json` as a GitHub Actions artifact.
 
-Advance `staging` only to a reviewed commit already merged into `main`. The workflow verifies ancestry before any migration or deployment step. Trigger it only after the secrets and variables above are configured.
+Advance `staging` only to a reviewed commit already merged into `main`. Configure Cloudflare Workers Builds to watch the `staging` branch and use deploy command `npm run deploy:staging`. This command runs repository checks, applies remote D1 migrations, deploys the Worker with D1 + KV bindings, and executes the staging smoke test.
 
 ## 4. Configure Cloudflare Access
 
@@ -145,3 +145,30 @@ PRODUCTION = Workers + D1 + R2
 ```
 
 KV does not satisfy the Production Artifact Store gate. Production PDF and Production Bundle endpoints reject KV-backed environments server-side.
+
+
+## Cloudflare Workers Builds
+
+The preferred staging CI path is Cloudflare-native Git integration:
+
+```text
+GitHub staging branch
+        ↓
+Cloudflare Workers Builds
+        ↓
+npm run deploy:staging
+        ↓
+npm run check
+D1 migrations apply --remote
+wrangler deploy
+staging smoke
+```
+
+Use:
+
+- Repository: `guodongbuding66-spec/carton-artwork-studio`
+- Production branch for this Worker: `staging`
+- Deploy command: `npm run deploy:staging`
+- Wrangler config: `wrangler.staging.jsonc`
+
+This path does not require storing a Cloudflare API token in GitHub Secrets because the build executes inside Cloudflare's native CI environment.
