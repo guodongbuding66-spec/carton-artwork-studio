@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "carton-artwork-studio-staging",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-30",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "AUTH_BYPASS": "0",
+    "BOOTSTRAP_ADMIN_EMAIL": "",
+    "PDFX_VALIDATOR_URL": ""
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "carton-artwork-studio-staging",
+    "database_id": "2639d6b0-b7da-4852-ab9a-a78dd275e12b",
+    "migrations_dir": "migrations"
+  }],
+  "kv_namespaces": [{
+    "binding": "ARTWORK_KV",
+    "id": "110d27f4e93c4c7b95cc0745fad7271e"
+  }]
+}
