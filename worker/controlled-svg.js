@@ -1,3 +1,4 @@
+export const CONTROLLED_SVG_PROFILE="CAS_SVG_K_ONLY_1";
 const MAX_SVG_BYTES=512*1024;
 const ALLOWED_TAGS=new Set(["svg","g","path","rect","line","polyline","polygon","circle","ellipse"]);
 const BLOCKED_PATTERNS=[
@@ -247,7 +248,7 @@ export function parseControlledSvgDataUrl(dataUrl){
   if(stripped) fail("SVG_TEXT_CONTENT_NOT_ALLOWED",stripped.slice(0,80));
   if(!primitives.length) fail("SVG_NO_DRAWABLE_PRIMITIVES");
   return {
-    profile:"CAS_SVG_K_ONLY_1",
+    profile:CONTROLLED_SVG_PROFILE,
     viewBox:{x:vb[0],y:vb[1],w:vb[2],h:vb[3]},
     primitives,
     primitiveCount:primitives.length
