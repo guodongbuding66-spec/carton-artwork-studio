@@ -1465,6 +1465,133 @@
     }catch(e){toast(e.message||String(e),"error");}
   }
 
+  async function loadPromotionEvidence(renderAfter=true){
+    if(!state.apiOnline||!permitted("auditRead")){
+      state.pdfxPromotionReadiness=null;
+      state.pdfxPromotionEvidence=[];
+      if(renderAfter) render();
+      return;
+    }
+    try{
+      const [readiness,evidence]=await Promise.all([
+        api.pdfxPromotionReadiness(),
+        api.pdfxPromotionEvidence()
+      ]);
+      state.pdfxPromotionReadiness=readiness.data||null;
+      state.pdfxPromotionEvidence=evidence.data||[];
+    }catch(e){
+      state.pdfxPromotionReadiness=null;
+      state.pdfxPromotionEvidence=[];
+      toast("Promotion evidence load failed: "+(e.message||e),"error");
+    }
+    if(renderAfter) render();
+  }
+
+  function promotionTestedAt(){
+    const raw=document.getElementById("promotion-tested-at")?.value||"";
+    if(!raw) return "";
+    const d=new Date(raw);
+    return Number.isFinite(d.getTime())?d.toISOString():"";
+  }
+
+  async function uploadPromotionEvidence(){
+    if(!state.apiOnline||!permitted("productionPolicyWrite")){toast("需要 Production Policy Write 权限。","error");return;}
+    const type=document.getElementById("promotion-evidence-type")?.value||"";
+    const file=document.getElementById("promotion-evidence-file")?.files?.[0]||null;
+    const artifactSha256=document.getElementById("promotion-artifact-sha")?.value?.trim().toLowerCase()||"";
+    const printServiceProvider=document.getElementById("promotion-provider")?.value?.trim()||"";
+    const ripProduct=document.getElementById("promotion-rip-product")?.value?.trim()||"";
+    const ripVersion=document.getElementById("promotion-rip-version")?.value?.trim()||"";
+    const outputDevice=document.getElementById("promotion-output-device")?.value?.trim()||"";
+    const testedAt=promotionTestedAt();
+    const actualProductionWorkflow=Boolean(document.getElementById("promotion-actual-workflow")?.checked);
+    const noPdfRepair=Boolean(document.getElementById("promotion-no-repair")?.checked);
+    if(!file){toast("请选择 Evidence File。","error");return;}
+
+    let metadata={result:"PASS"};
+    if(type==="SECONDARY_VALIDATION"){
+      metadata={
+        ...metadata,
+        profile:"PDF/X-4",
+        artifactSha256,
+        validator:"Enfocus PitStop Pro",
+        version:"26.07"
+      };
+      if(!/^[0-9a-f]{64}$/.test(artifactSha256)){toast("Secondary Validation 必须填写 64 位 Artifact SHA-256。","error");return;}
+    }else if(type==="RIP_QUALIFICATION"){
+      metadata={
+        ...metadata,
+        suite:"Ghent PDF Output Suite",
+        suiteVersion:"5.0",
+        conformanceLevel:"LEVEL_1_PLUS_2",
+        printServiceProvider,ripProduct,ripVersion,outputDevice,
+        actualProductionWorkflow,testedAt
+      };
+      if(!printServiceProvider||!ripProduct||!ripVersion||!outputDevice||!testedAt){
+        toast("RIP Qualification 必须填写印厂、RIP/DFE、版本、设备和测试时间。","error");return;
+      }
+    }else if(type==="PRODUCTION_TRIAL"){
+      metadata={
+        ...metadata,
+        profile:"PDF/X-4",
+        artifactSha256,
+        printServiceProvider,ripProduct,ripVersion,outputDevice,
+        actualProductionWorkflow,noPdfRepair,testedAt
+      };
+      if(!/^[0-9a-f]{64}$/.test(artifactSha256)||!printServiceProvider||!ripProduct||!ripVersion||!outputDevice||!testedAt){
+        toast("Production Trial 必须填写 Artifact SHA、印厂、RIP/DFE、版本、设备和测试时间。","error");return;
+      }
+      if(!noPdfRepair){toast("Production Trial 必须确认 No PDF repair / rewrite。","error");return;}
+    }else{
+      toast("Evidence Type 无效。","error");return;
+    }
+
+    state.promotionEvidenceBusy=true;render();
+    try{
+      await api.uploadPdfxPromotionEvidence(file,type,metadata);
+      await loadPromotionEvidence(false);
+      if(permitted("admin")) await loadSystemReadiness(false);
+      toast("Promotion Evidence 已上传为 DRAFT","success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }finally{
+      state.promotionEvidenceBusy=false;
+      render();
+    }
+  }
+
+  async function handlePromotionEvidenceAction(action,id){
+    const evidence=state.pdfxPromotionEvidence.find(x=>x.id===id);
+    if(!evidence){toast("Promotion Evidence not found.","error");return;}
+    try{
+      if(action==="download"){
+        const result=await api.downloadPdfxPromotionEvidence(id);
+        downloadBlob(result.filename||evidence.filename||"evidence.bin",result.blob);
+        return;
+      }
+      if(action==="submit"){
+        if(!permitted("productionPolicyWrite")){toast("需要 Production Policy Write 权限。","error");return;}
+        await api.submitPdfxPromotionEvidence(id,{reason:"Submitted from Admin / PDF/X Promotion Evidence"});
+      }else if(action==="approve"||action==="reject"){
+        if(!permitted("productionPolicyApprove")){toast("需要 Production Policy Approve 权限。","error");return;}
+        await api.decidePdfxPromotionEvidence(id,action==="approve"?"APPROVE":"REJECT",{
+          comment:action==="approve"
+            ?"Evidence bytes, SHA binding and qualification metadata reviewed."
+            :"Promotion evidence requires replacement or correction."
+        });
+      }
+      await loadPromotionEvidence(false);
+      if(permitted("admin")) await loadSystemReadiness(false);
+      if(permitted("auditRead")) await loadAudit(false);
+      render();
+      toast(`${evidence.evidenceType} · ${action} completed`,"success");
+    }catch(e){
+      const detail=Array.isArray(e.detail)?` · ${e.detail.join(" · ")}`:"";
+      toast((e.message||String(e))+detail,"error");
+    }
+  }
+
   async function loadSystemReadiness(renderAfter=true){
     if(!state.apiOnline||!permitted("admin")){
       state.systemReadiness=null;
