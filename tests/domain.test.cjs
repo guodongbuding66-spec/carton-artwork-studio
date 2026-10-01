@@ -340,4 +340,44 @@ test("auto-fit reports failure when minimum font still cannot fit", () => {
   assert.equal(result.fontSizePt,12);
 });
 
+test("rotated visual bounds swap dimensions at 90 degrees", () => {
+  const v=D.elementVisualBounds({x:100,y:100,w:20,h:100,rotation:90});
+  assert.ok(Math.abs(v.width-100)<1e-9);
+  assert.ok(Math.abs(v.height-20)<1e-9);
+  assert.ok(Math.abs(v.centerX-110)<1e-9);
+  assert.ok(Math.abs(v.centerY-150)<1e-9);
+  assert.ok(Math.abs(v.left-60)<1e-9);
+  assert.ok(Math.abs(v.right-160)<1e-9);
+});
+
+test("rotated element crossing a fold blocks even when raw box is inside panel", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const element={
+    id:"rotated-fold",type:"text",name:"Rotated Fold",
+    x:p.x+p.w-25,y:p.y+120,w:20,h:100,rotation:45,
+    locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    safeAreaExempt:true,text:"ROTATED",fontSizePt:9,fontWeight:"normal",textAlign:"left"
+  };
+  assert.ok(element.x>=p.x && element.x+element.w<=p.x+p.w,"Raw unrotated box should be inside panel");
+  const visual=D.elementVisualBounds(element);
+  assert.ok(visual.right>p.x+p.w,"Rotated visual bounds should cross the right fold");
+  const assets=D.runPreflight({...D.defaultArtwork,elements:[element]}).Assets;
+  assert.ok(assets.some(x=>x.id==="asset-panel-bounds-rotated-fold"&&x.status==="error"&&x.blocking));
+});
+
+test("rotated safe-area crossing blocks using visual bounds", () => {
+  const g=D.sideSealGeometry(D.defaultArtwork);
+  const p=g.panels.find(x=>x.id==="TOP_FACE");
+  const element={
+    id:"rotated-safe",type:"symbol",name:"Rotated Safe",
+    x:p.x+24,y:p.y+100,w:20,h:80,rotation:45,
+    locked:false,visible:true,panelId:p.id,constrainToPanel:true,
+    safeAreaExempt:false,symbolKey:"KEEP_DRY"
+  };
+  const assets=D.runPreflight({...D.defaultArtwork,safeMarginMm:22,elements:[element]}).Assets;
+  assert.ok(assets.some(x=>x.id==="asset-panel-bounds-rotated-safe"&&x.status==="pass"));
+  assert.ok(assets.some(x=>x.id==="asset-safe-area-rotated-safe"&&x.status==="error"&&x.blocking));
+});
+
 console.log("Domain tests passed.");
