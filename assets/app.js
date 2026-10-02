@@ -8,9 +8,10 @@
   const B = window.CartonBatch;
   const Z = window.CartonZip;
   const A = window.CartonApi;
+  const Q = window.CartonBoxDesign;
   const api = A?.createClient ? A.createClient() : null;
   const app = document.getElementById("app");
-  if (!D || !C || !P || !X || !B || !Z || !A || !api) throw new Error("Carton Artwork Studio modules failed to load.");
+  if (!D || !C || !P || !X || !B || !Z || !A || !Q || !api) throw new Error("Carton Artwork Studio modules failed to load.");
 
   const state = {
     page: "artwork",
@@ -20,6 +21,13 @@
     showDieline: true,
     showSafe: true,
     showPanels: true,
+    boxDesignView: "dieline",
+    boxShowBleed: true,
+    boxShowSafe: true,
+    boxShowPanels: true,
+    boxShowDimensions: true,
+    boxCameraX: -18,
+    boxCameraY: -32,
     pfBusy: false,
     templateTab: "overview",
     contentTab: "factories",
@@ -97,6 +105,7 @@
 
   const navItems = [
     ["dashboard", "▦", "工作台", "Dashboard"],
+    ["boxdesign", "◇", "纸盒设计", "Box Design"],
     ["artwork", "▣", "印刷稿", "Artwork"],
     ["batch", "⇅", "批量生成", "Batch"],
     ["reviewer", "◎", "审核中心", "Reviewer"],
@@ -615,6 +624,7 @@
     let body = "";
     let titleZh = "", titleEn = "";
     if (state.page === "dashboard") { titleZh="工作台"; titleEn="Dashboard"; body=renderDashboard(); }
+    if (state.page === "boxdesign") { titleZh="纸盒设计"; titleEn="Box Design"; body=renderBoxDesign(); }
     if (state.page === "artwork") { titleZh="印刷稿"; titleEn="Artwork"; body=renderArtwork(); }
     if (state.page === "batch") { titleZh="批量生成"; titleEn="Batch Generation"; body=renderBatch(); }
     if (state.page === "reviewer") { titleZh="审核中心"; titleEn="Batch Reviewer Center"; body=renderReviewer(); }
@@ -706,6 +716,139 @@
 
   function health(name,v){ return `<div style="margin:9px 0"><div style="display:flex;justify-content:space-between"><span>${name}</span><span class="mono">${v}%</span></div><div style="height:5px;background:#edf1f4;border-radius:5px;margin-top:5px"><i style="display:block;width:${v}%;height:100%;background:#16835d;border-radius:5px"></i></div></div>`; }
 
+  function boxMaterialOptions(){
+    const current=Q.settings(state.artwork).materialId;
+    return Q.MATERIALS.map((m)=>`<option value="${esc(m.id)}" ${current===m.id?"selected":""}>${esc(m.label)} · ${m.nominalThicknessMm} mm</option>`).join("");
+  }
+
+  function renderBoxDesign(){
+    const a=state.artwork;
+    const m=Q.metrics(a);
+    const s=Q.settings(a);
+    const locked=isArtworkLocked();
+    const view=state.boxDesignView;
+    const legend=Q.layerLegend().map((x)=>`<div class="box-layer-item"><i style="--layer-color:${x.color}"></i><span>${esc(x.label)}</span></div>`).join("");
+    const structureChecks=[
+      ["Structure",s.boxType==="US_SIDE_SEAL","US_SIDE_SEAL · qualified geometry"],
+      ["Thickness",s.paperThicknessMm>=.2&&s.paperThicknessMm<=10,`${D.round(s.paperThicknessMm,2)} mm`],
+      ["Bleed",s.bleedMm>=0&&s.bleedMm<=20,`${D.round(s.bleedMm,2)} mm`],
+      ["Safe area",Number(a.safeMarginMm)>=0&&Number(a.safeMarginMm)<=100,`${D.round(Number(a.safeMarginMm||0),1)} mm`]
+    ];
+    const preview=view==="3d"
+      ? `<div class="box-design-3d-wrap">
+          ${Q.preview3dMarkup(a,{rotateX:state.boxCameraX,rotateY:state.boxCameraY})}
+          <div class="box-camera-controls">
+            <div class="box-camera-presets">
+              <button class="tool" data-box-camera-preset="iso">Iso</button>
+              <button class="tool" data-box-camera-preset="front">Front</button>
+              <button class="tool" data-box-camera-preset="top">Top</button>
+            </div>
+            <label><span>Rotate X</span><input type="range" min="-70" max="30" step="1" value="${state.boxCameraX}" data-box-camera="x"/></label>
+            <label><span>Rotate Y</span><input type="range" min="-180" max="180" step="1" value="${state.boxCameraY}" data-box-camera="y"/></label>
+          </div>
+        </div>`
+      : `<div class="box-dieline-canvas"><div class="box-dieline-sheet">${Q.structureSvg(a,{
+          showBleed:state.boxShowBleed,
+          showSafe:state.boxShowSafe,
+          showPanels:state.boxShowPanels,
+          showDimensions:state.boxShowDimensions
+        })}</div></div>`;
+
+    return `
+      <section class="page-hero box-design-hero">
+        <div class="page-hero-copy">
+          <div class="page-eyebrow">Parametric packaging structure</div>
+          <h1>纸盒结构设计工作台</h1>
+          <p>尺寸、纸厚、出血、刀模与 3D 结构预览保持同一份参数源；生产审核仍沿用 Revision / Preflight / Four-eyes。</p>
+        </div>
+        <div class="box-design-hero-meta">
+          <div><span>Structure</span><strong>US_SIDE_SEAL</strong></div>
+          <div><span>Geometry</span><strong>mm canonical</strong></div>
+          <div><span>Status</span><strong class="ok">Qualified</strong></div>
+        </div>
+      </section>
+
+      <div class="box-design-layout">
+        <aside class="card box-structure-panel">
+          <div class="card-head card-head-roomy"><div><div class="page-eyebrow">Structure</div><h3>结构参数</h3></div><span class="badge green">LIVE</span></div>
+          <div class="card-body box-structure-form">
+            <div class="field"><label><span>盒型</span><span class="hint">Production qualified</span></label>
+              <select class="select" data-box-setting="boxType" ${locked?"disabled":""}><option value="US_SIDE_SEAL" selected>美线侧封箱 · US Side Seal</option></select>
+            </div>
+            <div class="box-size-grid">
+              <div class="field"><label><span>Length</span><span class="hint">mm</span></label><input class="input mono" type="number" step="0.1" min="1" data-box-mm="length" value="${D.round(m.lengthMm,1)}" ${locked?"disabled":""}/></div>
+              <div class="field"><label><span>Width</span><span class="hint">mm</span></label><input class="input mono" type="number" step="0.1" min="1" data-box-mm="width" value="${D.round(m.widthMm,1)}" ${locked?"disabled":""}/></div>
+              <div class="field"><label><span>Height</span><span class="hint">mm</span></label><input class="input mono" type="number" step="0.1" min="1" data-box-mm="height" value="${D.round(m.heightMm,1)}" ${locked?"disabled":""}/></div>
+            </div>
+            <div class="field"><label><span>尺寸口径</span><span class="hint">calibrated</span></label>
+              <select class="select" data-box-setting="dimensionMode" ${locked?"disabled":""}>
+                <option value="OUTER" ${s.dimensionMode==="OUTER"?"selected":""}>Outer / 外尺寸（当前校准）</option>
+              </select>
+            </div>
+            <div class="field"><label><span>纸板 / Material</span><span class="hint">3D preview</span></label>
+              <select class="select" data-box-material ${locked?"disabled":""}>${boxMaterialOptions()}</select>
+            </div>
+            <div class="row2">
+              <div class="field"><label><span>Paper thickness</span><span class="hint">mm</span></label><input class="input mono" type="number" min=".2" max="10" step=".05" data-box-setting="paperThicknessMm" value="${D.round(s.paperThicknessMm,2)}" ${locked?"disabled":""}/></div>
+              <div class="field"><label><span>Bleed</span><span class="hint">mm</span></label><input class="input mono" type="number" min="0" max="20" step=".5" data-box-setting="bleedMm" value="${D.round(s.bleedMm,1)}" ${locked?"disabled":""}/></div>
+            </div>
+            <div class="field"><label><span>Safe margin</span><span class="hint">mm</span></label><input class="input mono" type="number" min="0" max="100" step="1" data-box-setting="safeMarginMm" value="${D.round(Number(a.safeMarginMm||0),1)}" ${locked?"disabled":""}/></div>
+            <div class="notice">当前纸厚参与设计元数据、结构检查和 3D 视觉；正式裁切补偿仍由已批准的 US_SIDE_SEAL 几何规则控制，不会擅自改变生产刀模。</div>
+          </div>
+
+          <div class="section-title">Technical layers</div>
+          <div class="card-body box-layer-controls">
+            <label><input type="checkbox" data-box-layer="bleed" ${state.boxShowBleed?"checked":""}/> Bleed</label>
+            <label><input type="checkbox" data-box-layer="safe" ${state.boxShowSafe?"checked":""}/> Safe Zone</label>
+            <label><input type="checkbox" data-box-layer="panels" ${state.boxShowPanels?"checked":""}/> Panel Labels</label>
+            <label><input type="checkbox" data-box-layer="dimensions" ${state.boxShowDimensions?"checked":""}/> Dimensions</label>
+          </div>
+        </aside>
+
+        <section class="card box-design-main">
+          <div class="box-design-toolbar">
+            <div class="segmented">
+              <button class="${view==="dieline"?"active":""}" data-box-view="dieline">2D 刀模</button>
+              <button class="${view==="3d"?"active":""}" data-box-view="3d">3D 预览</button>
+            </div>
+            <div class="spacer"></div>
+            ${view==="dieline"?`<button class="btn" data-box-export="svg">导出 SVG 刀模</button>`:""}
+            <button class="btn primary" data-page="artwork">进入印刷稿设计 →</button>
+          </div>
+          ${preview}
+          <div class="box-design-legend">${legend}</div>
+        </section>
+
+        <aside class="box-design-inspector">
+          <section class="card">
+            <div class="card-head card-head-roomy"><div><div class="page-eyebrow">Live metrics</div><h3>结构摘要</h3></div></div>
+            <div class="card-body box-metrics">
+              <div><span>Carton L×W×H</span><strong class="mono">${D.round(m.lengthMm,1)} × ${D.round(m.widthMm,1)} × ${D.round(m.heightMm,1)}</strong><small>mm</small></div>
+              <div><span>Dieline</span><strong class="mono">${D.round(m.dielineWidthMm,1)} × ${D.round(m.dielineHeightMm,1)}</strong><small>mm</small></div>
+              <div><span>Bleed sheet</span><strong class="mono">${D.round(m.sheetWidthMm,1)} × ${D.round(m.sheetHeightMm,1)}</strong><small>mm</small></div>
+              <div><span>Sheet area</span><strong>${m.sheetAreaM2.toFixed(3)}</strong><small>m² estimate</small></div>
+              <div><span>Panels</span><strong>${m.panelCount}</strong><small>parametric faces</small></div>
+              <div><span>Closing tab</span><strong>${D.round(m.closingTabMm,1)}</strong><small>mm</small></div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head"><strong>Structure checks</strong><span class="badge blue">LIVE</span></div>
+            <div class="card-body box-check-list">
+              ${structureChecks.map(([name,ok,detail])=>`<div class="box-check ${ok?"pass":"fail"}"><i>${ok?"✓":"!"}</i><div><strong>${esc(name)}</strong><span>${esc(detail)}</span></div></div>`).join("")}
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head"><strong>Box library roadmap</strong><span class="badge gray">NEXT</span></div>
+            <div class="card-body box-library-roadmap">
+              <div><strong>Flip-top Mailer</strong><span>参数化锁底 / 翼片规则待校准</span></div>
+              <div><strong>Straight Tuck End</strong><span>插舌与糊口规则待校准</span></div>
+              <div><strong>Auto-lock Bottom</strong><span>底锁结构与折叠验证待校准</span></div>
+            </div>
+          </section>
+        </aside>
+      </div>`;
+  }
+
   function renderArtwork() {
     const s = summary();
     const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && state.apiBindings.r2 && Boolean(state.remoteArtworkId) && Boolean(state.productionReadiness?.ready);
@@ -721,6 +864,7 @@
             <div class="artwork-command-meta"><span>Template 2026.05.20</span><i></i><span>Revision <strong>${esc(state.artwork.revision)}</strong></span><i></i><span>SKU <strong class="mono">${esc(state.artwork.sku)}</strong></span></div>
           </div>
           <div class="artwork-command-actions">
+            <button class="btn" data-page="boxdesign">结构设计</button>
             <button class="btn" data-action="new-local">新建本地稿</button>
             <button class="btn" data-action="save" ${state.apiBusy||!localArtworkEditable()?"disabled":""}>${cloudWrite?"保存草稿":"保存本地草稿"}</button>
             <button class="btn" data-action="preflight" ${state.apiBusy?"disabled":""}>运行检查</button>
