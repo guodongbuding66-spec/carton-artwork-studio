@@ -4373,8 +4373,9 @@
     if(!state.apiOnline||!state.remoteArtworkId){toast("Reviewer decision 需要 Cloudflare API。","error");return;}
     if(decision==="APPROVE"&&!blockingCommentsResolved()){toast("请先解决所有 Blocking comment。","error");return;}
     state.apiBusy=true;render();
+    const artworkId=state.remoteArtworkId;
     try{
-      const response=await api.decision(state.remoteArtworkId,decision,{
+      const response=await api.decision(artworkId,decision,{
         revision:state.artwork.revision,
         comment:decision==="APPROVE"?"Preflight and artwork reviewed.":"Revision required."
       });
@@ -4383,8 +4384,14 @@
       await loadComments();
       await refreshRemoteRevisionMetadata(false);
       toast(decision==="APPROVE"?"Revision 已批准":"Revision 已退回","success");
-    }catch(e){toast(e.message||String(e),"error");}
-    finally{state.apiBusy=false;render();}
+    }catch(e){
+      if(e?.status===409&&["STALE_REVISION","APPROVAL_STATE_CHANGED","REVISION_NOT_IN_REVIEW","NOT_IN_REVIEW"].includes(e?.code)){
+        toast("审核状态已变化，已刷新到服务器当前 Revision。","error");
+        await openRemoteArtwork(artworkId);
+      }else{
+        toast(e.message||String(e),"error");
+      }
+    }finally{state.apiBusy=false;render();}
   }
 
   async function createNewRevision(){
@@ -4839,7 +4846,15 @@
       await loadReviewerQueue(jobId,false);
       await loadRemoteArtworks("");
     }catch(e){
-      toast(e.message||String(e),"error");
+      if(e?.status===409&&["STALE_REVISION","APPROVAL_STATE_CHANGED","REVISION_NOT_IN_REVIEW","NOT_IN_REVIEW"].includes(e?.code)){
+        state.reviewerError="审核队列已变化，已自动刷新。";
+        toast("Revision 已变化，审核队列已刷新，请重新确认当前稿件。","error");
+        await loadReviewerQueue(jobId,false);
+        await loadRemoteArtworks("");
+      }else{
+        state.reviewerError=e.message||String(e);
+        toast(e.message||String(e),"error");
+      }
     }finally{
       state.reviewerDecisionBusy=false;
       render();
