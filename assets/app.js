@@ -1630,15 +1630,77 @@
 
   function renderTemplates(){
     const tabs=["overview","variables","rules","layers","tests","versions"];
+    const tabMeta={
+      overview:["Overview","Controlled template identity"],
+      variables:["Variables","Canonical data bindings"],
+      rules:["Rules","Business and layout rules"],
+      layers:["Layers","Editor / proof / production visibility"],
+      tests:["Tests","Regression scenarios"],
+      versions:["Versions","Four-eyes controlled lifecycle"]
+    };
     const latest=state.templateVersions[0]||state.templates[0]||null;
+    const approved=state.templateVersions.find(v=>v.status==="APPROVED")||latest;
     const status=latest?.status||"NO DATA";
     const badge=status==="APPROVED"?"green":status==="SUBMITTED"?"blue":status==="REJECTED"?"red":"amber";
     const title=state.templateVersionsMeta?.displayName||state.artwork.templateName||"美线侧封箱";
     const code=state.templateVersionsMeta?.code||state.artwork.templateCode||"US_SIDE_SEAL";
-    return `<div class="split"><div class="subnav">${tabs.map(t=>`<button class="${state.templateTab===t?"active":""}" data-template-tab="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div><div>
-      <section class="card"><div class="card-head"><h3>${esc(title)}</h3><span class="badge ${badge}">${esc(status)}</span><span class="spacer"></span><span class="mono subtle">${esc(code)}${latest?.version?" · "+esc(latest.version):""}</span></div><div class="card-body">${templateBody()}</div></section>
-      ${state.templateEditor?renderTemplateEditor():""}
-    </div></div>`;
+    const versionCount=state.templateVersions.length;
+    const currentMeta=tabMeta[state.templateTab]||tabMeta.overview;
+    return `
+      <section class="page-hero templates-hero">
+        <div class="page-hero-copy">
+          <div class="page-eyebrow">Controlled template system</div>
+          <h1>${esc(title)}</h1>
+          <p>模板几何、变量、规则、图层与版本审批在同一受控上下文中维护。</p>
+        </div>
+        <div class="template-hero-identity">
+          <div><span>Template code</span><strong class="mono">${esc(code)}</strong></div>
+          <div><span>Current state</span><strong><span class="badge ${badge}">${esc(status)}</span></strong></div>
+          <div><span>Approved version</span><strong class="mono">${esc(approved?.version||"—")}</strong></div>
+        </div>
+      </section>
+
+      <div class="control-layout template-control-layout">
+        <aside class="control-nav card">
+          <div class="control-nav-head"><div class="page-eyebrow">Template modules</div><strong>Definition</strong></div>
+          <div class="control-nav-list">
+            ${tabs.map((t,i)=>`<button class="${state.templateTab===t?"active":""}" data-template-tab="${t}"><span>${String(i+1).padStart(2,"0")}</span><div><strong>${tabMeta[t][0]}</strong><small>${tabMeta[t][1]}</small></div></button>`).join("")}
+          </div>
+        </aside>
+
+        <main class="control-main template-control-main">
+          <section class="card control-work-card">
+            <div class="control-work-head">
+              <div><div class="page-eyebrow">Current module</div><h2>${esc(currentMeta[0])}</h2><p>${esc(currentMeta[1])}</p></div>
+              <div class="control-work-meta"><span class="badge ${badge}">${esc(status)}</span><span class="mono">${esc(code)}${latest?.version?" · "+esc(latest.version):""}</span></div>
+            </div>
+            <div class="control-work-body">${templateBody()}</div>
+          </section>
+          ${state.templateEditor?`<div class="template-editor-stage">${renderTemplateEditor()}</div>`:""}
+        </main>
+
+        <aside class="control-rail template-status-rail">
+          <section class="card status-rail-card">
+            <div class="card-head"><div><div class="page-eyebrow">Controlled state</div><h3>Template health</h3></div></div>
+            <div class="card-body">
+              <div class="rail-metric"><span>Versions</span><strong>${versionCount}</strong></div>
+              <div class="rail-metric"><span>Approved</span><strong>${state.templateVersions.filter(v=>v.status==="APPROVED").length}</strong></div>
+              <div class="rail-metric"><span>Submitted</span><strong>${state.templateVersions.filter(v=>v.status==="SUBMITTED").length}</strong></div>
+              <div class="rail-rule"><span>Preflight profile</span><strong class="mono">${esc(approved?.preflightProfile||"US_SIDE_SEAL_K_ONLY_V1")}</strong></div>
+              <div class="rail-rule"><span>Print profile</span><strong>K-only</strong></div>
+              <div class="rail-rule"><span>Geometry</span><strong>Parametric mm</strong></div>
+            </div>
+          </section>
+          <section class="card status-rail-card">
+            <div class="card-head"><h3>Governance</h3></div>
+            <div class="card-body">
+              <div class="rail-check pass"><i>✓</i><div><strong>Versioned definition</strong><span>Immutable approved revisions</span></div></div>
+              <div class="rail-check pass"><i>✓</i><div><strong>Four-eyes approval</strong><span>Designer ≠ approver</span></div></div>
+              <div class="rail-check pass"><i>✓</i><div><strong>Locked production rules</strong><span>CodeBlock / geometry gates</span></div></div>
+            </div>
+          </section>
+        </aside>
+      </div>`;
   }
 
   function templateBody(){
@@ -1698,7 +1760,16 @@
 
   function renderContent(){
     const tabs=["factories","customers","products","countries","shared"];
+    const labels={factories:"Factories",customers:"Customers",products:"Products",countries:"Countries",shared:"Shared"};
+    const hints={
+      factories:"Production factory + CRN master",
+      customers:"Customer reference records",
+      products:"Product master records",
+      countries:"Country / origin references",
+      shared:"Shared controlled reference data"
+    };
     let body="";
+    let recordCount=0;
     if(state.contentTab==="factories"){
       const factories=(state.apiOnline&&state.identity?state.factories:[]).map(f=>[
         f.name,
@@ -1707,8 +1778,10 @@
         f.effectiveAt||f.effective||"—",
         permitted("admin")?`<button class="btn small" data-impact="${esc(f.id)}">Impact / Edit</button>`:"—"
       ]);
+      recordCount=factories.length;
       const factoryCreator=permitted("admin")?`
-        <div class="card-body" style="border-bottom:1px solid #e5e9ee">
+        <div class="master-create-panel">
+          <div class="master-create-head"><div><div class="page-eyebrow">New controlled record</div><strong>Create Active Factory</strong></div><span class="badge blue">ADMIN</span></div>
           <div class="row2">
             <div class="field"><label>Factory Name</label><input id="factory-create-name" class="input" placeholder="Factory legal / master name"/></div>
             <div class="field"><label>CRN</label><input id="factory-create-crn" class="input mono" placeholder="Customs registration code"/></div>
@@ -1717,14 +1790,16 @@
             <div class="field"><label>Country</label><input id="factory-create-country" class="input" placeholder="China"/></div>
             <div class="field"><label>Effective</label><input id="factory-create-effective" class="input" placeholder="YYYY-MM-DD"/></div>
           </div>
-          <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-factory">Create Active Factory</button></div>
+          <div class="toolbar master-create-actions"><button class="btn primary" data-action="create-factory">Create Active Factory</button></div>
         </div>`:"";
-      body=`${factoryCreator}${factories.length
+      body=`${factoryCreator}<div class="master-table-region">${factories.length
         ? table(["Factory","CRN","Country","Effective",""],factories,true)
-        : '<div class="card-body"><div class="notice warn">Cloudflare Access / D1 未连接或当前没有 Active Factory Master。请由 Admin 创建正式 Factory；系统不会把 SAMPLE Factory 当成生产数据。</div></div>'}`;
+        : '<div class="empty-state master-empty"><strong>No active factory master</strong><span>Cloudflare Access / D1 未连接或当前没有 Active Factory。系统不会把 SAMPLE Factory 当成生产数据。</span></div>'}</div>`;
     }else{
       const ns=contentNamespace();
-      const rows=(state.referenceRecords||[]).filter(x=>x.namespace===ns).map(x=>[
+      const records=(state.referenceRecords||[]).filter(x=>x.namespace===ns);
+      recordCount=records.length;
+      const rows=records.map(x=>[
         x.code,
         x.displayName,
         x.effectiveAt||"—",
@@ -1732,7 +1807,8 @@
         `<span class="mono subtle">${esc(JSON.stringify(x.data||{}))}</span>`
       ]);
       const creator=permitted("referenceWrite")?`
-        <div class="card-body" style="border-bottom:1px solid #e5e9ee">
+        <div class="master-create-panel">
+          <div class="master-create-head"><div><div class="page-eyebrow">New controlled record</div><strong>Create ${ns}</strong></div><span class="badge blue">WRITE</span></div>
           <div class="row2">
             <div class="field"><label>Code</label><input id="master-code" class="input mono" placeholder="${ns}_CODE"/></div>
             <div class="field"><label>Display Name</label><input id="master-name" class="input" placeholder="Name"/></div>
@@ -1741,42 +1817,82 @@
             <div class="field"><label>Effective</label><input id="master-effective" class="input" placeholder="YYYY-MM-DD"/></div>
             <div class="field"><label>Data JSON</label><textarea id="master-json" class="input mono" rows="3">{}</textarea></div>
           </div>
-          <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-reference">Create ${ns}</button></div>
+          <div class="toolbar master-create-actions"><button class="btn primary" data-action="create-reference">Create ${ns}</button></div>
         </div>`:"";
-      body=`${creator}${rows.length?table(["Code","Name","Effective","Status","Data"],rows,true):'<div class="card-body"><div class="notice">当前命名空间暂无记录。</div></div>'}`;
+      body=`${creator}<div class="master-table-region">${rows.length?table(["Code","Name","Effective","Status","Data"],rows,true):'<div class="empty-state master-empty"><strong>No records</strong><span>当前命名空间暂无受控记录。</span></div>'}</div>`;
     }
-    return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.contentTab===t?"active":""}" data-content-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
+    return `
+      <section class="page-hero content-hero">
+        <div class="page-hero-copy">
+          <div class="page-eyebrow">Reference data governance</div>
+          <h1>Content Master</h1>
+          <p>把工厂、客户、产品、国家与共享数据从印刷稿中解耦，统一维护生效状态与引用来源。</p>
+        </div>
+        <div class="content-hero-stat"><span>Current namespace</span><strong>${esc(labels[state.contentTab]||state.contentTab)}</strong><small>${recordCount} controlled records</small></div>
+      </section>
+      <div class="control-layout content-control-layout">
+        <aside class="control-nav card">
+          <div class="control-nav-head"><div class="page-eyebrow">Master namespaces</div><strong>Reference data</strong></div>
+          <div class="control-nav-list">
+            ${tabs.map((t,i)=>`<button class="${state.contentTab===t?"active":""}" data-content-tab="${t}"><span>${String(i+1).padStart(2,"0")}</span><div><strong>${labels[t]}</strong><small>${hints[t]}</small></div></button>`).join("")}
+          </div>
+        </aside>
+        <main class="control-main">
+          <section class="card control-work-card master-work-card">
+            <div class="control-work-head">
+              <div><div class="page-eyebrow">Namespace</div><h2>${esc(labels[state.contentTab]||state.contentTab)}</h2><p>${esc(hints[state.contentTab]||"Controlled reference records")}</p></div>
+              <span class="control-count">${recordCount}</span>
+            </div>
+            <div class="control-work-body master-work-body">${body}</div>
+          </section>
+        </main>
+        <aside class="control-rail">
+          <section class="card status-rail-card">
+            <div class="card-head"><h3>Master-data rules</h3></div>
+            <div class="card-body">
+              <div class="rail-check pass"><i>✓</i><div><strong>Effective dating</strong><span>Production uses active records</span></div></div>
+              <div class="rail-check pass"><i>✓</i><div><strong>Revision freeze</strong><span>Historical snapshots remain immutable</span></div></div>
+              <div class="rail-check pass"><i>✓</i><div><strong>Impact analysis</strong><span>Factory edits expose affected artwork</span></div></div>
+            </div>
+          </section>
+        </aside>
+      </div>`;
   }
 
   function renderPolicyReadiness(){
     const readiness=state.productionReadiness||{ready:false,gates:[]};
-    const cards=(state.productionPolicies||[]).map(p=>{
+    const policies=state.productionPolicies||[];
+    const cards=policies.map(p=>{
       const badge=p.status==="APPROVED"?"green":p.status==="SUBMITTED"?"blue":p.status==="REJECTED"?"red":"amber";
       const editable=["DRAFT","REJECTED"].includes(p.status)&&permitted("productionPolicyWrite");
       const reviewable=p.status==="SUBMITTED"&&permitted("productionPolicyApprove");
-      return `<section class="card" style="margin-top:10px">
-        <div class="card-head"><h3>${esc(p.displayName)}</h3><span class="badge ${badge}">${esc(p.status)}</span><span class="spacer"></span><span class="mono subtle">${esc(p.code)}</span></div>
-        <div class="card-body">
+      return `<section class="policy-card">
+        <div class="policy-card-head"><div><span class="mono">${esc(p.code)}</span><strong>${esc(p.displayName)}</strong></div><span class="badge ${badge}">${esc(p.status)}</span></div>
+        <div class="policy-card-body">
           <div class="field"><label>Config JSON</label><textarea class="input mono" rows="5" id="policy-config-${esc(p.code)}" ${editable?"":"disabled"}>${esc(JSON.stringify(p.config||{},null,2))}</textarea></div>
           <div class="field"><label>Notes</label><input class="input" id="policy-notes-${esc(p.code)}" value="${esc(p.notes||"")}" ${editable?"":"disabled"}/></div>
-          <div class="subtle">Submitted: ${esc(p.submittedBy||"—")} · Approved: ${esc(p.approvedBy||"—")}</div>
-          <div class="toolbar" style="justify-content:flex-end;margin-top:10px">
+          <div class="policy-audit"><span>Submitted ${esc(p.submittedBy||"—")}</span><span>Approved ${esc(p.approvedBy||"—")}</span></div>
+          <div class="toolbar policy-actions">
             ${editable?`<button class="btn" data-policy-action="save" data-policy-code="${esc(p.code)}">Save Draft</button><button class="btn primary" data-policy-action="submit" data-policy-code="${esc(p.code)}">Submit</button>`:""}
-            ${reviewable?`<button class="btn" data-policy-action="reject" data-policy-code="${esc(p.code)}">Reject</button><button class="btn success" data-policy-action="approve" data-policy-code="${esc(p.code)}">Approve</button>`:""}
+            ${reviewable?`<button class="btn danger" data-policy-action="reject" data-policy-code="${esc(p.code)}">Reject</button><button class="btn success" data-policy-action="approve" data-policy-code="${esc(p.code)}">Approve</button>`:""}
           </div>
-          ${p.lastComment?`<div class="notice warn" style="margin-top:8px">Last review: ${esc(p.lastDecision||"")} · ${esc(p.lastComment)}</div>`:""}
+          ${p.lastComment?`<div class="notice warn policy-review-note">Last review: ${esc(p.lastDecision||"")} · ${esc(p.lastComment)}</div>`:""}
         </div>
       </section>`;
     }).join("");
-    const gates=(readiness.gates||[]).map(g=>[
-      g.displayName||g.code,
-      `<span class="badge ${g.approved&&g.valid?"green":"red"}">${g.approved&&g.valid?"READY":"BLOCKED"}</span>`,
-      g.status,
-      (g.errors||[]).join(" · ")||"—"
-    ]);
-    return `<div class="card-body"><div class="notice ${readiness.ready?"":"warn"}"><strong>Production Readiness: ${readiness.ready?"READY":"BLOCKED"}</strong><br>Barcode / QR / Font / PDF/X 四个业务政策必须全部通过四眼审批且配置有效，Production Export 才会解锁。</div></div>
-      ${gates.length?table(["Gate","Result","Policy Status","Validation"],gates,true):""}
-      ${cards||'<div class="card-body"><div class="notice">D1 尚无 Production Policy 数据。</div></div>'}`;
+    const gates=(readiness.gates||[]).map(g=>`
+      <div class="quality-gate ${g.approved&&g.valid?"pass":"fail"}">
+        <span class="quality-gate-icon">${g.approved&&g.valid?"✓":"!"}</span>
+        <div><strong>${esc(g.displayName||g.code)}</strong><span>${esc(g.status||"—")}</span></div>
+        <div class="quality-gate-result"><b>${g.approved&&g.valid?"READY":"BLOCKED"}</b><small>${esc((g.errors||[]).join(" · ")||"Validated")}</small></div>
+      </div>`).join("");
+    return `
+      <div class="quality-readiness-overview ${readiness.ready?"ready":"blocked"}">
+        <div><div class="page-eyebrow">Production export gate</div><h3>${readiness.ready?"Ready for production":"Production blocked"}</h3><p>Barcode / QR / Font / PDF/X policies must be approved and valid before Production Export unlocks.</p></div>
+        <span class="quality-readiness-state">${readiness.ready?"READY":"BLOCKED"}</span>
+      </div>
+      <div class="quality-gate-list">${gates||'<div class="empty-state"><strong>No readiness gates</strong><span>D1 尚未返回 Production Policy 门禁。</span></div>'}</div>
+      <div class="policy-grid">${cards||'<div class="empty-state"><strong>No production policies</strong><span>D1 尚无 Production Policy 数据。</span></div>'}</div>`;
   }
 
   function compareValue(value){
@@ -1916,19 +2032,66 @@
 
   function renderQuality(){
     const tabs=["profiles","reports","readiness","assets","compare"];
+    const meta={
+      profiles:["Profiles","Locked preflight definitions"],
+      reports:["Reports","Persistent preflight audit"],
+      readiness:["Readiness","Production policy gates"],
+      assets:["Assets","Controlled font / ICC / PDF-X evidence"],
+      compare:["Compare","Frozen revision evidence"]
+    };
+    const s=summary();
+    const readiness=state.productionReadiness||{ready:false,gates:[]};
+    const approvedAssets=(state.productionAssets||[]).filter(a=>a.status==="APPROVED").length;
     let body="";
     if(state.qualityTab==="profiles") body=table(["Profile","Version","Status","Checks"],[["US_SIDE_SEAL_K_ONLY_V1","1","<span class='badge green'>Locked</span>","Data / Layout / Codes / Print"]],true);
     if(state.qualityTab==="reports"){
-      const s=summary();
       const recent=(state.auditLogs||[]).filter(x=>x.objectType==="PREFLIGHT").slice(0,50).map(x=>[
         x.actor||"—",x.createdAt||"—",x.action||"RUN",x.objectId||"—",x.reason||"—"
       ]);
-      body=`<div class="card-body"><div class="kpis" style="margin:0"><div class="kpi"><div class="kpi-label">Current Errors</div><div class="kpi-value" style="color:#bc2f3b">${s.error}</div></div><div class="kpi"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:#a86b00">${s.warning}</div></div><div class="kpi"><div class="kpi-label">Passed</div><div class="kpi-value" style="color:#16835d">${s.pass}</div></div></div></div>${recent.length?table(["Actor","Time","Action","Preflight","Reason"],recent):`<div class="card-body"><div class="notice">暂无可读取的持久化 Preflight Audit 记录。当前工作稿检查结果显示在上方。</div></div>`}`;
+      body=`<div class="quality-report-stats"><div class="quality-stat is-error"><span>Errors</span><strong>${s.error}</strong></div><div class="quality-stat is-warning"><span>Warnings</span><strong>${s.warning}</strong></div><div class="quality-stat is-pass"><span>Passed</span><strong>${s.pass}</strong></div></div>${recent.length?table(["Actor","Time","Action","Preflight","Reason"],recent):'<div class="empty-state"><strong>No persistent preflight audit</strong><span>当前工作稿检查结果显示在右侧实时健康轨道。</span></div>'}`;
     }
     if(state.qualityTab==="readiness") body=renderPolicyReadiness();
     if(state.qualityTab==="assets") body=renderProductionAssets();
     if(state.qualityTab==="compare") body=renderRevisionCompare();
-    return `<div class="tabs" style="border:1px solid #d8dee6;border-radius:7px 7px 0 0">${tabs.map(t=>`<button class="tab ${state.qualityTab===t?"active":""}" data-quality-tab="${t}">${t}</button>`).join("")}</div><section class="card" style="border-radius:0 0 7px 7px">${body}</section>`;
+    const current=meta[state.qualityTab]||meta.profiles;
+    return `
+      <section class="page-hero quality-hero">
+        <div class="page-hero-copy"><div class="page-eyebrow">Prepress quality control</div><h1>Quality Control Center</h1><p>把 Preflight、生产政策、受控资产、PDF/X 证据与 Revision 差异集中成可审计的质量工作台。</p></div>
+        <div class="quality-hero-state ${s.blocking?"blocked":"clear"}"><span>Current draft</span><strong>${s.blocking?s.blocking+" blocking":"No blocking"}</strong><small>${s.error} errors · ${s.warning} warnings · ${s.pass} passed</small></div>
+      </section>
+      <div class="control-layout quality-control-layout">
+        <aside class="control-nav card">
+          <div class="control-nav-head"><div class="page-eyebrow">Quality modules</div><strong>Control center</strong></div>
+          <div class="control-nav-list">
+            ${tabs.map((t,i)=>`<button class="${state.qualityTab===t?"active":""}" data-quality-tab="${t}"><span>${String(i+1).padStart(2,"0")}</span><div><strong>${meta[t][0]}</strong><small>${meta[t][1]}</small></div></button>`).join("")}
+          </div>
+        </aside>
+        <main class="control-main quality-control-main">
+          <section class="card control-work-card quality-work-card">
+            <div class="control-work-head"><div><div class="page-eyebrow">Current module</div><h2>${esc(current[0])}</h2><p>${esc(current[1])}</p></div></div>
+            <div class="control-work-body quality-work-body">${body}</div>
+          </section>
+        </main>
+        <aside class="control-rail quality-live-rail">
+          <section class="card status-rail-card">
+            <div class="card-head"><div><div class="page-eyebrow">Live draft</div><h3>Preflight health</h3></div></div>
+            <div class="card-body">
+              <div class="rail-health-row error"><span>Errors</span><strong>${s.error}</strong></div>
+              <div class="rail-health-row warning"><span>Warnings</span><strong>${s.warning}</strong></div>
+              <div class="rail-health-row pass"><span>Passed</span><strong>${s.pass}</strong></div>
+            </div>
+          </section>
+          <section class="card status-rail-card">
+            <div class="card-head"><h3>Production context</h3></div>
+            <div class="card-body">
+              <div class="rail-rule"><span>Policy readiness</span><strong class="${readiness.ready?"rail-positive":"rail-negative"}">${readiness.ready?"READY":"BLOCKED"}</strong></div>
+              <div class="rail-rule"><span>Approved assets</span><strong>${approvedAssets}</strong></div>
+              <div class="rail-rule"><span>Artwork</span><strong class="mono">${state.remoteArtworkId?esc(String(state.remoteArtworkId).slice(0,10))+"…":"Not linked"}</strong></div>
+              <div class="rail-rule"><span>Stored revisions</span><strong>${(state.remoteRevisions||[]).length}</strong></div>
+            </div>
+          </section>
+        </aside>
+      </div>`;
   }
 
   function renderPromotionEvidenceRegistry(){
@@ -2063,25 +2226,56 @@
 
   function renderAdmin(){
     const roles=["OPERATOR","REVIEWER","TEMPLATE_DESIGNER","TEMPLATE_APPROVER","ADMIN"];
-    if(!permitted("admin")) return '<section class="card"><div class="card-body"><div class="notice warn">Admin 权限由 Cloudflare Access 身份 + D1 RBAC 决定。当前用户没有系统管理权限。</div></div></section>';
+    if(!permitted("admin")) return '<section class="page-hero admin-denied"><div class="page-hero-copy"><div class="page-eyebrow">Restricted workspace</div><h1>System Administration</h1><p>Admin 权限由 Cloudflare Access 身份 + D1 RBAC 决定。当前用户没有系统管理权限。</p></div><span class="badge red">ACCESS DENIED</span></section>';
     const userRows=state.adminUsers.map(u=>[
       u.email,
       u.displayName||"—",
       u.status,
-      roles.map(role=>`<label style="display:inline-block;margin:2px 8px 2px 0"><input type="checkbox" data-role-user="${esc(u.id)}" data-role="${role}" ${u.roles?.includes(role)?"checked":""}/> ${role}</label>`).join(""),
+      roles.map(role=>`<label class="role-check"><input type="checkbox" data-role-user="${esc(u.id)}" data-role="${role}" ${u.roles?.includes(role)?"checked":""}/> <span>${role}</span></label>`).join(""),
       `<button class="btn small" data-save-user-roles="${esc(u.id)}">Save Roles</button>`
     ]);
     const auditRows=(state.auditLogs||[]).slice(0,100).map(x=>[
       x.actor||"—",x.createdAt||"—",x.objectType||"—",x.action||"—",x.objectId||"—",x.reason||"—"
     ]);
+    const r=state.systemReadiness||{};
     return `
-      ${renderSystemReadiness()}
-      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Access / RBAC Users</h3><span class="subtle">Cloudflare Access 提供身份，D1 控制应用角色</span></div><div class="card-body">
-        <div class="row2"><div class="field"><label>Email</label><input id="admin-user-email" class="input" placeholder="name@company.com"/></div><div class="field"><label>Display Name</label><input id="admin-user-name" class="input" placeholder="Name"/></div></div>
-        <div class="toolbar" style="justify-content:flex-end"><button class="btn primary" data-action="create-user">Create User</button></div>
-      </div>${table(["Email","Name","Status","Roles",""],userRows,true)}</section>
-      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Four-eyes Approval</h3></div><div class="card-body"><div class="notice">提交人与 Reviewer 必须是不同身份。即使拥有 Admin 角色，也不能批准自己提交的同一 Revision。</div></div></section>
-      <section class="card" style="margin-top:12px"><div class="card-head"><h3>Audit Log</h3><span class="subtle">D1 immutable-style operation trail</span><span class="spacer"></span><button class="btn small" data-action="refresh-audit">Refresh</button></div>${auditRows.length?table(["Actor","Time","Object","Action","ID","Reason"],auditRows):'<div class="card-body"><div class="notice">暂无 Audit Log。</div></div>'}</section>`;
+      <section class="page-hero admin-hero">
+        <div class="page-hero-copy"><div class="page-eyebrow">Governance & operations</div><h1>System Administration</h1><p>系统就绪、生产能力证据、访问角色与审计轨迹在同一管理面板中维护。</p></div>
+        <div class="admin-hero-stats">
+          <div><span>Users</span><strong>${state.adminUsers.length}</strong></div>
+          <div><span>Staging</span><strong class="${r.stagingReady?"ok":"warn"}">${r.stagingReady?"READY":"CHECK"}</strong></div>
+          <div><span>Production</span><strong class="${r.productionReady?"ok":"warn"}">${r.productionReady?"READY":"GATED"}</strong></div>
+        </div>
+      </section>
+
+      <div class="admin-control-grid">
+        <main class="admin-main">
+          ${renderSystemReadiness()}
+        </main>
+        <aside class="admin-security-rail">
+          <section class="card admin-users-card">
+            <div class="card-head card-head-roomy"><div><div class="page-eyebrow">Access control</div><h3>RBAC Users</h3></div><span class="spacer"></span><span class="control-count">${state.adminUsers.length}</span></div>
+            <div class="card-body admin-user-create">
+              <div class="field"><label>Email</label><input id="admin-user-email" class="input" placeholder="name@company.com"/></div>
+              <div class="field"><label>Display Name</label><input id="admin-user-name" class="input" placeholder="Name"/></div>
+              <button class="btn primary" data-action="create-user">Create User</button>
+            </div>
+            <div class="admin-user-table">${table(["Email","Name","Status","Roles",""],userRows,true)}</div>
+          </section>
+          <section class="card four-eyes-card">
+            <div class="card-head"><div><div class="page-eyebrow">Approval safety</div><h3>Four-eyes rule</h3></div></div>
+            <div class="card-body">
+              <div class="rail-check pass"><i>✓</i><div><strong>Independent reviewer</strong><span>提交人与 Reviewer 必须是不同身份。</span></div></div>
+              <div class="rail-check pass"><i>✓</i><div><strong>Admin cannot bypass</strong><span>Admin 也不能批准自己提交的同一 Revision。</span></div></div>
+            </div>
+          </section>
+        </aside>
+      </div>
+
+      <section class="card admin-audit-card">
+        <div class="card-head card-head-roomy"><div><div class="page-eyebrow">Immutable-style trail</div><h3>Audit Log</h3></div><span class="spacer"></span><button class="btn small" data-action="refresh-audit">Refresh</button></div>
+        ${auditRows.length?table(["Actor","Time","Object","Action","ID","Reason"],auditRows):'<div class="card-body"><div class="empty-state"><strong>No audit events</strong><span>暂无 Audit Log。</span></div></div>'}
+      </section>`;
   }
 
   function table(headers, rows, html=false){
