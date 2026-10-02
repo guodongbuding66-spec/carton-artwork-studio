@@ -341,9 +341,16 @@
         });
       },
       async decision(id, decision, payload = {}) {
+        const revision=String(payload?.revision||"").trim();
+        if(!revision){
+          const error=new Error("Review decisions require an explicit revision.");
+          error.status=400;
+          error.code="REVISION_REQUIRED";
+          throw error;
+        }
         return request(`/api/artworks/${encodeURIComponent(id)}/approval`, {
           method: "POST",
-          body: JSON.stringify({ ...payload, decision })
+          body: JSON.stringify({ ...payload, revision, decision })
         });
       },
       async mappingProfiles() {

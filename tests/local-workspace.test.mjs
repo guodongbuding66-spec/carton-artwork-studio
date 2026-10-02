@@ -131,6 +131,18 @@ assert.ok(app.includes("no fit-to-box scaling"));
   assert.match(workerSource,/fourEyesBlocked/);
   assert.match(workerSource,/unresolvedBlockingComments/);
   assert.match(workerSource,/canApprove:preflightReady&&unresolvedBlockingComments===0&&!fourEyesBlocked/);
+  assert.match(workerSource,/REVISION_REQUIRED/);
+  assert.match(workerSource,/REJECT_REASON_REQUIRED/);
+  assert.match(workerSource,/STALE_REVISION_DECISION_BLOCKED/);
+  assert.match(workerSource,/return err\(409,"STALE_REVISION"/);
+  assert.match(workerSource,/REVISION_NOT_IN_REVIEW/);
+  assert.match(workerSource,/INSERT INTO approvals[\s\S]*SELECT \?,a\.id,ar\.revision/);
+  assert.match(workerSource,/EXISTS\(SELECT 1 FROM approvals WHERE id=\?\)/);
+  assert.match(workerSource,/commitResults\?\.\[0\]\?\.meta\?\.changes/);
+  assert.match(workerSource,/APPROVAL_STATE_CHANGED/);
+  assert.match(apiSource,/Review decisions require an explicit revision/);
+  assert.match(app,/\["STALE_REVISION","APPROVAL_STATE_CHANGED","REVISION_NOT_IN_REVIEW","NOT_IN_REVIEW"\]/);
+  assert.match(app,/审核队列已变化，已自动刷新/);
 
   assert.match(cssSource,/\.reviewer-layout\{/);
   assert.match(cssSource,/\.reviewer-preview\{/);
