@@ -35,6 +35,11 @@
     templateName: "美线侧封箱",
     market: "US",
     safeMarginMm: 22,
+    boxType: "US_SIDE_SEAL",
+    materialId: "E_FLUTE_WHITE",
+    paperThicknessMm: 1.5,
+    bleedMm: 3,
+    dimensionMode: "OUTER",
     elements: []
   };
 
@@ -111,6 +116,13 @@
         code: a.templateCode,
         version: a.templateVersion,
         printProfile: "US_SIDE_SEAL_K_ONLY_V1"
+      },
+      structure: {
+        boxType: String(a.boxType||"US_SIDE_SEAL"),
+        materialId: String(a.materialId||"E_FLUTE_WHITE"),
+        paperThicknessMm: Number(a.paperThicknessMm??1.5),
+        bleedMm: Number(a.bleedMm??3),
+        dimensionMode: String(a.dimensionMode||"OUTER")
       },
       artwork: {
         revision: a.revision,
@@ -859,7 +871,22 @@
     const availableH = Math.max(0, g.W - effectiveSafeMargin * 2);
     const codeFits = codeSize.w <= availableW && codeSize.h <= availableH;
 
+    const paperThickness=Number(a.paperThicknessMm??1.5);
+    const paperThicknessValid=Number.isFinite(paperThickness)&&paperThickness>=0.2&&paperThickness<=10;
+    const bleed=Number(a.bleedMm??3);
+    const bleedValid=Number.isFinite(bleed)&&bleed>=0&&bleed<=20;
+    const structureType=String(a.boxType||"US_SIDE_SEAL");
+
     const layout = [
+      check("box-structure-type","Box structure family",structureType==="US_SIDE_SEAL"?"pass":"error",
+        structureType==="US_SIDE_SEAL"?"US_SIDE_SEAL is the currently qualified parametric geometry.":"This box structure family is not yet qualified for production geometry.",
+        "Layout",true),
+      check("paper-thickness","Paper / board thickness",paperThicknessValid?"pass":"error",
+        paperThicknessValid?`${round(paperThickness,2)} mm · design metadata and 3D preview.`:"Thickness must be between 0.2 and 10 mm.",
+        "Layout",true),
+      check("bleed-config","Bleed configuration",bleedValid?"pass":"error",
+        bleedValid?`${round(bleed,2)} mm technical bleed preview.`:"Bleed must be between 0 and 20 mm.",
+        "Layout",true),
       check("safe-margin-config","Safe margin configuration",safeMarginValid?"pass":"error",
         safeMarginValid?`${round(safeMargin,2)} mm panel inset.`:"Safe margin must be between 0 and 100 mm.",
         "Layout",true),
@@ -1315,6 +1342,7 @@
     const codes = s.codes || {};
     const tpl = s.template || {};
     const aw = s.artwork || {};
+    const structure = s.structure || {};
     return {
       ...defaultArtwork,
       sku: s.product?.sku ?? metadata.sku ?? defaultArtwork.sku,
@@ -1336,6 +1364,11 @@
       revision: metadata.revision ?? aw.revision ?? defaultArtwork.revision,
       status: String(metadata.status ?? aw.status ?? defaultArtwork.status).toLowerCase(),
       safeMarginMm: Number(aw.safeMarginMm ?? defaultArtwork.safeMarginMm),
+      boxType: String(structure.boxType ?? defaultArtwork.boxType),
+      materialId: String(structure.materialId ?? defaultArtwork.materialId),
+      paperThicknessMm: Number(structure.paperThicknessMm ?? defaultArtwork.paperThicknessMm),
+      bleedMm: Number(structure.bleedMm ?? defaultArtwork.bleedMm),
+      dimensionMode: String(structure.dimensionMode ?? defaultArtwork.dimensionMode),
       elements: Array.isArray(aw.elements) ? aw.elements.map((e)=>({
         id:String(e.id||""),
         type:String(e.type||"image"),
