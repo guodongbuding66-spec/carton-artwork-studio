@@ -1,7 +1,7 @@
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
-const D=require("../assets/domain.js");
-const Q=require("../assets/box-design.js");
+const {loadBrowserModules}=require("./_load-umd.cjs");
+const {CartonDomain:D,CartonBoxDesign:Q}=loadBrowserModules(["assets/domain.js","assets/box-design.js"]);
 
 const artwork={
   ...D.defaultArtwork,
