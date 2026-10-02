@@ -1,4 +1,4 @@
-name: Deploy staging
+name: Staging verification / fallback deploy
 
 on:
   push:
@@ -19,7 +19,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  verify-and-fallback-deploy:
+    name: Verify staging / fallback deploy
     runs-on: ubuntu-latest
     environment: staging
     steps:
@@ -128,9 +129,31 @@ jobs:
             gitRef:process.env.GITHUB_REF||"",
             runtimeHealthVerified:false,
             result:"FALLBACK_NOT_CONFIGURED",
+            deploymentPath:"CLOUDFLARE_NATIVE_GIT_EXPECTED",
+            githubFallbackDeployPerformed:false,
             missingFallbackConfiguration:missing
           },null,2)+"\n");
           NODE
+      - name: Publish truthful staging summary
+        if: always()
+        shell: bash
+        env:
+          FALLBACK_CONFIGURED: ${{ steps.fallback-config.outputs.configured }}
+          FALLBACK_MISSING: ${{ steps.fallback-config.outputs.missing }}
+        run: |
+          {
+            echo "## Staging deployment result"
+            echo
+            if [ "$FALLBACK_CONFIGURED" = "true" ]; then
+              echo "- GitHub Actions fallback deploy: **EXECUTED**"
+              echo "- Post-deploy smoke: **EXECUTED**"
+            else
+              echo "- GitHub Actions fallback deploy: **NOT EXECUTED**"
+              echo "- Cloudflare native Git integration: **PRIMARY / expected deployment path**"
+              echo "- Missing fallback-only configuration: `$FALLBACK_MISSING`"
+              echo "- Workflow success means code/migration verification passed; it does **not** prove this workflow deployed the Worker."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload staging acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
