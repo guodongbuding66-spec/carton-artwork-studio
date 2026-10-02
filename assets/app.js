@@ -849,6 +849,18 @@
       </div>`;
   }
 
+  function exportBoxDielineSvg(){
+    const svg=Q.structureSvg(state.artwork,{
+      showBleed:true,
+      showSafe:true,
+      showPanels:true,
+      showDimensions:true
+    });
+    const name=`${fileBase()}_Technical-Dieline.svg`;
+    downloadBlob(name,new Blob([svg],{type:"image/svg+xml;charset=utf-8"}));
+    toast("SVG 刀模已导出；生产前仍需通过正式 Preflight / Approval。","success");
+  }
+
   function renderArtwork() {
     const s = summary();
     const prod = state.artwork.status === "approved" && s.blocking === 0 && blockingCommentsResolved() && permitted("productionExport") && state.apiOnline && state.apiBindings.r2 && Boolean(state.remoteArtworkId) && Boolean(state.productionReadiness?.ready);
@@ -2487,6 +2499,66 @@
         apply();
         render();
       };
+    });
+    document.querySelectorAll("[data-box-view]").forEach((b)=>b.onclick=()=>{
+      state.boxDesignView=b.dataset.boxView||"dieline";
+      render();
+    });
+    document.querySelectorAll("[data-box-mm]").forEach((el)=>{
+      el.onfocus=()=>{if(localArtworkEditable())pushArtworkHistory();};
+      el.onchange=()=>{
+        if(!localArtworkEditable()) return;
+        const key=el.dataset.boxMm;
+        const mm=Math.max(1,Number(el.value||0));
+        state.artwork[key]=mm/D.INCH_TO_MM;
+        refreshControlledShippingBlocks();
+        refreshAutoFitTextElements();
+        persistLocalDraft();
+        render();
+      };
+    });
+    document.querySelectorAll("[data-box-setting]").forEach((el)=>{
+      el.onfocus=()=>{if(localArtworkEditable())pushArtworkHistory();};
+      el.onchange=()=>{
+        if(!localArtworkEditable()) return;
+        const key=el.dataset.boxSetting;
+        state.artwork[key]=el.type==="number"?Number(el.value):el.value;
+        persistLocalDraft();
+        render();
+      };
+    });
+    document.querySelectorAll("[data-box-material]").forEach((el)=>el.onchange=()=>{
+      if(!localArtworkEditable()) return;
+      pushArtworkHistory();
+      const material=Q.MATERIALS.find((m)=>m.id===el.value)||Q.MATERIALS[0];
+      state.artwork.materialId=material.id;
+      state.artwork.paperThicknessMm=material.nominalThicknessMm;
+      persistLocalDraft();
+      render();
+    });
+    document.querySelectorAll("[data-box-layer]").forEach((el)=>el.onchange=()=>{
+      const key=el.dataset.boxLayer;
+      if(key==="bleed")state.boxShowBleed=el.checked;
+      if(key==="safe")state.boxShowSafe=el.checked;
+      if(key==="panels")state.boxShowPanels=el.checked;
+      if(key==="dimensions")state.boxShowDimensions=el.checked;
+      render();
+    });
+    document.querySelectorAll("[data-box-camera]").forEach((el)=>el.oninput=()=>{
+      if(el.dataset.boxCamera==="x")state.boxCameraX=Number(el.value);
+      if(el.dataset.boxCamera==="y")state.boxCameraY=Number(el.value);
+      const obj=document.querySelector("[data-box3d-object]");
+      if(obj)obj.style.transform=`rotateX(${state.boxCameraX}deg) rotateY(${state.boxCameraY}deg)`;
+    });
+    document.querySelectorAll("[data-box-camera-preset]").forEach((b)=>b.onclick=()=>{
+      const preset=b.dataset.boxCameraPreset;
+      if(preset==="front"){state.boxCameraX=0;state.boxCameraY=0;}
+      if(preset==="top"){state.boxCameraX=-68;state.boxCameraY=0;}
+      if(preset==="iso"){state.boxCameraX=-18;state.boxCameraY=-32;}
+      render();
+    });
+    document.querySelectorAll("[data-box-export]").forEach((b)=>b.onclick=()=>{
+      if(b.dataset.boxExport==="svg")exportBoxDielineSvg();
     });
     document.querySelectorAll("[data-preview]").forEach(b=>b.onclick=()=>{
       const a=b.dataset.preview;
