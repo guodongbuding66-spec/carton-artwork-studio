@@ -29,6 +29,14 @@ const api=A.createClient({baseUrl:"https://example.test",fetchImpl});
   assert.ok(importJob.data);
   const reviewerQueue=await api.reviewerQueue("job-1");
   assert.ok(reviewerQueue.data);
+  await assert.rejects(
+    ()=>api.decision("art-1","APPROVE",{}),
+    (e)=>e?.code==="REVISION_REQUIRED"&&e?.status===400
+  );
+  await api.decision("art-1","APPROVE",{revision:"R03",comment:"Reviewed"});
+  const decisionCall=calls.find(x=>x.url.endsWith("/api/artworks/art-1/approval")&&x.init.method==="POST");
+  assert.ok(decisionCall);
+  assert.deepEqual(JSON.parse(decisionCall.init.body),{revision:"R03",comment:"Reviewed",decision:"APPROVE"});
   const batchDrafts=await api.createImportDrafts("job-1");
   assert.ok(batchDrafts.data);
   const batchProcessed=await api.processImportDrafts("job-1",{submitPassed:true,retryFailed:false,limit:100});

@@ -2144,17 +2144,31 @@ export default {
         const id=crypto.randomUUID(),decision=String(b.decision||"").toUpperCase();
         if(!["APPROVE","REJECT"].includes(decision))return err(400,"INVALID_DECISION","decision must be APPROVE or REJECT.");
 
+        const revision=String(b.revision||"").trim();
+        if(!revision)return err(400,"REVISION_REQUIRED","Review decisions must explicitly identify the revision being reviewed.");
+        const comment=String(b.comment||"").trim();
+        if(decision==="REJECT"&&!comment)return err(400,"REJECT_REASON_REQUIRED","Reject decisions require an explicit reason.");
+
         const artwork=await env.DB.prepare("SELECT * FROM artworks WHERE id=?").bind(artworkId).first();
         if(!artwork)return err(404,"NOT_FOUND","Artwork not found.");
         if(String(artwork.status).toUpperCase()!=="IN_REVIEW") {
           return err(409,"NOT_IN_REVIEW","Only an artwork currently in review can be approved or rejected.");
         }
+        const currentRevision=String(artwork.current_revision||"").trim();
+        if(revision!==currentRevision){
+          await securityEvent(env,identity,"STALE_REVISION_DECISION_BLOCKED",request,{artworkId,requestedRevision:revision,currentRevision});
+          return err(409,"STALE_REVISION","The reviewed revision is no longer current. Refresh the review queue before deciding.",{
+            requestedRevision:revision,currentRevision
+          });
+        }
 
-        const revision=b.revision||artwork.current_revision;
         const revisionRow=await env.DB.prepare(
           "SELECT id,created_by AS createdBy,status FROM artwork_revisions WHERE artwork_id=? AND revision=?"
         ).bind(artworkId,revision).first();
         if(!revisionRow)return err(409,"REVISION_NOT_FOUND","Submitted revision record is missing.");
+        if(String(revisionRow.status||"").toUpperCase()!=="IN_REVIEW"){
+          return err(409,"REVISION_NOT_IN_REVIEW","The requested revision is no longer in review.",{revision});
+        }
 
         if(String(revisionRow.createdBy||"").toLowerCase()===identity.email.toLowerCase()) {
           await securityEvent(env, identity, "SELF_APPROVAL_BLOCKED", request, { artworkId, revision });
@@ -2178,18 +2192,58 @@ export default {
           }
         }
 
+        const atomicApprovalGate=decision==="APPROVE"
+          ? `
+              AND COALESCE((
+                SELECT UPPER(p.status) FROM preflight_runs p
+                WHERE p.artwork_id=a.id AND p.revision=ar.revision
+                ORDER BY p.created_at DESC LIMIT 1
+              ),'') NOT IN ('','ERROR')
+              AND NOT EXISTS (
+                SELECT 1 FROM comments c
+                WHERE c.artwork_id=a.id AND c.revision=ar.revision
+                  AND c.blocking=1 AND c.resolved=0
+              )
+            `
+          : "";
         const next=decision==="APPROVE"?"APPROVED":"REJECTED";
-        await env.DB.batch([
+        const commitResults=await env.DB.batch([
           env.DB.prepare(`
             INSERT INTO approvals(id,artwork_id,revision,reviewer,decision,comment,created_at)
-            VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)
-          `).bind(id,artworkId,revision,identity.email,decision,b.comment||""),
-          env.DB.prepare("UPDATE artworks SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(next,artworkId),
-          env.DB.prepare("UPDATE artwork_revisions SET status=? WHERE artwork_id=? AND revision=?").bind(next,artworkId,revision)
+            SELECT ?,a.id,ar.revision,?,?,?,CURRENT_TIMESTAMP
+            FROM artworks a
+            JOIN artwork_revisions ar
+              ON ar.artwork_id=a.id AND ar.revision=a.current_revision
+            WHERE a.id=?
+              AND a.status='IN_REVIEW'
+              AND a.current_revision=?
+              AND ar.status='IN_REVIEW'
+              AND LOWER(COALESCE(ar.created_by,''))<>LOWER(?)
+              ${atomicApprovalGate}
+          `).bind(id,identity.email,decision,comment,artworkId,revision,identity.email),
+          env.DB.prepare(`
+            UPDATE artworks
+            SET status=?,updated_at=CURRENT_TIMESTAMP
+            WHERE id=? AND current_revision=? AND status='IN_REVIEW'
+              AND EXISTS(SELECT 1 FROM approvals WHERE id=?)
+          `).bind(next,artworkId,revision,id),
+          env.DB.prepare(`
+            UPDATE artwork_revisions
+            SET status=?
+            WHERE artwork_id=? AND revision=? AND status='IN_REVIEW'
+              AND EXISTS(SELECT 1 FROM approvals WHERE id=?)
+          `).bind(next,artworkId,revision,id)
         ]);
+        if(Number(commitResults?.[0]?.meta?.changes||0)!==1){
+          await securityEvent(env,identity,"APPROVAL_STATE_CHANGED_BLOCKED",request,{artworkId,revision,decision});
+          return err(409,"APPROVAL_STATE_CHANGED","Artwork review state changed while the decision was being committed. Refresh and retry.",{
+            requestedRevision:revision
+          });
+        }
+
         await audit(env, identity, "ARTWORK", artworkId, decision, {
           newValue:{revision,status:next},
-          reason:b.comment||"Review decision"
+          reason:comment||"Review decision"
         });
         return json({data:{id,status:next,revision,reviewer:identity.email}},{status:201});
       }
