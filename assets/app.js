@@ -2179,48 +2179,75 @@
 
   function renderSystemReadiness(){
     const r=state.systemReadiness;
-    if(!r) return `<section class="card"><div class="card-head"><h3>Staging Readiness Center</h3><span class="spacer"></span><button class="btn small" data-action="refresh-system-readiness">Refresh</button></div><div class="card-body"><div class="notice">尚未读取服务器 Readiness 状态。</div></div></section>`;
+    if(!r) return `<section class="card system-readiness-card"><div class="card-head card-head-roomy"><div><div class="page-eyebrow">Environment gates</div><h3>Staging Readiness Center</h3></div><span class="spacer"></span><button class="btn small" data-action="refresh-system-readiness">Refresh</button></div><div class="card-body"><div class="empty-state"><strong>No readiness snapshot</strong><span>尚未读取服务器 Readiness 状态。</span></div></div></section>`;
 
-    const stagingRows=(r.stagingChecks||[]).map(x=>[
-      esc(x.label),
-      `<span class="badge ${x.ok?"green":"red"}">${esc(x.status)}</span>`,
-      esc(x.detail)
-    ]);
-    const productionRows=(r.productionChecks||[]).map(x=>[
-      esc(x.label),
-      `<span class="badge ${x.ok?"green":"red"}">${esc(x.status)}</span>`,
-      esc(x.detail)
-    ]);
     const diag=r.diagnostics||{};
     const lastProbe=diag.lastArtifactProbe?.createdAt||"Never";
     state.pdfxPromotionReadiness=r.pdfxPromotionReadiness||state.pdfxPromotionReadiness;
+
+    const gateList=(items,scope)=>(items||[]).map(x=>`
+      <div class="readiness-gate ${x.ok?"pass":"fail"}">
+        <span class="readiness-gate-icon">${x.ok?"✓":"!"}</span>
+        <div class="readiness-gate-copy"><strong>${esc(x.label)}</strong><span>${esc(x.detail)}</span></div>
+        <div class="readiness-gate-state"><b>${esc(x.status)}</b><small>${scope}</small></div>
+      </div>`).join("");
+
     return `
-      <section class="card">
-        <div class="card-head">
-          <h3>Staging Readiness Center</h3>
-          <span class="badge ${r.stagingReady?"green":"red"}">${esc(r.status)}</span>
-          <span class="badge ${r.productionReady?"green":"amber"}">${esc(r.productionStatus)}</span>
-          <span class="spacer"></span>
-          <button class="btn small" data-action="refresh-system-readiness">Refresh</button>
-          <button class="btn primary small" data-action="run-readiness-probe" ${state.readinessProbeBusy?"disabled":""}>${state.readinessProbeBusy?"Probing…":"Run Artifact Store Probe"}</button>
-        </div>
-        <div class="card-body">
-          <div class="kpis" style="margin:0">
-            <div class="kpi"><div class="kpi-label">STAGING GATES</div><div class="kpi-value">${r.summary?.stagingPassed||0}/${r.summary?.stagingTotal||0}</div></div>
-            <div class="kpi"><div class="kpi-label">PRODUCTION GATES</div><div class="kpi-value">${r.summary?.productionPassed||0}/${r.summary?.productionTotal||0}</div></div>
-            <div class="kpi"><div class="kpi-label">LATEST MIGRATION</div><div class="kpi-value mono" style="font-size:13px">${esc(diag.latestMigration||"unknown")}</div></div>
-            <div class="kpi"><div class="kpi-label">LAST STORE PROBE</div><div class="kpi-value mono" style="font-size:12px">${esc(lastProbe)}</div></div>
+      <div class="system-readiness-console">
+        <section class="card system-readiness-card">
+          <div class="system-readiness-head">
+            <div>
+              <div class="page-eyebrow">Environment & production gates</div>
+              <h2>Staging Readiness Center</h2>
+              <p>部署健康与正式生产能力分开判定；Production 不继承 Staging 的通过结果。</p>
+            </div>
+            <div class="system-readiness-actions">
+              <button class="btn small" data-action="refresh-system-readiness">Refresh</button>
+              <button class="btn primary small" data-action="run-readiness-probe" ${state.readinessProbeBusy?"disabled":""}>${state.readinessProbeBusy?"Probing…":"Run Artifact Store Probe"}</button>
+            </div>
           </div>
-          <div class="notice ${r.stagingReady?"":"warn"}" style="margin-top:12px">
-            Staging 与 Production 是独立门禁。PDF/X-4 Production 需要 trusted primary validator、同 SHA 的独立 secondary validator、真实 RIP qualification 和无修复 production trial；证据齐全后仍需单独代码审查才能把 PDF/X-4 加入 production capability。
+
+          <div class="system-readiness-status">
+            <div class="readiness-status-card ${r.stagingReady?"ready":"blocked"}">
+              <span>Staging</span>
+              <strong>${esc(r.status)}</strong>
+              <small>${r.summary?.stagingPassed||0}/${r.summary?.stagingTotal||0} gates passed</small>
+            </div>
+            <div class="readiness-status-card ${r.productionReady?"ready":"blocked"}">
+              <span>Production</span>
+              <strong>${esc(r.productionStatus)}</strong>
+              <small>${r.summary?.productionPassed||0}/${r.summary?.productionTotal||0} gates passed</small>
+            </div>
+            <div class="readiness-diagnostic-card">
+              <span>Latest migration</span>
+              <strong class="mono">${esc(diag.latestMigration||"unknown")}</strong>
+              <small>Schema state</small>
+            </div>
+            <div class="readiness-diagnostic-card">
+              <span>Last store probe</span>
+              <strong class="mono">${esc(lastProbe)}</strong>
+              <small>Artifact Store</small>
+            </div>
           </div>
-        </div>
-        <div class="card-head"><h3>Staging Gates</h3></div>
-        ${table(["Gate","Result","Detail"],stagingRows,true)}
-        <div class="card-head"><h3>Production Gates</h3></div>
-        ${table(["Gate","Result","Detail"],productionRows,true)}
-      </section>
-      ${renderPromotionEvidenceRegistry()}
+
+          <div class="readiness-principle ${r.productionReady?"ready":"warn"}">
+            <span class="readiness-principle-icon">${r.productionReady?"✓":"!"}</span>
+            <div><strong>${r.productionReady?"Production gates satisfied":"Production remains gated"}</strong><span>PDF/X‑4 Production 需要 trusted primary validator、同 SHA secondary validator、真实 RIP qualification 与无修复 production trial；证据齐全后仍需单独代码审查完成 capability promotion。</span></div>
+          </div>
+
+          <div class="readiness-gate-columns">
+            <section class="readiness-gate-section">
+              <div class="readiness-gate-head"><div><div class="page-eyebrow">Deployment</div><h3>Staging gates</h3></div><span class="badge ${r.stagingReady?"green":"red"}">${r.summary?.stagingPassed||0}/${r.summary?.stagingTotal||0}</span></div>
+              <div class="readiness-gate-list">${gateList(r.stagingChecks,"STAGING")||'<div class="empty-state"><span>No staging gates returned.</span></div>'}</div>
+            </section>
+            <section class="readiness-gate-section">
+              <div class="readiness-gate-head"><div><div class="page-eyebrow">Production</div><h3>Production gates</h3></div><span class="badge ${r.productionReady?"green":"amber"}">${r.summary?.productionPassed||0}/${r.summary?.productionTotal||0}</span></div>
+              <div class="readiness-gate-list">${gateList(r.productionChecks,"PRODUCTION")||'<div class="empty-state"><span>No production gates returned.</span></div>'}</div>
+            </section>
+          </div>
+        </section>
+        <div class="promotion-evidence-stage">${renderPromotionEvidenceRegistry()}</div>
+      </div>
     `;
   }
 
