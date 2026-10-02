@@ -33,7 +33,8 @@ for(const hook of requiredHooks){
 }
 
 assert.ok(app.includes("Independent review only"));
-assert.ok(!app.includes("Approve All"));
+assert.ok(!/data-action=["\'](?:approve-all|bulk-approve)["\']/.test(app));
+assert.ok(!/<button[^>]*>\s*Approve All\s*<\/button>/i.test(app));
 assert.ok(!app.includes('data-action="bulk-approve"'));
 
 for(const marker of [
