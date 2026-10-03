@@ -1,0 +1,72 @@
+name: Apply BoxStudio V0.7 sync
+
+on:
+  push:
+    branches:
+      - boxstudio-v0.7-sync
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[boxstudio-sync-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sync branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Expand BoxStudio V0.7 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/boxstudio-v07
+          tar -xJf .sync/boxstudio-v07-core.tar.xz -C /tmp/boxstudio-v07
+
+          # Replace the pre-reset working tree, while Git history keeps it recoverable.
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name '.git' \
+            ! -name '.sync' \
+            ! -name '.github' \
+            -exec rm -rf {} +
+
+          cp -a /tmp/boxstudio-v07/. .
+          mkdir -p assets
+          cp .sync/sample-batch.xlsx assets/sample-batch.xlsx
+          cp .sync/sample-dieline.pdf assets/sample-dieline.pdf
+          cp .sync/sample-dieline.pdf assets/sample-dieline.ai
+          xz -dc .sync/reference-template-from-pdf.svg.xz > assets/reference-template-from-pdf.svg
+
+          rm -rf .sync
+          rm -rf .github
+
+      - name: Validate source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f index.html
+          test -f package.json
+          test -f src/app.js
+          test -f src/geometry.js
+          test -f src/export.js
+          test -f src/pdfAiImport.js
+          test -f src/ttfOutline.js
+          test -f tests/smoke.mjs
+          test -f vendor/jszip.min.js
+          test -f assets/reference-template-from-pdf.svg
+          grep -q 'BoxStudio V0.7' README.md
+          grep -q '"version": "0.7.0"' package.json
+          for f in src/*.js tests/smoke.mjs; do node --check "$f"; done
+          node tests/smoke.mjs
+
+      - name: Commit synchronized project
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: sync BoxStudio V0.7 [boxstudio-sync-applied]"
+          git push origin HEAD:boxstudio-v0.7-sync
